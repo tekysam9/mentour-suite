@@ -1,0 +1,902 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Margin — Consultant Roster &amp; Gross Margin Dashboard</title>
+<style>
+  :root {
+    --ink: #16241C;
+    --paper: #F2F5F0;
+    --card: #FFFFFF;
+    --line: #DCE3D9;
+    --text: #1A241C;
+    --text-muted: #5B6B60;
+    --brass: #B9862E;
+    --pine: #2E6F52;
+    --brick: #9B3B3B;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; background: var(--paper); color: var(--text);
+    font-family: -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  }
+  .cl-serif { font-family: Georgia, 'Iowan Old Style', 'Palatino Linotype', serif; }
+  .cl-mono { font-family: ui-monospace, 'SF Mono', 'Cascadia Mono', Consolas, monospace; }
+
+  .cl-header {
+    background: var(--ink); color: #EFF3EC; padding: 22px 28px;
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 16px; flex-wrap: wrap; border-bottom: 3px solid var(--brass);
+  }
+  .cl-header-left { display: flex; flex-direction: column; gap: 3px; }
+  .cl-wordmark { font-family: Georgia, 'Iowan Old Style', 'Palatino Linotype', serif; font-size: 22px; font-weight: 600; }
+  .cl-header-sub { font-size: 12.5px; color: #B9C4B4; }
+  .cl-header-right { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .cl-header-file { font-size: 12px; color: #C9D3C4; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .cl-btn {
+    display: inline-flex; align-items: center; gap: 7px;
+    border: 1px solid rgba(239,243,236,0.35); background: transparent; color: #EFF3EC;
+    padding: 8px 14px; border-radius: 5px; font-size: 13px; font-weight: 500;
+    cursor: pointer; font-family: inherit;
+  }
+  .cl-btn:hover { background: rgba(239,243,236,0.1); border-color: rgba(239,243,236,0.6); }
+  .cl-btn-brass { background: var(--brass); border-color: var(--brass); color: #241804; }
+  .cl-btn-brass:hover { background: #C79539; }
+  .cl-account {
+    display: flex; align-items: center; gap: 12px; padding-left: 12px; margin-left: 4px;
+    border-left: 1px solid rgba(239,243,236,0.25);
+  }
+  .cl-account-link { color: #C9D3C4; font-size: 12.5px; text-decoration: none; font-weight: 500; }
+  .cl-account-link:hover { color: #EFF3EC; text-decoration: underline; }
+  .cl-account-link-muted { color: #8FA089; }
+  .cl-account-name { font-size: 12.5px; color: #C9D3C4; }
+  .cl-save-note { font-size: 11.5px; color: #8FA089; }
+  .cl-save-ok { color: #7FBF9E; }
+  .cl-save-err { color: #D99A9A; }
+
+  .cl-hero { padding: 64px 24px 56px; display: flex; justify-content: center; }
+  .cl-hero-inner { max-width: 620px; width: 100%; text-align: center; }
+  .cl-hero-kicker { font-size: 11.5px; letter-spacing: 0.06em; color: var(--pine); font-weight: 600; margin-bottom: 10px; }
+  .cl-hero-title { font-family: Georgia, 'Iowan Old Style', 'Palatino Linotype', serif; font-weight: 600; font-size: 52px; color: var(--ink); margin: 0 0 14px; line-height: 1; }
+  .cl-hero-copy { font-size: 15px; line-height: 1.6; color: var(--text-muted); margin: 0 auto 30px; max-width: 480px; }
+  .cl-drop {
+    border: 1.5px dashed #B8C3B2; border-radius: 10px; background: var(--card);
+    padding: 34px 24px; cursor: pointer; display: flex; flex-direction: column;
+    align-items: center; gap: 8px; color: var(--ink); transition: border-color .15s ease, background .15s ease;
+  }
+  .cl-drop:hover, .cl-drop-over { border-color: var(--pine); background: #EEF3EA; }
+  .cl-drop-title { font-size: 14.5px; font-weight: 500; margin-top: 4px; }
+  .cl-drop-sub { font-size: 12.5px; color: var(--text-muted); }
+  .cl-upload-icon { font-size: 26px; line-height: 1; }
+  .cl-error {
+    margin-top: 16px; display: flex; align-items: flex-start; gap: 8px; text-align: left;
+    background: #F6E9E9; border: 1px solid #E3C3C3; color: #6E2626;
+    padding: 12px 14px; border-radius: 7px; font-size: 13px; line-height: 1.5;
+  }
+  .cl-hero-footnote { margin-top: 22px; font-size: 12px; color: #8A9585; line-height: 1.6; }
+
+  .cl-kpi-strip { display: grid; grid-template-columns: repeat(6, 1fr); gap: 1px; background: var(--line); border-bottom: 1px solid var(--line); }
+  @media (max-width: 900px) { .cl-kpi-strip { grid-template-columns: repeat(3, 1fr); } }
+  .cl-kpi { background: var(--card); padding: 16px 18px; }
+  .cl-kpi-top { font-size: 11.5px; color: var(--text-muted); margin-bottom: 8px; }
+  .cl-kpi-value { font-family: Georgia, 'Iowan Old Style', 'Palatino Linotype', serif; font-weight: 600; font-size: 24px; color: var(--ink); }
+  .cl-kpi-sub { font-size: 11px; color: #93A08B; margin-top: 3px; }
+
+  .cl-charts { display: grid; grid-template-columns: 1.3fr 1fr 0.9fr; gap: 1px; background: var(--line); border-bottom: 1px solid var(--line); }
+  @media (max-width: 900px) { .cl-charts { grid-template-columns: 1fr; } }
+  .cl-chart-card { background: var(--card); padding: 18px 20px 20px; }
+  .cl-chart-title { font-size: 12px; font-weight: 600; color: var(--ink); margin-bottom: 14px; display: flex; align-items: center; justify-content: space-between; }
+  .cl-chart-title-sub { font-weight: 400; color: var(--text-muted); font-size: 11px; }
+
+  .cl-hbars { display: flex; flex-direction: column; gap: 9px; }
+  .cl-hbar-row { display: grid; grid-template-columns: 120px 1fr 58px; align-items: center; gap: 8px; }
+  .cl-hbar-label { font-size: 11.5px; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .cl-hbar-track { height: 9px; background: #EAEEE7; border-radius: 5px; overflow: hidden; }
+  .cl-hbar-fill { height: 100%; background: var(--brass); border-radius: 5px; }
+  .cl-hbar-value { font-size: 10.5px; color: var(--text-muted); text-align: right; }
+
+  .cl-donut-wrap { display: flex; align-items: center; gap: 16px; }
+  .cl-donut { width: 92px; height: 92px; border-radius: 50%; flex-shrink: 0; display: flex; align-items: center; justify-content: center; }
+  .cl-donut-hole { width: 56px; height: 56px; background: var(--card); border-radius: 50%; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+  .cl-donut-value { font-family: Georgia, 'Iowan Old Style', 'Palatino Linotype', serif; font-size: 17px; font-weight: 600; color: var(--ink); line-height: 1; }
+  .cl-donut-label { font-size: 8.5px; color: var(--text-muted); margin-top: 2px; }
+  .cl-donut-legend { display: flex; flex-direction: column; gap: 6px; max-height: 96px; overflow-y: auto; }
+  .cl-legend-row { display: flex; align-items: center; gap: 6px; font-size: 11.5px; }
+  .cl-legend-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; display: inline-block; }
+  .cl-legend-value { color: var(--text-muted); margin-left: auto; }
+
+  .cl-filterbar { display: flex; align-items: center; gap: 10px; padding: 14px 20px; background: var(--card); border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+  .cl-search { display: flex; align-items: center; gap: 7px; border: 1px solid var(--line); border-radius: 6px; padding: 7px 10px; background: var(--paper); flex: 1; min-width: 200px; }
+  .cl-search input { border: none; background: transparent; outline: none; font-size: 13px; width: 100%; font-family: inherit; color: var(--text); }
+  .cl-search-icon { color: var(--text-muted); flex-shrink: 0; font-size: 13px; }
+  .cl-filterbar select { border: 1px solid var(--line); border-radius: 6px; padding: 7px 10px; font-size: 12.5px; background: var(--paper); color: var(--text); font-family: inherit; cursor: pointer; }
+  .cl-filter-count { font-size: 11.5px; color: var(--text-muted); white-space: nowrap; }
+  .cl-reset { border: 1px solid var(--line); background: var(--card); border-radius: 6px; padding: 7px 12px; font-size: 12.5px; cursor: pointer; color: var(--text); font-family: inherit; }
+  .cl-reset:hover { background: var(--paper); }
+
+  .cl-table-wrap { overflow-x: auto; }
+  table.cl-main { width: 100%; border-collapse: collapse; font-size: 13px; min-width: 900px; }
+  table.cl-main thead th {
+    text-align: left; padding: 10px 14px; font-size: 11px; font-weight: 600;
+    color: var(--text-muted); border-bottom: 1px solid var(--line); cursor: pointer;
+    user-select: none; white-space: nowrap;
+  }
+  .cl-th-active { color: var(--ink) !important; }
+  .cl-sort-caret { opacity: 0.35; margin-left: 4px; font-size: 9px; }
+  .cl-th-active .cl-sort-caret { opacity: 1; }
+  .cl-row { cursor: pointer; border-bottom: 1px solid var(--line); }
+  .cl-row:hover { background: #F7F9F5; }
+  .cl-row td { padding: 11px 14px; vertical-align: middle; }
+  .cl-name-cell { display: flex; align-items: center; gap: 6px; font-weight: 500; color: var(--ink); }
+  .cl-caret { color: var(--text-muted); flex-shrink: 0; display: inline-block; width: 10px; }
+  .cl-cost-cell { font-weight: 600; color: var(--ink); }
+  .cl-margin-pos { color: var(--pine); font-weight: 600; }
+  .cl-margin-zero { color: var(--text-muted); font-weight: 600; }
+
+  .cl-badge { display: inline-flex; align-items: center; font-size: 11.5px; font-weight: 500; padding: 3px 9px; border-radius: 20px; }
+  .cl-badge-outline { border: 1px solid transparent; }
+  .cl-badge-sm { font-size: 10px; padding: 1px 7px; }
+
+  .cl-expand-row td { padding: 0; }
+  .cl-expand-inner { background: #F5F7F3; padding: 16px 44px 20px; border-bottom: 1px solid var(--line); }
+  .cl-expand-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 14px; }
+  .cl-expand-field-label { font-size: 10.5px; color: var(--text-muted); margin-bottom: 3px; }
+  .cl-expand-field-value { font-size: 13px; color: var(--ink); }
+
+  .cl-footer { padding: 18px 24px 28px; font-size: 11.5px; color: #8A9585; line-height: 1.7; border-top: 1px solid var(--line); background: var(--card); }
+  .cl-footer b { color: var(--text-muted); }
+
+  .cl-diag-sheets { display: flex; flex-direction: column; gap: 14px; text-align: left; margin-top: 8px; }
+  .cl-diag-sheet { border: 1px solid var(--line); border-radius: 8px; background: var(--card); overflow: hidden; }
+  .cl-diag-sheet-title { font-size: 12.5px; font-weight: 600; color: var(--ink); padding: 9px 14px; border-bottom: 1px solid var(--line); background: var(--paper); display: flex; align-items: center; gap: 10px; }
+  .cl-diag-sheet-sub { font-weight: 400; color: var(--text-muted); font-size: 11px; }
+  .cl-diag-table-wrap { overflow-x: auto; }
+  table.cl-subtable { width: 100%; border-collapse: collapse; font-size: 12px; background: var(--card); border-radius: 6px; overflow: hidden; }
+  table.cl-subtable tbody td { padding: 8px 12px; border-bottom: 1px solid #EEF1EC; white-space: nowrap; max-width: 160px; overflow: hidden; text-overflow: ellipsis; font-size: 11px; }
+</style>
+</head>
+<body>
+<div id="app"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script>
+(function () {
+  'use strict';
+
+  /* =========================================================================
+     PARSING ENGINE
+     Two sheets matter: "Total" (current roster, plus a second stacked block
+     of people who left from 2024 onward) and any sheet whose name starts
+     with "Left" (the pre-2024 leaver archive). Status per person is read
+     directly from the "If LEFT" cell rather than assumed from sheet/block
+     position, since the Total tab mixes both.
+     ========================================================================= */
+
+  function cleanText(v) {
+    if (v === null || v === undefined) return '';
+    return String(v).replace(/\u00A0/g, ' ').replace(/\s+/g, ' ').trim();
+  }
+  function titleCase(s) {
+    return s.toLowerCase().split(' ').filter(Boolean)
+      .map(function (w) { return w.charAt(0).toUpperCase() + w.slice(1); })
+      .join(' ');
+  }
+  function parseNumeric(v) {
+    if (v === null || v === undefined) return null;
+    if (typeof v === 'number') return v;
+    var s = String(v);
+    var m = s.match(/-?\d+(\.\d+)?/g);
+    if (!m) return null;
+    var sum = 0;
+    for (var i = 0; i < m.length; i++) sum += parseFloat(m[i]);
+    return sum;
+  }
+  function classifyStatus(leftInfo) {
+    if (leftInfo instanceof Date) return 'Left';
+    var t = cleanText(leftInfo);
+    if (!t) return 'Unknown';
+    if (/still\s*working/i.test(t)) return 'Active';
+    return 'Left';
+  }
+
+  function parseRosterSheet(rows, sourceLabel) {
+    var records = [];
+    if (!rows.length) return records;
+    var headerCol0 = cleanText(rows[0] && rows[0][0]).toLowerCase();
+
+    for (var r = 1; r < rows.length; r++) {
+      var row = rows[r] || [];
+      var name = cleanText(row[0]);
+      if (!name) continue;
+      if (headerCol0 && name.toLowerCase() === headerCol0) continue; // repeated header row mid-sheet
+
+      var joined = cleanText(row[1]);
+      var client = cleanText(row[2]);
+      var cost = parseNumeric(row[3]);
+      var billing = parseNumeric(row[4]);
+      if (!joined && !client && cost === null && billing === null) continue; // section label row, not a person
+
+      var marginRaw = parseNumeric(row[5]);
+      var margin = marginRaw !== null ? marginRaw : ((cost !== null && billing !== null) ? (billing - cost) : null);
+      var leftInfo = row[6];
+      var status = classifyStatus(leftInfo);
+      var leftText = null, leftDate = null;
+      if (leftInfo instanceof Date) leftDate = leftInfo;
+      else { var t = cleanText(leftInfo); if (t) leftText = t; }
+      var recruiter = cleanText(row[7]);
+      var subRaw = row[8];
+      var subText = (subRaw === null || subRaw === undefined) ? '' : String(subRaw).replace(/\u00A0/g, ' ').trim();
+
+      var employmentType = 'Subvendor';
+      if (/^w[\s-]?2\b/i.test(subText)) employmentType = 'W2 (direct)';
+      else if (/^1099\b/i.test(subText)) employmentType = '1099 (direct)';
+      else if (!subText) employmentType = 'Unspecified';
+
+      var program = client, clientDetail = null;
+      var slash = client.indexOf('/');
+      if (slash > -1) { program = client.slice(0, slash).trim(); clientDetail = client.slice(slash + 1).trim(); }
+      if (!program) program = '(unspecified)';
+
+      records.push({
+        name: titleCase(name), joined: joined, client: client, program: program, clientDetail: clientDetail,
+        cost: cost, billing: billing, margin: margin, status: status,
+        leftText: leftText, leftDate: leftDate, recruiter: recruiter || null,
+        subvendorText: subText, employmentType: employmentType, sourceSheet: sourceLabel,
+      });
+    }
+    return records;
+  }
+
+  function processWorkbook(wb) {
+    var totalSheetName = wb.SheetNames.find(function (n) { return n.trim().toLowerCase() === 'total'; });
+    var leftSheetNames = wb.SheetNames.filter(function (n) { return /^left/i.test(n.trim()); });
+
+    var records = [];
+    if (totalSheetName) {
+      var wsT = wb.Sheets[totalSheetName];
+      var rowsT = XLSX.utils.sheet_to_json(wsT, { header: 1, raw: true, defval: null });
+      records = records.concat(parseRosterSheet(rowsT, totalSheetName));
+    }
+    leftSheetNames.forEach(function (name) {
+      var ws = wb.Sheets[name];
+      var rows = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, defval: null });
+      records = records.concat(parseRosterSheet(rows, name));
+    });
+
+    if (records.length === 0) {
+      var previews = wb.SheetNames.map(function (name) {
+        var ws = wb.Sheets[name];
+        var rows = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, defval: null });
+        var sample = rows.slice(0, 6).map(function (row) {
+          return (row || []).slice(0, 10).map(function (cell) {
+            if (cell === null || cell === undefined) return '';
+            if (cell instanceof Date) return cell.toISOString().slice(0, 10);
+            return String(cell);
+          });
+        });
+        return { name: name, rowCount: rows.length, sample: sample };
+      });
+      return { ok: false, diagnostics: { sheetNames: wb.SheetNames, previews: previews } };
+    }
+
+    var active = records.filter(function (r) { return r.status === 'Active'; });
+    var left = records.filter(function (r) { return r.status === 'Left'; });
+
+    function avg(list, field) {
+      var vals = list.map(function (r) { return r[field]; }).filter(function (v) { return v !== null && v !== undefined; });
+      if (!vals.length) return null;
+      return vals.reduce(function (a, b) { return a + b; }, 0) / vals.length;
+    }
+
+    var programMap = {};
+    var programOrder = [];
+    active.forEach(function (r) {
+      if (!(r.program in programMap)) { programMap[r.program] = 0; programOrder.push(r.program); }
+      programMap[r.program] += 1;
+    });
+    var programTotals = programOrder.map(function (label) { return { label: label, value: programMap[label] }; })
+      .sort(function (a, b) { return b.value - a.value; });
+
+    var employmentMap = {};
+    active.forEach(function (r) { employmentMap[r.employmentType] = (employmentMap[r.employmentType] || 0) + 1; });
+
+    var subvendorSet = {};
+    active.forEach(function (r) { if (r.employmentType === 'Subvendor') subvendorSet[r.subvendorText] = true; });
+
+    var topMargins = active.slice().filter(function (r) { return r.margin !== null; })
+      .sort(function (a, b) { return b.margin - a.margin; }).slice(0, 10)
+      .map(function (r) { return { label: r.name, value: r.margin }; });
+
+    return {
+      ok: true,
+      records: records,
+      kpis: {
+        activeCount: active.length,
+        leftCount: left.length,
+        avgCost: avg(active, 'cost'),
+        avgBilling: avg(active, 'billing'),
+        avgMargin: avg(active, 'margin'),
+        distinctSubvendors: Object.keys(subvendorSet).length,
+      },
+      programTotals: programTotals,
+      employmentMap: employmentMap,
+      topMargins: topMargins,
+    };
+  }
+
+  /* =========================================================================
+     FORMATTING
+     ========================================================================= */
+
+  function fmtRate(n) { return (n === null || n === undefined) ? '\u2014' : ('$' + Math.round(n * 100) / 100 + '/hr'); }
+  function fmtNum(n) { return (n === null || n === undefined) ? '\u2014' : (Math.round(n * 10) / 10); }
+  function fmtDate(d) { return d ? new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '\u2014'; }
+  function escapeHtml(s) {
+    if (s === null || s === undefined) return '';
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  }
+
+  var STATUS_COLOR = { Active: '#2E6F52', Left: '#9B3B3B', Unknown: '#97854A' };
+  var STATUS_BG = { Active: '#EAF3EE', Left: '#F7ECEC', Unknown: '#F5F1E4' };
+  var EMP_COLOR = { 'W2 (direct)': '#2E6F52', '1099 (direct)': '#B9862E', Subvendor: '#4A6FA5', Unspecified: '#9AA398' };
+  var PROGRAM_PALETTE = ['#2E6F52', '#B9862E', '#4A6FA5', '#9B3B3B', '#7A6BAE', '#5B8A72', '#C79539', '#8C9188'];
+
+  /* =========================================================================
+     STATE
+     ========================================================================= */
+
+  var state = {
+    data: null,
+    fileName: '',
+    loading: false,
+    error: null,
+    diagnostics: null,
+    filters: { search: '', status: 'Active', program: 'All', employment: 'All' },
+    sort: { key: 'margin', dir: 'desc' },
+    expandedKey: null,
+    saveStatus: null, // null | 'saving' | 'saved' | 'error'
+  };
+
+  var auth = { user: null };
+
+  var appEl = document.getElementById('app');
+
+  function recordKey(r, i) { return i + '::' + r.name; }
+
+  /* =========================================================================
+     FILTER / SORT
+     ========================================================================= */
+
+  function getFilteredSorted() {
+    if (!state.data) return [];
+    var list = state.data.records.map(function (r, i) { return { r: r, k: recordKey(r, i) }; });
+    var q = state.filters.search.trim().toLowerCase();
+    if (q) {
+      list = list.filter(function (x) {
+        return x.r.name.toLowerCase().indexOf(q) > -1 ||
+          x.r.client.toLowerCase().indexOf(q) > -1 ||
+          x.r.subvendorText.toLowerCase().indexOf(q) > -1;
+      });
+    }
+    if (state.filters.status !== 'All') list = list.filter(function (x) { return x.r.status === state.filters.status; });
+    if (state.filters.program !== 'All') list = list.filter(function (x) { return x.r.program === state.filters.program; });
+    if (state.filters.employment !== 'All') list = list.filter(function (x) { return x.r.employmentType === state.filters.employment; });
+
+    var dir = state.sort.dir === 'asc' ? 1 : -1;
+    var key = state.sort.key;
+    list = list.slice().sort(function (a, b) {
+      var av = a.r[key], bv = b.r[key];
+      if (typeof av === 'string' && typeof bv === 'string') return av.localeCompare(bv) * dir;
+      av = (av === null || av === undefined) ? -Infinity : av;
+      bv = (bv === null || bv === undefined) ? -Infinity : bv;
+      return (av - bv) * dir;
+    });
+    return list;
+  }
+
+  /* =========================================================================
+     RENDER
+     ========================================================================= */
+
+  var COLUMNS = [
+    { key: 'name', label: 'Consultant' },
+    { key: 'client', label: 'Client / Account' },
+    { key: 'program', label: 'Program' },
+    { key: 'subvendorText', label: 'Subvendor / Employment' },
+    { key: 'cost', label: 'Cost $/hr' },
+    { key: 'billing', label: 'Billing $/hr' },
+    { key: 'margin', label: 'Margin $/hr' },
+    { key: 'status', label: 'Status' },
+    { key: 'joined', label: 'Joined' },
+  ];
+
+  function render() {
+    if (state.diagnostics) {
+      appEl.innerHTML = renderHeader(false) + renderDiagnostics(state.diagnostics);
+      return;
+    }
+    if (!state.data) {
+      appEl.innerHTML = renderHeader(false) + renderUploadScreen();
+      return;
+    }
+    var filtered = getFilteredSorted();
+    appEl.innerHTML =
+      renderHeader(true) +
+      renderKpiStrip(state.data) +
+      renderCharts(state.data) +
+      renderFilterBar(state.data, filtered.length) +
+      renderTableSection(filtered) +
+      renderFooter(state.data);
+  }
+
+  function renderAccountBar() {
+    if (!auth.user) return '';
+    var saveNote = '';
+    if (state.saveStatus === 'saving') saveNote = '<span class="cl-save-note">Saving\u2026</span>';
+    else if (state.saveStatus === 'saved') saveNote = '<span class="cl-save-note cl-save-ok">Saved to ' + escapeHtml(auth.user.organization.name) + '</span>';
+    else if (state.saveStatus === 'error') saveNote = '<span class="cl-save-note cl-save-err">Not saved \u2014 showing local copy only</span>';
+    return (
+      '<div class="cl-account">' +
+        saveNote +
+        '<a class="cl-account-link" href="/">Mentour Suite</a>' +
+        '<a class="cl-account-link cl-account-link-muted" href="/ledger.html">Ledger</a>' +
+        '<span class="cl-account-name">' + escapeHtml(auth.user.name) + '</span>' +
+        '<button class="cl-btn" data-action="logout" type="button">Log out</button>' +
+      '</div>'
+    );
+  }
+
+  function renderHeader(hasData) {
+    if (!hasData) {
+      return (
+        '<div class="cl-header"><div class="cl-header-left">' +
+          '<div class="cl-wordmark">Margin.</div>' +
+          '<div class="cl-header-sub">Consultant roster &amp; gross margin dashboard</div>' +
+        '</div>' +
+        '<div class="cl-header-right">' + renderAccountBar() + '</div>' +
+        '</div>'
+      );
+    }
+    return (
+      '<div class="cl-header">' +
+        '<div class="cl-header-left">' +
+          '<div class="cl-wordmark">Margin.</div>' +
+          '<div class="cl-header-sub">Consultant roster &amp; gross margin dashboard</div>' +
+        '</div>' +
+        '<div class="cl-header-right">' +
+          '<span class="cl-header-file">' + escapeHtml(state.fileName) + '</span>' +
+          '<button class="cl-btn" data-action="export-csv" type="button">Export CSV</button>' +
+          '<label class="cl-btn cl-btn-brass" style="cursor:pointer;">Replace file' +
+            '<input type="file" accept=".xlsx,.xls" style="display:none;" data-role="file-input">' +
+          '</label>' +
+          renderAccountBar() +
+        '</div>' +
+      '</div>'
+    );
+  }
+
+  function renderUploadScreen() {
+    return (
+      '<div class="cl-hero"><div class="cl-hero-inner">' +
+        '<div class="cl-hero-kicker">Consultant Roster \u00b7 Gross Margin</div>' +
+        '<h1 class="cl-hero-title">Margin.</h1>' +
+        '<p class="cl-hero-copy">Import your gross-margin workbook and see, at a glance, who\u2019s ' +
+        'placed where, their cost and billing rate, the margin on each seat, and who\u2019s still ' +
+        'working versus who\u2019s left.</p>' +
+        '<div class="cl-drop" data-role="dropzone" tabindex="0">' +
+          '<div class="cl-upload-icon">\u2191</div>' +
+          '<div class="cl-drop-title">' + (state.loading ? 'Reading workbook\u2026' : 'Drop the .xlsx file here, or click to browse') + '</div>' +
+          '<div class="cl-drop-sub">Looks for a "Total" tab and any "Left\u2026" tab. Nothing leaves your browser.</div>' +
+          '<input type="file" accept=".xlsx,.xls" style="display:none;" data-role="file-input">' +
+        '</div>' +
+        (state.error ? '<div class="cl-error"><span>\u26A0</span><span>' + escapeHtml(state.error) + '</span></div>' : '') +
+        '<div class="cl-hero-footnote">Built for a roster with columns: Name of the resource \u00b7 Month joined \u00b7 ' +
+        'Account/Client Name \u00b7 Cost \u00b7 Billing rate \u00b7 If LEFT \u00b7 Sourcing recruiter \u00b7 Name of the subvendor. ' +
+        'Re-upload any time this data changes.</div>' +
+      '</div></div>'
+    );
+  }
+
+  function renderDiagnostics(diag) {
+    var sheetsHtml = diag.previews.map(function (p) {
+      var rowsHtml = p.sample.map(function (row) {
+        return '<tr>' + row.map(function (v) { return '<td>' + escapeHtml(v) + '</td>'; }).join('') + '</tr>';
+      }).join('');
+      return (
+        '<div class="cl-diag-sheet">' +
+          '<div class="cl-diag-sheet-title">' + escapeHtml(p.name) + '<span class="cl-diag-sheet-sub">' + p.rowCount + ' row' + (p.rowCount === 1 ? '' : 's') + '</span></div>' +
+          '<div class="cl-diag-table-wrap"><table class="cl-subtable"><tbody>' + (rowsHtml || '<tr><td>(empty)</td></tr>') + '</tbody></table></div>' +
+        '</div>'
+      );
+    }).join('');
+    return (
+      '<div class="cl-hero"><div class="cl-hero-inner" style="max-width:760px;">' +
+        '<div class="cl-hero-kicker">Couldn\u2019t match the expected layout</div>' +
+        '<h1 class="cl-hero-title" style="font-size:36px;">No roster rows found.</h1>' +
+        '<p class="cl-hero-copy" style="max-width:640px;">' +
+          'I looked for a "Total" tab and a "Left\u2026" tab with a resource name, cost, and billing ' +
+          'rate in the expected columns, and didn\u2019t find that pattern in <b>' + escapeHtml(state.fileName) + '</b>. ' +
+          'Here\u2019s exactly what I saw in each tab.' +
+        '</p>' +
+        '<div class="cl-diag-sheets">' + sheetsHtml + '</div>' +
+        '<div class="cl-drop" data-role="dropzone" tabindex="0" style="margin-top:22px;">' +
+          '<div class="cl-upload-icon">\u2191</div><div class="cl-drop-title">Try a different file</div>' +
+          '<div class="cl-drop-sub">Drop a .xlsx file here, or click to browse.</div>' +
+          '<input type="file" accept=".xlsx,.xls" style="display:none;" data-role="file-input">' +
+        '</div>' +
+      '</div></div>'
+    );
+  }
+
+  function renderKpiStrip(d) {
+    function tile(label, value, sub) {
+      return (
+        '<div class="cl-kpi"><div class="cl-kpi-top">' + escapeHtml(label) + '</div>' +
+          '<div class="cl-kpi-value">' + value + '</div>' +
+          (sub ? '<div class="cl-kpi-sub">' + escapeHtml(sub) + '</div>' : '') +
+        '</div>'
+      );
+    }
+    return (
+      '<div class="cl-kpi-strip">' +
+        tile('Active consultants', d.kpis.activeCount, 'currently working') +
+        tile('Left (all-time)', d.kpis.leftCount, 'historical') +
+        tile('Avg cost', fmtRate(d.kpis.avgCost), 'active roster') +
+        tile('Avg billing', fmtRate(d.kpis.avgBilling), 'active roster') +
+        tile('Avg margin', fmtRate(d.kpis.avgMargin), 'active roster') +
+        tile('Subvendors used', d.kpis.distinctSubvendors, 'active, non-W2/1099') +
+      '</div>'
+    );
+  }
+
+  function renderCharts(d) {
+    return (
+      '<div class="cl-charts">' +
+        '<div class="cl-chart-card">' +
+          '<div class="cl-chart-title">Top margin per hour<span class="cl-chart-title-sub">active roster</span></div>' +
+          renderHBars(d.topMargins, function (v) { return '$' + Math.round(v * 100) / 100; }) +
+        '</div>' +
+        '<div class="cl-chart-card">' +
+          '<div class="cl-chart-title">Program / prime vendor<span class="cl-chart-title-sub">by headcount</span></div>' +
+          renderProgramDonut(d.programTotals) +
+        '</div>' +
+        '<div class="cl-chart-card">' +
+          '<div class="cl-chart-title">Employment type</div>' +
+          renderDonut(Object.keys(d.employmentMap).map(function (k) { return { label: k, value: d.employmentMap[k] }; }), EMP_COLOR, d.kpis.activeCount, 'active') +
+        '</div>' +
+      '</div>'
+    );
+  }
+
+  function renderHBars(data, fmt) {
+    if (!data.length) return '<div style="font-size:12px;color:var(--text-muted);">No data.</div>';
+    var max = Math.max.apply(null, [1].concat(data.map(function (d) { return d.value; })));
+    return '<div class="cl-hbars">' + data.map(function (d) {
+      var w = (d.value / max) * 100;
+      return (
+        '<div class="cl-hbar-row">' +
+          '<div class="cl-hbar-label" title="' + escapeHtml(d.label) + '">' + escapeHtml(d.label) + '</div>' +
+          '<div class="cl-hbar-track"><div class="cl-hbar-fill" style="width:' + w + '%;"></div></div>' +
+          '<div class="cl-hbar-value">' + fmt(d.value) + '</div>' +
+        '</div>'
+      );
+    }).join('') + '</div>';
+  }
+
+  function renderProgramDonut(programTotals) {
+    var top = programTotals.slice(0, 7);
+    var rest = programTotals.slice(7);
+    var restSum = rest.reduce(function (s, d) { return s + d.value; }, 0);
+    var segments = top.slice();
+    if (restSum > 0) segments.push({ label: 'Other', value: restSum });
+    var colorMap = {};
+    segments.forEach(function (d, i) { colorMap[d.label] = PROGRAM_PALETTE[i % PROGRAM_PALETTE.length]; });
+    var total = segments.reduce(function (s, d) { return s + d.value; }, 0);
+    return renderDonut(segments, colorMap, total, 'placements');
+  }
+
+  function renderDonut(segments, colorMap, centerValue, centerLabel) {
+    var total = segments.reduce(function (s, d) { return s + d.value; }, 0) || 1;
+    var acc = 0;
+    var stops = segments.map(function (d) {
+      var start = (acc / total) * 360;
+      acc += d.value;
+      var end = (acc / total) * 360;
+      return (colorMap[d.label] || '#9AA398') + ' ' + start + 'deg ' + end + 'deg';
+    });
+    var bg = stops.length ? ('conic-gradient(' + stops.join(', ') + ')') : '#E4E8E1';
+    var legend = segments.map(function (d) {
+      return (
+        '<div class="cl-legend-row"><span class="cl-legend-dot" style="background:' + (colorMap[d.label] || '#9AA398') + ';"></span>' +
+        '<span>' + escapeHtml(d.label) + '</span><span class="cl-legend-value">' + d.value + '</span></div>'
+      );
+    }).join('');
+    return (
+      '<div class="cl-donut-wrap">' +
+        '<div class="cl-donut" style="background:' + bg + ';"><div class="cl-donut-hole">' +
+          '<div class="cl-donut-value">' + centerValue + '</div><div class="cl-donut-label">' + escapeHtml(centerLabel) + '</div>' +
+        '</div></div>' +
+        '<div class="cl-donut-legend">' + legend + '</div>' +
+      '</div>'
+    );
+  }
+
+  function renderFilterBar(d, resultCount) {
+    var f = state.filters;
+    function opt(value, label, current) {
+      return '<option value="' + escapeHtml(value) + '"' + (value === current ? ' selected' : '') + '>' + escapeHtml(label) + '</option>';
+    }
+    var programs = [];
+    d.records.forEach(function (r) { if (programs.indexOf(r.program) === -1) programs.push(r.program); });
+    programs.sort(function (a, b) { return a.localeCompare(b); });
+    var employments = ['W2 (direct)', '1099 (direct)', 'Subvendor', 'Unspecified'];
+
+    return (
+      '<div class="cl-filterbar">' +
+        '<div class="cl-search"><span class="cl-search-icon">\u26B2</span>' +
+          '<input type="text" id="search-input" placeholder="Search consultant, client, or subvendor\u2026" value="' + escapeHtml(f.search) + '">' +
+        '</div>' +
+        '<select data-filter="status">' + opt('All', 'All statuses', f.status) + opt('Active', 'Active', f.status) + opt('Left', 'Left', f.status) + '</select>' +
+        '<select data-filter="program">' + opt('All', 'All programs', f.program) + programs.map(function (p) { return opt(p, p, f.program); }).join('') + '</select>' +
+        '<select data-filter="employment">' + opt('All', 'All employment types', f.employment) + employments.map(function (e) { return opt(e, e, f.employment); }).join('') + '</select>' +
+        '<div class="cl-filter-count">' + resultCount + ' of ' + d.records.length + '</div>' +
+        '<button class="cl-reset" data-action="reset-filters" type="button">Reset</button>' +
+      '</div>'
+    );
+  }
+
+  function statusBadge(status) {
+    var c = STATUS_COLOR[status] || '#5B6B60', bg = STATUS_BG[status] || '#F0F2EF';
+    return '<span class="cl-badge" style="color:' + c + ';background:' + bg + ';">' + escapeHtml(status) + '</span>';
+  }
+
+  function renderTableSection(filtered) {
+    var headers = COLUMNS.map(function (col) {
+      var active = state.sort.key === col.key;
+      var caret = state.sort.dir === 'desc' ? '\u25BE' : '\u25B4';
+      return '<th data-sort-key="' + col.key + '" class="' + (active ? 'cl-th-active' : '') + '">' + escapeHtml(col.label) + '<span class="cl-sort-caret">' + caret + '</span></th>';
+    }).join('');
+
+    var rows = filtered.length
+      ? filtered.map(renderRow).join('')
+      : ('<tr><td colspan="' + COLUMNS.length + '" style="padding:28px 14px;text-align:center;color:#8A9585;">No consultants match these filters.</td></tr>');
+
+    return '<div class="cl-table-wrap"><table class="cl-main"><thead><tr>' + headers + '</tr></thead><tbody>' + rows + '</tbody></table></div>';
+  }
+
+  function renderRow(x) {
+    var r = x.r, k = x.k;
+    var expanded = state.expandedKey === k;
+    var caret = expanded ? '\u25BE' : '\u25B8';
+    var marginClass = (r.margin === null) ? '' : (r.margin > 0 ? 'cl-margin-pos' : 'cl-margin-zero');
+
+    var mainRow = (
+      '<tr class="cl-row" data-row-key="' + escapeHtml(k) + '">' +
+        '<td><span class="cl-name-cell"><span class="cl-caret">' + caret + '</span><span>' + escapeHtml(r.name) + '</span></span></td>' +
+        '<td>' + escapeHtml(r.client) + '</td>' +
+        '<td>' + escapeHtml(r.program) + '</td>' +
+        '<td>' + escapeHtml(r.subvendorText || '\u2014') + '</td>' +
+        '<td class="cl-mono">' + fmtRate(r.cost) + '</td>' +
+        '<td class="cl-mono">' + fmtRate(r.billing) + '</td>' +
+        '<td class="cl-mono ' + marginClass + '">' + fmtRate(r.margin) + '</td>' +
+        '<td>' + statusBadge(r.status) + '</td>' +
+        '<td class="cl-mono">' + escapeHtml(r.joined || '\u2014') + '</td>' +
+      '</tr>'
+    );
+
+    if (!expanded) return mainRow;
+
+    var leftInfo = r.leftDate ? ('Last day: ' + fmtDate(r.leftDate)) : (r.leftText || '\u2014');
+    function field(label, value) {
+      return '<div><div class="cl-expand-field-label">' + escapeHtml(label) + '</div><div class="cl-expand-field-value">' + escapeHtml(value || '\u2014') + '</div></div>';
+    }
+    var expandRow = (
+      '<tr class="cl-expand-row"><td colspan="' + COLUMNS.length + '"><div class="cl-expand-inner"><div class="cl-expand-grid">' +
+        field('Full client / account string', r.client) +
+        field('Recruiter', r.recruiter) +
+        field('Status detail', leftInfo) +
+        field('Employment / subvendor', r.subvendorText) +
+        field('Source tab', r.sourceSheet) +
+        field('Employment type', r.employmentType) +
+      '</div></div></td></tr>'
+    );
+    return mainRow + expandRow;
+  }
+
+  function renderFooter(d) {
+    return (
+      '<div class="cl-footer">' +
+        '<b>Reading the numbers:</b> Cost and Billing are hourly rates ($/hr) straight from the workbook, not dollar ' +
+        'totals \u2014 there\u2019s no hours field in this file, so nothing here is extrapolated into a monthly or annual figure. ' +
+        'Margin is Billing minus Cost per hour. <b>Subvendor / Employment</b> shows "W2 (direct)" or "1099 (direct)" when ' +
+        'the person is a direct hire rather than placed through a subvendor company. <b>Status</b> comes straight from the ' +
+        'workbook\u2019s "If LEFT" column for that row \u2014 a date or a leave reason means Left; "still working" means Active. ' +
+        'Click a row for the full client string, recruiter, and which tab it came from.' +
+      '</div>'
+    );
+  }
+
+  /* =========================================================================
+     FILE HANDLING
+     ========================================================================= */
+
+  function handleFile(file) {
+    state.error = null;
+    state.diagnostics = null;
+    state.loading = true;
+    render();
+    var reader = new FileReader();
+    reader.onload = function (e) {
+      try {
+        var bytes = new Uint8Array(e.target.result);
+        var wb = XLSX.read(bytes, { type: 'array', cellDates: true });
+        var result = processWorkbook(wb);
+        if (result.ok) {
+          state.data = result;
+          state.diagnostics = null;
+          state.fileName = file.name;
+          state.filters = { search: '', status: 'Active', program: 'All', employment: 'All' };
+          state.sort = { key: 'margin', dir: 'desc' };
+          state.expandedKey = null;
+          saveToBackend(file.name, result);
+        } else {
+          state.data = null;
+          state.diagnostics = result.diagnostics;
+          state.fileName = file.name;
+        }
+      } catch (err) {
+        state.data = null;
+        state.diagnostics = null;
+        state.error = (err && err.message) ? err.message : 'Could not parse this workbook.';
+      } finally {
+        state.loading = false;
+        render();
+      }
+    };
+    reader.onerror = function () { state.error = 'Could not read the file.'; state.loading = false; render(); };
+    reader.readAsArrayBuffer(file);
+  }
+
+  function saveToBackend(fileName, data) {
+    state.saveStatus = 'saving';
+    render();
+    fetch('/api/margin', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ fileName: fileName, data: data }),
+    }).then(function (res) {
+      if (!res.ok) throw new Error('save failed');
+      return res.json();
+    }).then(function () {
+      state.saveStatus = 'saved';
+      render();
+    }).catch(function () {
+      state.saveStatus = 'error';
+      render();
+    });
+  }
+
+  function exportCSV(list) {
+    var header = ['Consultant', 'Client / Account', 'Program', 'Subvendor / Employment', 'Cost $/hr', 'Billing $/hr', 'Margin $/hr', 'Status', 'Joined', 'Recruiter'];
+    var rows = list.map(function (x) {
+      var r = x.r;
+      return [r.name, r.client, r.program, r.subvendorText, r.cost, r.billing, r.margin, r.status, r.joined, r.recruiter];
+    });
+    var csv = [header].concat(rows).map(function (row) {
+      return row.map(function (cell) { return '"' + String(cell === null || cell === undefined ? '' : cell).replace(/"/g, '""') + '"'; }).join(',');
+    }).join('\n');
+    var blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url; a.download = 'consultant-margin-roster.csv';
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
+
+  /* =========================================================================
+     EVENTS
+     ========================================================================= */
+
+  function withFocusPreserved(fn) {
+    var active = document.activeElement;
+    var id = active && active.id;
+    var selStart = (active && typeof active.selectionStart === 'number') ? active.selectionStart : null;
+    fn();
+    if (id) {
+      var el = document.getElementById(id);
+      if (el) {
+        el.focus();
+        if (selStart !== null && el.setSelectionRange) { try { el.setSelectionRange(selStart, selStart); } catch (e) {} }
+      }
+    }
+  }
+
+  appEl.addEventListener('click', function (e) {
+    var dropzone = e.target.closest('[data-role="dropzone"]');
+    if (dropzone) { var input = dropzone.querySelector('input[type="file"]'); if (input) input.click(); return; }
+
+    var sortHeader = e.target.closest('[data-sort-key]');
+    if (sortHeader) {
+      var key = sortHeader.getAttribute('data-sort-key');
+      if (state.sort.key === key) state.sort.dir = state.sort.dir === 'desc' ? 'asc' : 'desc';
+      else { state.sort.key = key; state.sort.dir = 'desc'; }
+      render();
+      return;
+    }
+    var row = e.target.closest('[data-row-key]');
+    if (row) {
+      var k = row.getAttribute('data-row-key');
+      state.expandedKey = (state.expandedKey === k) ? null : k;
+      render();
+      return;
+    }
+    var resetBtn = e.target.closest('[data-action="reset-filters"]');
+    if (resetBtn) { state.filters = { search: '', status: 'Active', program: 'All', employment: 'All' }; render(); return; }
+
+    var exportBtn = e.target.closest('[data-action="export-csv"]');
+    if (exportBtn) { exportCSV(getFilteredSorted()); return; }
+
+    var logoutBtn = e.target.closest('[data-action="logout"]');
+    if (logoutBtn) {
+      fetch('/api/auth/logout', { method: 'POST' }).then(function () { window.location.href = '/login.html'; });
+      return;
+    }
+  });
+
+  appEl.addEventListener('change', function (e) {
+    if (e.target && e.target.matches && e.target.matches('input[type="file"]')) {
+      var f = e.target.files && e.target.files[0];
+      if (f) handleFile(f);
+      return;
+    }
+    var sel = e.target.closest && e.target.closest('select[data-filter]');
+    if (sel) { state.filters[sel.getAttribute('data-filter')] = sel.value; render(); }
+  });
+
+  appEl.addEventListener('input', function (e) {
+    if (e.target && e.target.id === 'search-input') { state.filters.search = e.target.value; withFocusPreserved(render); }
+  });
+
+  appEl.addEventListener('dragover', function (e) {
+    var dz = e.target.closest && e.target.closest('[data-role="dropzone"]');
+    if (dz) { e.preventDefault(); dz.classList.add('cl-drop-over'); }
+  });
+  appEl.addEventListener('dragleave', function (e) {
+    var dz = e.target.closest && e.target.closest('[data-role="dropzone"]');
+    if (dz) dz.classList.remove('cl-drop-over');
+  });
+  appEl.addEventListener('drop', function (e) {
+    var dz = e.target.closest && e.target.closest('[data-role="dropzone"]');
+    if (dz) {
+      e.preventDefault(); dz.classList.remove('cl-drop-over');
+      var f = e.dataTransfer.files && e.dataTransfer.files[0];
+      if (f) handleFile(f);
+    }
+  });
+
+  function checkAuthAndInit() {
+    fetch('/api/auth/me').then(function (res) {
+      if (res.status !== 200) { window.location.href = '/login.html'; return null; }
+      return res.json();
+    }).then(function (body) {
+      if (!body) return;
+      auth.user = body.user;
+      return fetch('/api/margin/latest').then(function (res) { return res.ok ? res.json() : { import: null }; });
+    }).then(function (latest) {
+      if (latest && latest.import) {
+        state.data = latest.import.data;
+        state.fileName = latest.import.file_name;
+        state.saveStatus = 'saved';
+      }
+      render();
+    }).catch(function () {
+      window.location.href = '/login.html';
+    });
+  }
+
+  checkAuthAndInit();
+})();
+</script>
+</body>
+</html>

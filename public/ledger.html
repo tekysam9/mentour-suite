@@ -1,0 +1,1255 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ledger — Consultant &amp; Subvendor Cost Dashboard</title>
+<style>
+  :root {
+    --ink: #16241C;
+    --paper: #F2F5F0;
+    --card: #FFFFFF;
+    --line: #DCE3D9;
+    --text: #1A241C;
+    --text-muted: #5B6B60;
+    --brass: #B9862E;
+    --pine: #2E6F52;
+    --brick: #9B3B3B;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; background: var(--paper); color: var(--text);
+    font-family: -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  }
+  .cl-serif { font-family: Georgia, 'Iowan Old Style', 'Palatino Linotype', serif; }
+  .cl-mono { font-family: ui-monospace, 'SF Mono', 'Cascadia Mono', Consolas, monospace; }
+
+  /* ---------- header band ---------- */
+  .cl-header {
+    background: var(--ink); color: #EFF3EC; padding: 22px 28px;
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 16px; flex-wrap: wrap; border-bottom: 3px solid var(--brass);
+  }
+  .cl-header-left { display: flex; flex-direction: column; gap: 3px; }
+  .cl-wordmark { font-family: Georgia, 'Iowan Old Style', 'Palatino Linotype', serif; font-size: 22px; font-weight: 600; }
+  .cl-header-sub { font-size: 12.5px; color: #B9C4B4; }
+  .cl-header-right { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .cl-header-file {
+    font-size: 12px; color: #C9D3C4; max-width: 220px; overflow: hidden;
+    text-overflow: ellipsis; white-space: nowrap;
+  }
+  .cl-btn {
+    display: inline-flex; align-items: center; gap: 7px;
+    border: 1px solid rgba(239,243,236,0.35); background: transparent; color: #EFF3EC;
+    padding: 8px 14px; border-radius: 5px; font-size: 13px; font-weight: 500;
+    cursor: pointer; font-family: inherit;
+  }
+  .cl-btn:hover { background: rgba(239,243,236,0.1); border-color: rgba(239,243,236,0.6); }
+  .cl-btn-brass { background: var(--brass); border-color: var(--brass); color: #241804; }
+  .cl-account {
+    display: flex; align-items: center; gap: 12px; padding-left: 12px; margin-left: 4px;
+    border-left: 1px solid rgba(239,243,236,0.25);
+  }
+  .cl-account-link { color: #C9D3C4; font-size: 12.5px; text-decoration: none; font-weight: 500; }
+  .cl-account-link:hover { color: #EFF3EC; text-decoration: underline; }
+  .cl-account-link-muted { color: #8FA089; }
+  .cl-account-name { font-size: 12.5px; color: #C9D3C4; }
+  .cl-save-note { font-size: 11.5px; color: #8FA089; }
+  .cl-save-ok { color: #7FBF9E; }
+  .cl-save-err { color: #D99A9A; }
+  .cl-btn-brass:hover { background: #C79539; }
+
+  /* ---------- hero / upload ---------- */
+  .cl-hero { padding: 64px 24px 56px; display: flex; justify-content: center; }
+  .cl-hero-inner { max-width: 620px; width: 100%; text-align: center; }
+  .cl-hero-kicker { font-size: 11.5px; letter-spacing: 0.06em; color: var(--pine); font-weight: 600; margin-bottom: 10px; }
+  .cl-hero-title { font-family: Georgia, 'Iowan Old Style', 'Palatino Linotype', serif; font-weight: 600; font-size: 52px; color: var(--ink); margin: 0 0 14px; line-height: 1; }
+  .cl-hero-copy { font-size: 15px; line-height: 1.6; color: var(--text-muted); margin: 0 auto 30px; max-width: 480px; }
+  .cl-drop {
+    border: 1.5px dashed #B8C3B2; border-radius: 10px; background: var(--card);
+    padding: 34px 24px; cursor: pointer; display: flex; flex-direction: column;
+    align-items: center; gap: 8px; color: var(--ink); transition: border-color .15s ease, background .15s ease;
+  }
+  .cl-drop:hover, .cl-drop-over { border-color: var(--pine); background: #EEF3EA; }
+  .cl-drop-title { font-size: 14.5px; font-weight: 500; margin-top: 4px; }
+  .cl-drop-sub { font-size: 12.5px; color: var(--text-muted); }
+  .cl-upload-icon { font-size: 26px; line-height: 1; }
+  .cl-error {
+    margin-top: 16px; display: flex; align-items: flex-start; gap: 8px; text-align: left;
+    background: #F6E9E9; border: 1px solid #E3C3C3; color: #6E2626;
+    padding: 12px 14px; border-radius: 7px; font-size: 13px; line-height: 1.5;
+  }
+  .cl-hero-footnote { margin-top: 22px; font-size: 12px; color: #8A9585; line-height: 1.6; }
+
+  /* ---------- KPI strip ---------- */
+  .cl-kpi-strip { display: grid; grid-template-columns: repeat(6, 1fr); gap: 1px; background: var(--line); border-bottom: 1px solid var(--line); }
+  @media (max-width: 900px) { .cl-kpi-strip { grid-template-columns: repeat(3, 1fr); } }
+  .cl-kpi { background: var(--card); padding: 16px 18px; }
+  .cl-kpi-top { font-size: 11.5px; color: var(--text-muted); margin-bottom: 8px; }
+  .cl-kpi-value { font-family: Georgia, 'Iowan Old Style', 'Palatino Linotype', serif; font-weight: 600; font-size: 24px; color: var(--ink); }
+  .cl-kpi-sub { font-size: 11px; color: #93A08B; margin-top: 3px; }
+
+  /* ---------- charts row ---------- */
+  .cl-charts { display: grid; grid-template-columns: 1.3fr 1fr 0.9fr; gap: 1px; background: var(--line); border-bottom: 1px solid var(--line); }
+  @media (max-width: 900px) { .cl-charts { grid-template-columns: 1fr; } }
+  .cl-chart-card { background: var(--card); padding: 18px 20px 20px; }
+  .cl-chart-title { font-size: 12px; font-weight: 600; color: var(--ink); margin-bottom: 14px; display: flex; align-items: center; justify-content: space-between; }
+  .cl-chart-title-sub { font-weight: 400; color: var(--text-muted); font-size: 11px; }
+
+  .cl-monthly { display: flex; align-items: flex-end; gap: 6px; height: 130px; }
+  .cl-monthly-col { flex: 1; display: flex; flex-direction: column; align-items: center; height: 100%; justify-content: flex-end; }
+  .cl-monthly-value { font-size: 10px; color: var(--text-muted); margin-bottom: 3px; }
+  .cl-monthly-bar-track { width: 100%; height: 88px; display: flex; align-items: flex-end; }
+  .cl-monthly-bar { width: 100%; background: var(--pine); border-radius: 3px 3px 0 0; min-height: 2px; }
+  .cl-monthly-label { font-size: 10.5px; color: var(--text-muted); margin-top: 6px; }
+
+  .cl-hbars { display: flex; flex-direction: column; gap: 9px; }
+  .cl-hbar-row { display: grid; grid-template-columns: 100px 1fr 66px; align-items: center; gap: 8px; }
+  .cl-hbar-label { font-size: 11.5px; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .cl-hbar-track { height: 9px; background: #EAEEE7; border-radius: 5px; overflow: hidden; }
+  .cl-hbar-fill { height: 100%; background: var(--brass); border-radius: 5px; }
+  .cl-hbar-value { font-size: 10.5px; color: var(--text-muted); text-align: right; }
+
+  .cl-donut-wrap { display: flex; align-items: center; gap: 16px; }
+  .cl-donut { width: 92px; height: 92px; border-radius: 50%; flex-shrink: 0; display: flex; align-items: center; justify-content: center; }
+  .cl-donut-hole { width: 56px; height: 56px; background: var(--card); border-radius: 50%; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+  .cl-donut-value { font-family: Georgia, 'Iowan Old Style', 'Palatino Linotype', serif; font-size: 17px; font-weight: 600; color: var(--ink); line-height: 1; }
+  .cl-donut-label { font-size: 8.5px; color: var(--text-muted); margin-top: 2px; }
+  .cl-donut-legend { display: flex; flex-direction: column; gap: 6px; }
+  .cl-legend-row { display: flex; align-items: center; gap: 6px; font-size: 11.5px; }
+  .cl-legend-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; display: inline-block; }
+  .cl-legend-value { color: var(--text-muted); margin-left: auto; }
+
+  /* ---------- filter bar ---------- */
+  .cl-filterbar { display: flex; align-items: center; gap: 10px; padding: 14px 20px; background: var(--card); border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+  .cl-search { display: flex; align-items: center; gap: 7px; border: 1px solid var(--line); border-radius: 6px; padding: 7px 10px; background: var(--paper); flex: 1; min-width: 200px; }
+  .cl-search input { border: none; background: transparent; outline: none; font-size: 13px; width: 100%; font-family: inherit; color: var(--text); }
+  .cl-search-icon { color: var(--text-muted); flex-shrink: 0; font-size: 13px; }
+  .cl-filterbar select { border: 1px solid var(--line); border-radius: 6px; padding: 7px 10px; font-size: 12.5px; background: var(--paper); color: var(--text); font-family: inherit; cursor: pointer; }
+  .cl-filter-count { font-size: 11.5px; color: var(--text-muted); white-space: nowrap; }
+  .cl-reset { border: 1px solid var(--line); background: var(--card); border-radius: 6px; padding: 7px 12px; font-size: 12.5px; cursor: pointer; color: var(--text); font-family: inherit; }
+  .cl-reset:hover { background: var(--paper); }
+
+  /* ---------- table ---------- */
+  .cl-table-wrap { overflow-x: auto; }
+  table.cl-main { width: 100%; border-collapse: collapse; font-size: 13px; min-width: 820px; }
+  table.cl-main thead th {
+    text-align: left; padding: 10px 14px; font-size: 11px; font-weight: 600;
+    color: var(--text-muted); border-bottom: 1px solid var(--line); cursor: pointer;
+    user-select: none; white-space: nowrap;
+  }
+  .cl-th-active { color: var(--ink) !important; }
+  .cl-sort-caret { opacity: 0.35; margin-left: 4px; font-size: 9px; }
+  .cl-th-active .cl-sort-caret { opacity: 1; }
+  .cl-row { cursor: pointer; border-bottom: 1px solid var(--line); }
+  .cl-row:hover { background: #F7F9F5; }
+  .cl-row td { padding: 11px 14px; vertical-align: middle; }
+  .cl-name-cell { display: flex; align-items: center; gap: 6px; font-weight: 500; color: var(--ink); }
+  .cl-caret { color: var(--text-muted); flex-shrink: 0; display: inline-block; width: 10px; }
+  .cl-cost-cell { font-weight: 600; color: var(--ink); }
+  .cl-count-chip { font-size: 10px; color: var(--text-muted); margin-left: 6px; background: var(--paper); border-radius: 8px; padding: 1px 6px; border: 1px solid var(--line); }
+  .cl-mini-flag { font-size: 10px; color: var(--brick); border: 1px solid #D9B7B7; background: #FBF0F0; border-radius: 8px; padding: 1px 7px; margin-left: 4px; }
+
+  .cl-badge { display: inline-flex; align-items: center; font-size: 11.5px; font-weight: 500; padding: 3px 9px; border-radius: 20px; }
+  .cl-badge-outline { border: 1px solid transparent; }
+  .cl-badge-sm { font-size: 10px; padding: 1px 7px; }
+
+  /* ---------- expanded detail ---------- */
+  .cl-expand-row td { padding: 0; }
+  .cl-expand-inner { background: #F5F7F3; padding: 16px 44px 20px; border-bottom: 1px solid var(--line); }
+  .cl-expand-title { font-size: 12px; font-weight: 600; color: var(--ink); margin-bottom: 10px; display: flex; align-items: center; gap: 10px; }
+  .cl-expand-sub { font-weight: 400; color: var(--text-muted); font-size: 11px; }
+  .cl-left-note { font-size: 12px; color: #6E2626; background: #FBF0F0; border: 1px solid #E3C3C3; border-radius: 6px; padding: 8px 12px; margin-bottom: 12px; line-height: 1.5; }
+  table.cl-subtable { width: 100%; border-collapse: collapse; font-size: 12px; background: var(--card); border-radius: 6px; overflow: hidden; }
+  table.cl-subtable thead th { text-align: left; padding: 8px 12px; font-size: 10.5px; color: var(--text-muted); border-bottom: 1px solid var(--line); font-weight: 600; white-space: nowrap; }
+  table.cl-subtable tbody td { padding: 8px 12px; border-bottom: 1px solid #EEF1EC; }
+  table.cl-subtable tbody tr:last-child td { border-bottom: none; }
+  .cl-muted-cell { color: #B0A25E; }
+  .cl-notes-cell { color: var(--text-muted); max-width: 220px; }
+
+  /* ---------- other payments ---------- */
+  .cl-other { border-top: 1px solid var(--line); background: var(--card); }
+  .cl-other-toggle { width: 100%; display: flex; align-items: center; gap: 8px; padding: 13px 20px; background: transparent; border: none; cursor: pointer; font-size: 12.5px; color: var(--text-muted); font-family: inherit; text-align: left; }
+  .cl-other-toggle:hover { background: var(--paper); }
+  .cl-other-total { margin-left: auto; color: var(--text); }
+  .cl-other-body { padding: 0 20px 20px 46px; }
+  .cl-other-copy { font-size: 12px; color: var(--text-muted); margin: 0 0 12px; max-width: 560px; line-height: 1.5; }
+
+  /* ---------- footer ---------- */
+  .cl-footer { padding: 18px 24px 28px; font-size: 11.5px; color: #8A9585; line-height: 1.7; border-top: 1px solid var(--line); background: var(--card); }
+  .cl-footer b { color: var(--text-muted); }
+
+  .cl-loading-note { margin-top: 16px; font-size: 12.5px; color: var(--text-muted); }
+
+  /* ---------- diagnostics ---------- */
+  .cl-diag-sheets { display: flex; flex-direction: column; gap: 14px; text-align: left; margin-top: 8px; }
+  .cl-diag-sheet { border: 1px solid var(--line); border-radius: 8px; background: var(--card); overflow: hidden; }
+  .cl-diag-sheet-title { font-size: 12.5px; font-weight: 600; color: var(--ink); padding: 9px 14px; border-bottom: 1px solid var(--line); background: var(--paper); display: flex; align-items: center; gap: 10px; }
+  .cl-diag-sheet-sub { font-weight: 400; color: var(--text-muted); font-size: 11px; }
+  .cl-diag-table-wrap { overflow-x: auto; }
+  .cl-diag-table-wrap table.cl-subtable td { white-space: nowrap; max-width: 160px; overflow: hidden; text-overflow: ellipsis; font-size: 11px; }
+</style>
+</head>
+<body>
+<div id="app"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script>
+(function () {
+  'use strict';
+
+  /* =========================================================================
+     PARSING ENGINE
+     ========================================================================= */
+
+  function cleanText(v) {
+    if (v === null || v === undefined) return '';
+    return String(v).replace(/\u00A0/g, ' ').replace(/\s+/g, ' ').trim();
+  }
+
+  function titleCase(s) {
+    return s.toLowerCase().split(' ').filter(Boolean)
+      .map(function (w) { return w.charAt(0).toUpperCase() + w.slice(1); })
+      .join(' ');
+  }
+
+  function parseNumeric(v) {
+    if (v === null || v === undefined) return null;
+    if (typeof v === 'number') return v;
+    var s = String(v);
+    if (s.indexOf('%') > -1 || s.indexOf('#') > -1) return null;
+    var matches = s.match(/-?\d+(\.\d+)?/g);
+    if (!matches) return null;
+    var sum = 0;
+    for (var i = 0; i < matches.length; i++) sum += parseFloat(matches[i]);
+    return sum;
+  }
+
+  var MONTH_PREFIXES = 'Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec';
+
+  function splitSubvendorPeriod(labelText) {
+    var subvendor = labelText, period = null;
+    var slashIdx = labelText.indexOf('/');
+    if (slashIdx > -1) {
+      subvendor = labelText.slice(0, slashIdx).trim();
+      period = labelText.slice(slashIdx + 1).trim();
+    } else {
+      var m = labelText.match(new RegExp('^(.*?)-\\s*((?:' + MONTH_PREFIXES + ')[A-Za-z]*\\.?.*)$', 'i'));
+      if (m) { subvendor = m[1].trim(); period = m[2].trim(); }
+    }
+    if (!subvendor) subvendor = '(unspecified)';
+    return { subvendor: subvendor, period: period };
+  }
+
+  var INSTITUTIONAL_KEYWORDS = [
+    'rent', 'netmgm', 'data server', 'loan payment', 'phh mortgage', 'virtual office',
+    'usa fact', 'olh accounting', 'bond payment', 'ads printer', 'net salary', 'travel',
+    'installment', 'account set up', 'staffing license', 'eisner amper', 'ach only',
+  ];
+
+  function findHeaderOccurrences(rows) {
+    var occ = [];
+    rows.forEach(function (row, r) {
+      (row || []).forEach(function (cell, c) {
+        var cellText = typeof cell === 'string' ? cell.replace(/\u00A0/g, ' ').trim() : '';
+        if (cellText && /\bamount\b/i.test(cellText)) {
+          var labelCol = c - 2;
+          var rawTag = cleanText(row[labelCol]);
+          var clientTag = 'Unspecified';
+          if (/non[\s-]*hcl/i.test(rawTag)) clientTag = 'Non-HCL';
+          else if (/hcl/i.test(rawTag)) clientTag = 'HCL';
+          occ.push({
+            row: r, amountCol: c, labelCol: labelCol, nameCol: c - 1, rateCol: c + 1,
+            hoursCol: c + 2, verifyCol: c + 3, notesCol: c + 4, clientTag: clientTag,
+          });
+        }
+      });
+    });
+    return occ;
+  }
+
+  function parseSheet(rows, sheetName) {
+    var occ = findHeaderOccurrences(rows);
+    var byCol = {};
+    occ.forEach(function (o) { (byCol[o.amountCol] = byCol[o.amountCol] || []).push(o); });
+    Object.keys(byCol).forEach(function (k) { byCol[k].sort(function (a, b) { return a.row - b.row; }); });
+
+    var records = [];
+    var others = [];
+
+    Object.keys(byCol).forEach(function (colKey) {
+      var blocks = byCol[colKey];
+      for (var i = 0; i < blocks.length; i++) {
+        var b = blocks[i];
+        var nextStart = (i + 1 < blocks.length) ? blocks[i + 1].row : rows.length;
+        for (var r = b.row + 1; r < nextStart; r++) {
+          var row = rows[r] || [];
+          var labelText = cleanText(row[b.labelCol]);
+          var nameText = cleanText(row[b.nameCol]);
+          var amountVal = row[b.amountCol];
+          if (!labelText && !nameText) continue;
+          if (nameText.toLowerCase() === 'total') continue;
+          if (typeof row[b.rateCol] === 'string' && row[b.rateCol].trim().toLowerCase() === 'total') continue;
+
+          var amount = parseNumeric(amountVal);
+          var rateRaw = row[b.rateCol];
+          var hoursRaw = row[b.hoursCol];
+          var verifyRaw = row[b.verifyCol];
+          var notesRaw = row[b.notesCol];
+          var rate = parseNumeric(rateRaw);
+          var hours = parseNumeric(hoursRaw);
+          var verify = parseNumeric(verifyRaw);
+
+          var paidDate = null, notes = null;
+          if (notesRaw instanceof Date) {
+            if (notesRaw.getFullYear() >= 2000) paidDate = notesRaw;
+          } else if (notesRaw !== null && notesRaw !== undefined) {
+            var nt = cleanText(notesRaw);
+            if (nt) notes = nt;
+          }
+
+          var sp = splitSubvendorPeriod(labelText);
+          var subvendor = sp.subvendor, period = sp.period;
+
+          var subLower = subvendor.toLowerCase();
+          var nameLower = nameText.toLowerCase();
+          var isInstitutional = INSTITUTIONAL_KEYWORDS.some(function (k) {
+            return subLower.indexOf(k) > -1 || nameLower.indexOf(k) > -1;
+          });
+          var looksLikeName = /^[A-Za-z][A-Za-z.'-]*(\s+[A-Za-z][A-Za-z.'-]*)+$/.test(nameText);
+          var isConsultant = !!nameText && !isInstitutional && (rate !== null || hours !== null || looksLikeName);
+
+          var rec = {
+            subvendor: subvendor, period: period, name: nameText, amount: amount, rate: rate,
+            hours: hours, verify: verify, notes: notes, paidDate: paidDate, month: sheetName,
+            clientTag: b.clientTag,
+          };
+          if (isConsultant) records.push(rec);
+          else if (nameText || labelText) others.push(rec);
+        }
+      }
+    });
+
+    return { records: records, others: others };
+  }
+
+  function buildConsultants(monthlyRecords, leftRecords, monthOrder) {
+    var map = {};
+    var order = [];
+    function keyOf(n) { return n.trim().toLowerCase(); }
+    function ensure(name) {
+      var k = keyOf(name);
+      if (!map[k]) {
+        map[k] = { key: k, name: titleCase(cleanText(name)), placements: [], leftFlag: false, leftNote: null };
+        order.push(k);
+      }
+      return map[k];
+    }
+
+    monthlyRecords.forEach(function (r) { ensure(r.name).placements.push(r); });
+
+    var sigSet = {};
+    monthlyRecords.forEach(function (r) {
+      sigSet[r.subvendor.toLowerCase() + '|' + keyOf(r.name) + '|' + r.amount] = true;
+    });
+
+    leftRecords.forEach(function (r) {
+      var c = ensure(r.name);
+      c.leftFlag = true;
+      c.leftNote = { subvendor: r.subvendor, period: r.period, notes: r.notes, amount: r.amount };
+      var sig = r.subvendor.toLowerCase() + '|' + keyOf(r.name) + '|' + r.amount;
+      if (!sigSet[sig]) c.placements.push(r);
+    });
+
+    var latestMonthIdx = monthOrder.length - 1;
+
+    var consultants = order.map(function (k) {
+      var c = map[k];
+      var sorted = c.placements.slice().sort(function (a, b) {
+        return monthOrder.indexOf(a.month) - monthOrder.indexOf(b.month);
+      });
+      var monthlyOnly = sorted.filter(function (p) { return monthOrder.indexOf(p.month) > -1; });
+      var lastPlacement = monthlyOnly.length ? monthlyOnly[monthlyOnly.length - 1] : null;
+      var lastMonthIdx = lastPlacement ? monthOrder.indexOf(lastPlacement.month) : -1;
+
+      var status;
+      if (lastMonthIdx === latestMonthIdx && latestMonthIdx >= 0) status = 'Active';
+      else if (c.leftFlag) status = 'Left';
+      else if (lastMonthIdx === -1) status = 'Left';
+      else status = 'Inactive';
+
+      var totalCost = 0, totalHours = 0;
+      var rates = [];
+      c.placements.forEach(function (p) {
+        totalCost += (p.amount || 0);
+        totalHours += (p.hours || 0);
+        if (p.rate !== null && p.rate !== undefined) rates.push(p.rate);
+      });
+      var minRate = rates.length ? Math.min.apply(null, rates) : null;
+      var maxRate = rates.length ? Math.max.apply(null, rates) : null;
+
+      var subvendors = [];
+      c.placements.forEach(function (p) { if (subvendors.indexOf(p.subvendor) === -1) subvendors.push(p.subvendor); });
+      var clientTags = [];
+      c.placements.forEach(function (p) { if (clientTags.indexOf(p.clientTag) === -1) clientTags.push(p.clientTag); });
+
+      var currentSubvendor = lastPlacement ? lastPlacement.subvendor
+        : (c.placements.length ? c.placements[c.placements.length - 1].subvendor : (c.leftNote ? c.leftNote.subvendor : '\u2014'));
+      var currentClient = lastPlacement ? lastPlacement.clientTag : 'Unspecified';
+      var lastActiveMonth = lastPlacement ? lastPlacement.month : (c.leftNote ? ('Before ' + (monthOrder[0] || 'file start')) : '\u2014');
+
+      return {
+        key: c.key, name: c.name, placements: sorted, leftFlag: c.leftFlag, leftNote: c.leftNote,
+        status: status, totalCost: totalCost, totalHours: totalHours, minRate: minRate, maxRate: maxRate,
+        subvendors: subvendors, clientTags: clientTags, currentSubvendor: currentSubvendor,
+        currentClient: currentClient, lastActiveMonth: lastActiveMonth, placementCount: c.placements.length,
+      };
+    });
+
+    return consultants;
+  }
+
+  function processWorkbook(wb) {
+    var monthOrder = wb.SheetNames.filter(function (n) { return n.trim().toLowerCase() !== 'left'; });
+    var monthlyRecords = [];
+    var otherPayments = [];
+
+    monthOrder.forEach(function (name) {
+      var ws = wb.Sheets[name];
+      var rows = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, defval: null });
+      var parsed = parseSheet(rows, name);
+      monthlyRecords = monthlyRecords.concat(parsed.records);
+      otherPayments = otherPayments.concat(parsed.others);
+    });
+
+    var leftRecords = [];
+    var leftSheetName = wb.SheetNames.find(function (n) { return n.trim().toLowerCase() === 'left'; });
+    if (leftSheetName) {
+      var ws2 = wb.Sheets[leftSheetName];
+      var rows2 = XLSX.utils.sheet_to_json(ws2, { header: 1, raw: true, defval: null });
+      leftRecords = parseSheet(rows2, 'Left').records;
+    }
+
+    var consultants = buildConsultants(monthlyRecords, leftRecords, monthOrder)
+      .sort(function (a, b) { return b.totalCost - a.totalCost; });
+
+    if (consultants.length === 0) {
+      var previews = wb.SheetNames.map(function (name) {
+        var ws = wb.Sheets[name];
+        var rows = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, defval: null });
+        var sample = rows.slice(0, 6).map(function (row) {
+          return (row || []).slice(0, 10).map(function (cell) {
+            if (cell === null || cell === undefined) return '';
+            if (cell instanceof Date) return cell.toISOString().slice(0, 10);
+            return String(cell);
+          });
+        });
+        return { name: name, rowCount: rows.length, sample: sample };
+      });
+      return { ok: false, diagnostics: { sheetNames: wb.SheetNames, previews: previews } };
+    }
+
+    var monthlyTotals = monthOrder.map(function (m) {
+      var value = 0;
+      monthlyRecords.forEach(function (r) { if (r.month === m) value += (r.amount || 0); });
+      return { label: m.slice(0, 3), fullLabel: m, value: value };
+    });
+
+    var allPlacements = [];
+    consultants.forEach(function (c) { allPlacements = allPlacements.concat(c.placements); });
+
+    var subvendorMap = {};
+    var subvendorOrder = [];
+    allPlacements.forEach(function (p) {
+      if (!(p.subvendor in subvendorMap)) { subvendorMap[p.subvendor] = 0; subvendorOrder.push(p.subvendor); }
+      subvendorMap[p.subvendor] += (p.amount || 0);
+    });
+    var subvendorTotals = subvendorOrder
+      .map(function (label) { return { label: label, value: subvendorMap[label] }; })
+      .sort(function (a, b) { return b.value - a.value; });
+
+    var clientMap = {};
+    allPlacements.forEach(function (p) { clientMap[p.clientTag] = (clientMap[p.clientTag] || 0) + (p.amount || 0); });
+
+    var statusCounts = { Active: 0, Left: 0, Inactive: 0 };
+    consultants.forEach(function (c) { statusCounts[c.status] = (statusCounts[c.status] || 0) + 1; });
+
+    var totalCost = 0;
+    allPlacements.forEach(function (p) { totalCost += (p.amount || 0); });
+    var otherTotal = 0;
+    otherPayments.forEach(function (r) { otherTotal += (r.amount || 0); });
+
+    return {
+      ok: true,
+      consultants: consultants, otherPayments: otherPayments, monthOrder: monthOrder,
+      monthlyTotals: monthlyTotals, subvendorTotals: subvendorTotals, clientMap: clientMap,
+      statusCounts: statusCounts,
+      kpis: {
+        totalConsultants: consultants.length,
+        totalSubvendors: subvendorOrder.length,
+        totalCost: totalCost,
+        otherTotal: otherTotal,
+        monthsCovered: monthOrder.length,
+        latestMonth: monthOrder[monthOrder.length - 1] || '\u2014',
+      },
+    };
+  }
+
+  /* =========================================================================
+     FORMATTING HELPERS
+     ========================================================================= */
+
+  function fmtUSD(n) {
+    if (n === null || n === undefined) return '\u2014';
+    return n.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });
+  }
+  function fmtUSD2(n) {
+    if (n === null || n === undefined) return '\u2014';
+    return n.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 2 });
+  }
+  function fmtRate(c) {
+    if (c.minRate === null) return '\u2014';
+    if (c.minRate === c.maxRate) return '$' + c.minRate + '/hr';
+    return '$' + c.minRate + '\u2013' + c.maxRate + '/hr';
+  }
+  function fmtDate(d) {
+    if (!d) return '\u2014';
+    return new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  }
+  function escapeHtml(s) {
+    if (s === null || s === undefined) return '';
+    return String(s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  }
+
+  var STATUS_COLOR = { Active: '#2E6F52', Left: '#9B3B3B', Inactive: '#97854A' };
+  var STATUS_BG = { Active: '#EAF3EE', Left: '#F7ECEC', Inactive: '#F5F1E4' };
+  var CLIENT_COLOR = { HCL: '#B9862E', 'Non-HCL': '#2E6F52', Unspecified: '#8C9188' };
+  var CLIENT_BG = { HCL: '#FBF3E6', 'Non-HCL': '#EAF3EE', Unspecified: '#F0F2EF' };
+  var CLIENT_BORDER = { HCL: '#E7CE9E', 'Non-HCL': '#BEDBCD', Unspecified: '#DCE1D9' };
+
+  /* =========================================================================
+     STATE
+     ========================================================================= */
+
+  var state = {
+    data: null,
+    fileName: '',
+    loading: false,
+    error: null,
+    diagnostics: null,
+    filters: { search: '', status: 'All', client: 'All', subvendor: 'All', month: 'All' },
+    sort: { key: 'totalCost', dir: 'desc' },
+    expandedKey: null,
+    otherOpen: false,
+    saveStatus: null, // null | 'saving' | 'saved' | 'error'
+  };
+
+  var auth = { user: null };
+
+  var appEl = document.getElementById('app');
+
+  /* =========================================================================
+     FILTER / SORT
+     ========================================================================= */
+
+  function getFilteredSorted() {
+    if (!state.data) return [];
+    var list = state.data.consultants;
+    var q = state.filters.search.trim().toLowerCase();
+    if (q) {
+      list = list.filter(function (c) {
+        if (c.name.toLowerCase().indexOf(q) > -1) return true;
+        return c.subvendors.some(function (s) { return s.toLowerCase().indexOf(q) > -1; });
+      });
+    }
+    if (state.filters.status !== 'All') list = list.filter(function (c) { return c.status === state.filters.status; });
+    if (state.filters.client !== 'All') list = list.filter(function (c) { return c.clientTags.indexOf(state.filters.client) > -1; });
+    if (state.filters.subvendor !== 'All') list = list.filter(function (c) { return c.subvendors.indexOf(state.filters.subvendor) > -1; });
+    if (state.filters.month !== 'All') list = list.filter(function (c) {
+      return c.placements.some(function (p) { return p.month === state.filters.month; });
+    });
+
+    var dir = state.sort.dir === 'asc' ? 1 : -1;
+    var key = state.sort.key;
+    list = list.slice().sort(function (a, b) {
+      var av = a[key], bv = b[key];
+      if (key === 'minRate') { av = a.minRate; bv = b.minRate; }
+      if (typeof av === 'string' && typeof bv === 'string') return av.localeCompare(bv) * dir;
+      av = (av === null || av === undefined) ? -Infinity : av;
+      bv = (bv === null || bv === undefined) ? -Infinity : bv;
+      return (av - bv) * dir;
+    });
+    return list;
+  }
+
+  /* =========================================================================
+     RENDER
+     ========================================================================= */
+
+  var COLUMNS = [
+    { key: 'name', label: 'Consultant' },
+    { key: 'currentSubvendor', label: 'Subvendor' },
+    { key: 'currentClient', label: 'Client' },
+    { key: 'status', label: 'Status' },
+    { key: 'lastActiveMonth', label: 'Last active' },
+    { key: 'totalCost', label: 'Cost to Mentour' },
+    { key: 'minRate', label: 'Billing rate' },
+    { key: 'totalHours', label: 'Hours' },
+  ];
+
+  function render() {
+    if (state.diagnostics) {
+      appEl.innerHTML = renderHeader(false) + renderDiagnostics(state.diagnostics);
+      return;
+    }
+    if (!state.data) {
+      appEl.innerHTML = renderHeader(false) + renderUploadScreen();
+      return;
+    }
+    var filtered = getFilteredSorted();
+    appEl.innerHTML =
+      renderHeader(true) +
+      renderKpiStrip(state.data) +
+      renderCharts(state.data) +
+      renderFilterBar(state.data, filtered.length) +
+      renderTableSection(filtered) +
+      renderOtherPayments(state.data) +
+      renderFooter(state.data);
+  }
+
+  function renderAccountBar() {
+    if (!auth.user) return '';
+    var saveNote = '';
+    if (state.saveStatus === 'saving') saveNote = '<span class="cl-save-note">Saving\u2026</span>';
+    else if (state.saveStatus === 'saved') saveNote = '<span class="cl-save-note cl-save-ok">Saved to ' + escapeHtml(auth.user.organization.name) + '</span>';
+    else if (state.saveStatus === 'error') saveNote = '<span class="cl-save-note cl-save-err">Not saved \u2014 showing local copy only</span>';
+    return (
+      '<div class="cl-account">' +
+        saveNote +
+        '<a class="cl-account-link" href="/">Mentour Suite</a>' +
+        '<a class="cl-account-link cl-account-link-muted" href="/margin.html">Margin</a>' +
+        '<span class="cl-account-name">' + escapeHtml(auth.user.name) + '</span>' +
+        '<button class="cl-btn" data-action="logout" type="button">Log out</button>' +
+      '</div>'
+    );
+  }
+
+  function renderHeader(hasData) {
+    if (!hasData) {
+      return (
+        '<div class="cl-header">' +
+          '<div class="cl-header-left">' +
+            '<div class="cl-wordmark">Ledger.</div>' +
+            '<div class="cl-header-sub">Consultant &amp; subvendor cost dashboard</div>' +
+          '</div>' +
+          '<div class="cl-header-right">' + renderAccountBar() + '</div>' +
+        '</div>'
+      );
+    }
+    var d = state.data;
+    return (
+      '<div class="cl-header">' +
+        '<div class="cl-header-left">' +
+          '<div class="cl-wordmark">Ledger.</div>' +
+          '<div class="cl-header-sub">Consultant &amp; subvendor cost dashboard \u00b7 through ' + escapeHtml(d.kpis.latestMonth) + '</div>' +
+        '</div>' +
+        '<div class="cl-header-right">' +
+          '<span class="cl-header-file">' + escapeHtml(state.fileName) + '</span>' +
+          '<button class="cl-btn" data-action="export-csv" type="button">Export CSV</button>' +
+          '<label class="cl-btn cl-btn-brass" style="cursor:pointer;">Replace file' +
+            '<input type="file" accept=".xlsx,.xls" style="display:none;" data-role="file-input">' +
+          '</label>' +
+          renderAccountBar() +
+        '</div>' +
+      '</div>'
+    );
+  }
+
+  function renderUploadScreen() {
+    return (
+      '<div class="cl-hero">' +
+        '<div class="cl-hero-inner">' +
+          '<div class="cl-hero-kicker">Mentour Corp \u00b7 Subvendor Ledger</div>' +
+          '<h1 class="cl-hero-title">Ledger.</h1>' +
+          '<p class="cl-hero-copy">Import your subvendor-payments workbook and this turns into a live ' +
+          'dashboard: every consultant, which subvendor pays them out, the client they\u2019re placed at, ' +
+          'the billing rate, what Mentour Corp has spent on them, and whether they\u2019re still on the bench.</p>' +
+          '<div class="cl-drop" data-role="dropzone" tabindex="0">' +
+            '<div class="cl-upload-icon">\u2191</div>' +
+            '<div class="cl-drop-title">' + (state.loading ? 'Reading workbook\u2026' : 'Drop the .xlsx file here, or click to browse') + '</div>' +
+            '<div class="cl-drop-sub">One sheet per pay period, plus an optional "Left" sheet. Nothing leaves your browser.</div>' +
+            '<input type="file" accept=".xlsx,.xls" style="display:none;" data-role="file-input" id="hero-file-input">' +
+          '</div>' +
+          (state.error ? '<div class="cl-error"><span>\u26A0</span><span>' + escapeHtml(state.error) + '</span></div>' : '') +
+          '<div class="cl-hero-footnote">Built for the "2026 Sub Vendors payments" workbook layout \u2014 a header row reading ' +
+          '<span class="cl-mono">Subvendor \u00b7 Name \u00b7 Amount \u00b7 Rate \u00b7 Hours \u00b7 Verify \u00b7 Notes</span> in each monthly tab. ' +
+          'Re-upload any time to refresh the dashboard with a new export.</div>' +
+        '</div>' +
+      '</div>'
+    );
+  }
+
+  function renderDiagnostics(diag) {
+    var sheetsHtml = diag.previews.map(function (p) {
+      var rowsHtml = p.sample.map(function (row) {
+        var cells = row.map(function (v) { return '<td>' + escapeHtml(v) + '</td>'; }).join('');
+        return '<tr>' + cells + '</tr>';
+      }).join('');
+      return (
+        '<div class="cl-diag-sheet">' +
+          '<div class="cl-diag-sheet-title">' + escapeHtml(p.name) + '<span class="cl-diag-sheet-sub">' + p.rowCount + ' row' + (p.rowCount === 1 ? '' : 's') + '</span></div>' +
+          '<div class="cl-diag-table-wrap"><table class="cl-subtable"><tbody>' + (rowsHtml || '<tr><td>(empty)</td></tr>') + '</tbody></table></div>' +
+        '</div>'
+      );
+    }).join('');
+
+    return (
+      '<div class="cl-hero">' +
+        '<div class="cl-hero-inner" style="max-width:760px;">' +
+          '<div class="cl-hero-kicker">Couldn\u2019t match the expected layout</div>' +
+          '<h1 class="cl-hero-title" style="font-size:36px;">No consultant rows found.</h1>' +
+          '<p class="cl-hero-copy" style="max-width:640px;">' +
+            'This tool looks for a header row containing the word <span class="cl-mono">Amount</span>, with a ' +
+            'consultant name in the cell just before it and Rate / Hours in the cells just after. I opened ' +
+            '<b>' + escapeHtml(state.fileName) + '</b> and didn\u2019t find that pattern in any sheet. Here\u2019s exactly ' +
+            'what I saw in each tab \u2014 it should make clear what\u2019s different, and you can share this with the ' +
+            'person helping adjust the tool.' +
+          '</p>' +
+          '<div class="cl-diag-sheets">' + sheetsHtml + '</div>' +
+          '<div class="cl-drop" data-role="dropzone" tabindex="0" style="margin-top:22px;">' +
+            '<div class="cl-upload-icon">\u2191</div>' +
+            '<div class="cl-drop-title">Try a different file</div>' +
+            '<div class="cl-drop-sub">Drop a .xlsx file here, or click to browse.</div>' +
+            '<input type="file" accept=".xlsx,.xls" style="display:none;" data-role="file-input">' +
+          '</div>' +
+        '</div>' +
+      '</div>'
+    );
+  }
+
+  function renderKpiStrip(d) {
+    function tile(label, value, sub) {
+      return (
+        '<div class="cl-kpi">' +
+          '<div class="cl-kpi-top">' + escapeHtml(label) + '</div>' +
+          '<div class="cl-kpi-value">' + value + '</div>' +
+          (sub ? '<div class="cl-kpi-sub">' + escapeHtml(sub) + '</div>' : '') +
+        '</div>'
+      );
+    }
+    return (
+      '<div class="cl-kpi-strip">' +
+        tile('Consultants', d.kpis.totalConsultants, d.statusCounts.Active + ' active now') +
+        tile('Active', d.statusCounts.Active, 'in ' + d.kpis.latestMonth) +
+        tile('Left', d.statusCounts.Left, 'confirmed on Left sheet') +
+        tile('No recent activity', d.statusCounts.Inactive, 'not seen lately') +
+        tile('Subvendors', d.kpis.totalSubvendors, 'distinct companies') +
+        tile('Total cost YTD', fmtUSD(d.kpis.totalCost), d.kpis.monthsCovered + ' months') +
+      '</div>'
+    );
+  }
+
+  function renderCharts(d) {
+    return (
+      '<div class="cl-charts">' +
+        '<div class="cl-chart-card">' +
+          '<div class="cl-chart-title">Monthly cost to Mentour Corp</div>' +
+          renderMonthlyBars(d.monthlyTotals) +
+        '</div>' +
+        '<div class="cl-chart-card">' +
+          '<div class="cl-chart-title">Top subvendors by cost<span class="cl-chart-title-sub">of ' + d.subvendorTotals.length + '</span></div>' +
+          renderSubvendorBars(d.subvendorTotals) +
+        '</div>' +
+        '<div class="cl-chart-card">' +
+          '<div class="cl-chart-title">Status</div>' +
+          renderDonut([
+            { label: 'Active', value: d.statusCounts.Active },
+            { label: 'Left', value: d.statusCounts.Left },
+            { label: 'Inactive', value: d.statusCounts.Inactive },
+          ], STATUS_COLOR, d.kpis.totalConsultants, 'people') +
+        '</div>' +
+      '</div>'
+    );
+  }
+
+  function renderMonthlyBars(data) {
+    var max = Math.max.apply(null, [1].concat(data.map(function (d) { return d.value; })));
+    var cols = data.map(function (d) {
+      var h = (d.value / max) * 100;
+      var valueLabel = d.value ? ('$' + Math.round(d.value / 1000) + 'k') : '';
+      return (
+        '<div class="cl-monthly-col" title="' + escapeHtml(d.fullLabel) + ': ' + escapeHtml(fmtUSD(d.value)) + '">' +
+          '<div class="cl-monthly-value">' + valueLabel + '</div>' +
+          '<div class="cl-monthly-bar-track"><div class="cl-monthly-bar" style="height:' + h + '%;"></div></div>' +
+          '<div class="cl-monthly-label">' + escapeHtml(d.label) + '</div>' +
+        '</div>'
+      );
+    }).join('');
+    return '<div class="cl-monthly">' + cols + '</div>';
+  }
+
+  function renderSubvendorBars(data) {
+    var top = data.slice(0, 8);
+    var max = Math.max.apply(null, [1].concat(top.map(function (d) { return d.value; })));
+    var rows = top.map(function (d) {
+      var w = (d.value / max) * 100;
+      return (
+        '<div class="cl-hbar-row">' +
+          '<div class="cl-hbar-label" title="' + escapeHtml(d.label) + '">' + escapeHtml(d.label) + '</div>' +
+          '<div class="cl-hbar-track"><div class="cl-hbar-fill" style="width:' + w + '%;"></div></div>' +
+          '<div class="cl-hbar-value">' + fmtUSD(d.value) + '</div>' +
+        '</div>'
+      );
+    }).join('');
+    return '<div class="cl-hbars">' + rows + '</div>';
+  }
+
+  function renderDonut(segments, colorMap, centerValue, centerLabel) {
+    var total = segments.reduce(function (s, d) { return s + d.value; }, 0) || 1;
+    var acc = 0;
+    var stops = segments.map(function (d) {
+      var start = (acc / total) * 360;
+      acc += d.value;
+      var end = (acc / total) * 360;
+      var color = colorMap[d.label] || '#9AA398';
+      return color + ' ' + start + 'deg ' + end + 'deg';
+    });
+    var bg = stops.length ? ('conic-gradient(' + stops.join(', ') + ')') : '#E4E8E1';
+    var legend = segments.map(function (d) {
+      var color = colorMap[d.label] || '#9AA398';
+      return (
+        '<div class="cl-legend-row">' +
+          '<span class="cl-legend-dot" style="background:' + color + ';"></span>' +
+          '<span>' + escapeHtml(d.label) + '</span>' +
+          '<span class="cl-legend-value">' + d.value + '</span>' +
+        '</div>'
+      );
+    }).join('');
+    return (
+      '<div class="cl-donut-wrap">' +
+        '<div class="cl-donut" style="background:' + bg + ';">' +
+          '<div class="cl-donut-hole">' +
+            '<div class="cl-donut-value">' + centerValue + '</div>' +
+            '<div class="cl-donut-label">' + escapeHtml(centerLabel) + '</div>' +
+          '</div>' +
+        '</div>' +
+        '<div class="cl-donut-legend">' + legend + '</div>' +
+      '</div>'
+    );
+  }
+
+  function renderFilterBar(d, resultCount) {
+    var f = state.filters;
+    function opt(value, label, current) {
+      return '<option value="' + escapeHtml(value) + '"' + (value === current ? ' selected' : '') + '>' + escapeHtml(label) + '</option>';
+    }
+    var subvendorOptions = [];
+    d.consultants.forEach(function (c) {
+      c.subvendors.forEach(function (s) { if (subvendorOptions.indexOf(s) === -1) subvendorOptions.push(s); });
+    });
+    subvendorOptions.sort(function (a, b) { return a.localeCompare(b); });
+
+    return (
+      '<div class="cl-filterbar">' +
+        '<div class="cl-search">' +
+          '<span class="cl-search-icon">\u26B2</span>' +
+          '<input type="text" id="search-input" placeholder="Search consultant or subvendor\u2026" value="' + escapeHtml(f.search) + '">' +
+        '</div>' +
+        '<select data-filter="status">' +
+          opt('All', 'All statuses', f.status) + opt('Active', 'Active', f.status) +
+          opt('Left', 'Left', f.status) + opt('Inactive', 'No recent activity', f.status) +
+        '</select>' +
+        '<select data-filter="client">' +
+          opt('All', 'All clients', f.client) + opt('HCL', 'HCL', f.client) +
+          opt('Non-HCL', 'Non-HCL', f.client) + opt('Unspecified', 'Unspecified', f.client) +
+        '</select>' +
+        '<select data-filter="subvendor">' +
+          opt('All', 'All subvendors', f.subvendor) +
+          subvendorOptions.map(function (s) { return opt(s, s, f.subvendor); }).join('') +
+        '</select>' +
+        '<select data-filter="month">' +
+          opt('All', 'Any month', f.month) +
+          d.monthOrder.map(function (m) { return opt(m, m, f.month); }).join('') +
+        '</select>' +
+        '<div class="cl-filter-count">' + resultCount + ' of ' + d.consultants.length + '</div>' +
+        '<button class="cl-reset" data-action="reset-filters" type="button">Reset</button>' +
+      '</div>'
+    );
+  }
+
+  function renderTableSection(filtered) {
+    var headers = COLUMNS.map(function (col) {
+      var active = state.sort.key === col.key;
+      var caretChar = state.sort.dir === 'desc' ? '\u25BE' : '\u25B4';
+      return (
+        '<th data-sort-key="' + col.key + '" class="' + (active ? 'cl-th-active' : '') + '">' +
+          escapeHtml(col.label) +
+          '<span class="cl-sort-caret">' + caretChar + '</span>' +
+        '</th>'
+      );
+    }).join('');
+
+    var rows = filtered.length
+      ? filtered.map(renderConsultantRow).join('')
+      : ('<tr><td colspan="' + COLUMNS.length + '" style="padding:28px 14px;text-align:center;color:#8A9585;">No consultants match these filters.</td></tr>');
+
+    return (
+      '<div class="cl-table-wrap">' +
+        '<table class="cl-main">' +
+          '<thead><tr>' + headers + '</tr></thead>' +
+          '<tbody>' + rows + '</tbody>' +
+        '</table>' +
+      '</div>'
+    );
+  }
+
+  function badge(label, color, bg, border, small) {
+    var style = 'color:' + color + ';background:' + bg + (border ? (';border:1px solid ' + border) : '') + ';';
+    return '<span class="cl-badge ' + (border ? 'cl-badge-outline' : '') + ' ' + (small ? 'cl-badge-sm' : '') + '" style="' + style + '">' + escapeHtml(label) + '</span>';
+  }
+  function statusBadge(status) {
+    var label = status === 'Inactive' ? 'No recent activity' : status;
+    return badge(label, STATUS_COLOR[status] || '#5B6B60', STATUS_BG[status] || '#F0F2EF', null, false);
+  }
+  function clientBadge(tag, small) {
+    return badge(tag, CLIENT_COLOR[tag] || '#5B6B60', CLIENT_BG[tag] || '#F0F2EF', CLIENT_BORDER[tag] || '#DCE1D9', small);
+  }
+
+  function renderConsultantRow(c) {
+    var expanded = state.expandedKey === c.key;
+    var caret = expanded ? '\u25BE' : '\u25B8';
+    var priorExitFlag = (c.leftFlag && c.status !== 'Left')
+      ? '<span class="cl-mini-flag" title="Marked as left from ' + escapeHtml((c.leftNote && c.leftNote.subvendor) || 'a prior subvendor') + ' earlier in the file">prior exit on file</span>'
+      : '';
+    var subvendorExtra = c.subvendors.length > 1 ? '<span class="cl-count-chip">+' + (c.subvendors.length - 1) + '</span>' : '';
+
+    var mainRow = (
+      '<tr class="cl-row" data-row-key="' + escapeHtml(c.key) + '">' +
+        '<td><span class="cl-name-cell"><span class="cl-caret">' + caret + '</span><span>' + escapeHtml(c.name) + '</span>' + priorExitFlag + '</span></td>' +
+        '<td>' + escapeHtml(c.currentSubvendor) + subvendorExtra + '</td>' +
+        '<td>' + clientBadge(c.currentClient, false) + '</td>' +
+        '<td>' + statusBadge(c.status) + '</td>' +
+        '<td class="cl-mono">' + escapeHtml(c.lastActiveMonth) + '</td>' +
+        '<td class="cl-mono cl-cost-cell">' + fmtUSD(c.totalCost) + '</td>' +
+        '<td class="cl-mono">' + fmtRate(c) + '</td>' +
+        '<td class="cl-mono">' + (c.totalHours ? Math.round(c.totalHours) : '\u2014') + '</td>' +
+      '</tr>'
+    );
+
+    if (!expanded) return mainRow;
+
+    var leftNoteHtml = '';
+    if (c.leftFlag) {
+      var ln = c.leftNote || {};
+      leftNoteHtml =
+        '<div class="cl-left-note">Listed on the workbook\u2019s "Left" tracking sheet \u2014 ' + escapeHtml(ln.subvendor || '') +
+        (ln.period ? ' / ' + escapeHtml(ln.period) : '') +
+        (ln.notes ? ' (' + escapeHtml(ln.notes) + ')' : '') + '.' +
+        (c.status !== 'Left' ? (' More recent activity elsewhere means they\u2019re shown as ' + c.status.toLowerCase() + ' overall.') : '') +
+        '</div>';
+    }
+
+    var placementRows = c.placements.map(function (p) {
+      var check = (p.verify !== null && p.amount !== null && Math.abs(p.verify - p.amount) > 0.5) ? fmtUSD2(p.verify) : '\u2014';
+      var notesOrPaid = p.notes ? escapeHtml(p.notes) : (p.paidDate ? ('Paid ' + fmtDate(p.paidDate)) : '\u2014');
+      return (
+        '<tr>' +
+          '<td>' + escapeHtml(p.month) + '</td>' +
+          '<td>' + escapeHtml(p.subvendor) + '</td>' +
+          '<td>' + clientBadge(p.clientTag, true) + '</td>' +
+          '<td class="cl-mono">' + escapeHtml(p.period || '\u2014') + '</td>' +
+          '<td class="cl-mono">' + (p.rate !== null ? ('$' + p.rate + '/hr') : '\u2014') + '</td>' +
+          '<td class="cl-mono">' + (p.hours !== null ? p.hours : '\u2014') + '</td>' +
+          '<td class="cl-mono cl-cost-cell">' + (p.amount !== null ? fmtUSD2(p.amount) : '\u2014') + '</td>' +
+          '<td class="cl-mono cl-muted-cell">' + check + '</td>' +
+          '<td class="cl-notes-cell">' + notesOrPaid + '</td>' +
+        '</tr>'
+      );
+    }).join('');
+
+    var expandRow = (
+      '<tr class="cl-expand-row"><td colspan="' + COLUMNS.length + '">' +
+        '<div class="cl-expand-inner">' +
+          '<div class="cl-expand-title">Placement history<span class="cl-expand-sub">' + c.placementCount + ' recorded payment' + (c.placementCount === 1 ? '' : 's') + '</span></div>' +
+          leftNoteHtml +
+          '<table class="cl-subtable"><thead><tr>' +
+            '<th>Month</th><th>Subvendor</th><th>Client</th><th>Period</th><th>Rate</th><th>Hours</th><th>Cost</th><th>Check</th><th>Notes / paid</th>' +
+          '</tr></thead><tbody>' + placementRows + '</tbody></table>' +
+        '</div>' +
+      '</td></tr>'
+    );
+
+    return mainRow + expandRow;
+  }
+
+  function renderOtherPayments(d) {
+    var items = d.otherPayments;
+    var bodyHtml = '';
+    if (state.otherOpen) {
+      var rows = items.map(function (r) {
+        return (
+          '<tr>' +
+            '<td>' + escapeHtml(r.month) + '</td>' +
+            '<td>' + escapeHtml(r.subvendor) + '</td>' +
+            '<td>' + escapeHtml(r.name) + '</td>' +
+            '<td class="cl-mono">' + (r.amount !== null ? fmtUSD2(r.amount) : '\u2014') + '</td>' +
+          '</tr>'
+        );
+      }).join('');
+      bodyHtml = (
+        '<div class="cl-other-body">' +
+          '<p class="cl-other-copy">These rows didn\u2019t match the consultant/subvendor pattern \u2014 they\u2019re overhead or ' +
+          'one-off items recorded in the same workbook. Kept separate so they don\u2019t inflate consultant costs.</p>' +
+          '<table class="cl-subtable"><thead><tr><th>Month</th><th>Payee / line item</th><th>Description</th><th>Amount</th></tr></thead>' +
+          '<tbody>' + rows + '</tbody></table>' +
+        '</div>'
+      );
+    }
+    var caret = state.otherOpen ? '\u25BE' : '\u25B8';
+    return (
+      '<div class="cl-other">' +
+        '<button class="cl-other-toggle" data-action="toggle-other" type="button">' +
+          '<span>' + caret + '</span>' +
+          '<span>Other payments in this file (' + items.length + ') \u2014 rent, loans, data hosting, payroll, travel reimbursements</span>' +
+          '<span class="cl-other-total">' + fmtUSD(d.kpis.otherTotal) + '</span>' +
+        '</button>' +
+        bodyHtml +
+      '</div>'
+    );
+  }
+
+  function renderFooter(d) {
+    return (
+      '<div class="cl-footer">' +
+        '<b>Reading the numbers:</b> "Cost to Mentour Corp" sums the Amount column for every recorded payment. ' +
+        '"Billing rate" is the $/hr Rate the subvendor bills Mentour Corp for that consultant \u2014 click a row to see it ' +
+        'broken out by month, alongside the Rate \u00d7 Hours check figure (shown only where it differs from the amount ' +
+        'actually paid, e.g. a partial payment). <b>Client</b> is only tagged HCL / Non-HCL where the workbook itself ' +
+        'labeled a block that way; everything else is "Unspecified," not necessarily unknown. <b>Status</b> \u2014 Active ' +
+        'means a payment was recorded in ' + escapeHtml(d.kpis.latestMonth) + ', the most recent sheet; Left means ' +
+        'they\u2019re on the workbook\u2019s "Left" tab with no newer activity; "No recent activity" means neither is true, ' +
+        'which can also just mean no invoice arrived that month.' +
+      '</div>'
+    );
+  }
+
+  /* =========================================================================
+     FILE HANDLING
+     ========================================================================= */
+
+  function handleFile(file) {
+    state.error = null;
+    state.diagnostics = null;
+    state.loading = true;
+    render();
+    var reader = new FileReader();
+    reader.onload = function (e) {
+      try {
+        var bytes = new Uint8Array(e.target.result);
+        var wb = XLSX.read(bytes, { type: 'array', cellDates: true });
+        var result = processWorkbook(wb);
+        if (result.ok) {
+          state.data = result;
+          state.diagnostics = null;
+          state.fileName = file.name;
+          state.filters = { search: '', status: 'All', client: 'All', subvendor: 'All', month: 'All' };
+          state.sort = { key: 'totalCost', dir: 'desc' };
+          state.expandedKey = null;
+          state.otherOpen = false;
+          saveToBackend(file.name, result);
+        } else {
+          state.data = null;
+          state.diagnostics = result.diagnostics;
+          state.fileName = file.name;
+        }
+      } catch (err) {
+        state.data = null;
+        state.diagnostics = null;
+        state.error = (err && err.message) ? err.message : 'Could not parse this workbook.';
+      } finally {
+        state.loading = false;
+        render();
+      }
+    };
+    reader.onerror = function () {
+      state.error = 'Could not read the file.';
+      state.loading = false;
+      render();
+    };
+    reader.readAsArrayBuffer(file);
+  }
+
+  function saveToBackend(fileName, data) {
+    state.saveStatus = 'saving';
+    render();
+    fetch('/api/ledger', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ fileName: fileName, data: data }),
+    }).then(function (res) {
+      if (!res.ok) throw new Error('save failed');
+      return res.json();
+    }).then(function () {
+      state.saveStatus = 'saved';
+      render();
+    }).catch(function () {
+      state.saveStatus = 'error';
+      render();
+    });
+  }
+
+  function exportCSV(consultants) {
+    var header = ['Consultant', 'Subvendor', 'Client', 'Status', 'Last active month', 'Total cost to Mentour', 'Billing rate ($/hr)', 'Total hours', 'Placements'];
+    var rows = consultants.map(function (c) {
+      return [c.name, c.currentSubvendor, c.currentClient, c.status, c.lastActiveMonth,
+        c.totalCost.toFixed(2), fmtRate(c), Math.round(c.totalHours || 0), c.placementCount];
+    });
+    var csv = [header].concat(rows).map(function (r) {
+      return r.map(function (cell) { return '"' + String(cell).replace(/"/g, '""') + '"'; }).join(',');
+    }).join('\n');
+    var blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url;
+    a.download = 'consultant-ledger.csv';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
+
+  /* =========================================================================
+     EVENT WIRING (delegated on #app, which persists across renders)
+     ========================================================================= */
+
+  function withFocusPreserved(fn) {
+    var active = document.activeElement;
+    var id = active && active.id;
+    var selStart = (active && typeof active.selectionStart === 'number') ? active.selectionStart : null;
+    fn();
+    if (id) {
+      var el = document.getElementById(id);
+      if (el) {
+        el.focus();
+        if (selStart !== null && el.setSelectionRange) {
+          try { el.setSelectionRange(selStart, selStart); } catch (e) {}
+        }
+      }
+    }
+  }
+
+  appEl.addEventListener('click', function (e) {
+    var dropzone = e.target.closest('[data-role="dropzone"]');
+    if (dropzone) {
+      var input = dropzone.querySelector('input[type="file"]');
+      if (input) input.click();
+      return;
+    }
+    var sortHeader = e.target.closest('[data-sort-key]');
+    if (sortHeader) {
+      var key = sortHeader.getAttribute('data-sort-key');
+      if (state.sort.key === key) state.sort.dir = state.sort.dir === 'desc' ? 'asc' : 'desc';
+      else { state.sort.key = key; state.sort.dir = 'desc'; }
+      render();
+      return;
+    }
+    var row = e.target.closest('[data-row-key]');
+    if (row) {
+      var k = row.getAttribute('data-row-key');
+      state.expandedKey = (state.expandedKey === k) ? null : k;
+      render();
+      return;
+    }
+    var resetBtn = e.target.closest('[data-action="reset-filters"]');
+    if (resetBtn) {
+      state.filters = { search: '', status: 'All', client: 'All', subvendor: 'All', month: 'All' };
+      render();
+      return;
+    }
+    var exportBtn = e.target.closest('[data-action="export-csv"]');
+    if (exportBtn) {
+      exportCSV(getFilteredSorted());
+      return;
+    }
+    var otherToggle = e.target.closest('[data-action="toggle-other"]');
+    if (otherToggle) {
+      state.otherOpen = !state.otherOpen;
+      render();
+      return;
+    }
+    var logoutBtn = e.target.closest('[data-action="logout"]');
+    if (logoutBtn) {
+      fetch('/api/auth/logout', { method: 'POST' }).then(function () { window.location.href = '/login.html'; });
+      return;
+    }
+  });
+
+  appEl.addEventListener('change', function (e) {
+    if (e.target && e.target.matches && e.target.matches('input[type="file"]')) {
+      var f = e.target.files && e.target.files[0];
+      if (f) handleFile(f);
+      return;
+    }
+    var sel = e.target.closest && e.target.closest('select[data-filter]');
+    if (sel) {
+      state.filters[sel.getAttribute('data-filter')] = sel.value;
+      render();
+    }
+  });
+
+  appEl.addEventListener('input', function (e) {
+    if (e.target && e.target.id === 'search-input') {
+      state.filters.search = e.target.value;
+      withFocusPreserved(render);
+    }
+  });
+
+  appEl.addEventListener('dragover', function (e) {
+    var dz = e.target.closest && e.target.closest('[data-role="dropzone"]');
+    if (dz) { e.preventDefault(); dz.classList.add('cl-drop-over'); }
+  });
+  appEl.addEventListener('dragleave', function (e) {
+    var dz = e.target.closest && e.target.closest('[data-role="dropzone"]');
+    if (dz) dz.classList.remove('cl-drop-over');
+  });
+  appEl.addEventListener('drop', function (e) {
+    var dz = e.target.closest && e.target.closest('[data-role="dropzone"]');
+    if (dz) {
+      e.preventDefault();
+      dz.classList.remove('cl-drop-over');
+      var f = e.dataTransfer.files && e.dataTransfer.files[0];
+      if (f) handleFile(f);
+    }
+  });
+
+  /* =========================================================================
+     INIT
+     ========================================================================= */
+
+  function checkAuthAndInit() {
+    fetch('/api/auth/me').then(function (res) {
+      if (res.status !== 200) { window.location.href = '/login.html'; return null; }
+      return res.json();
+    }).then(function (body) {
+      if (!body) return;
+      auth.user = body.user;
+      return fetch('/api/ledger/latest').then(function (res) { return res.ok ? res.json() : { import: null }; });
+    }).then(function (latest) {
+      if (latest && latest.import) {
+        state.data = latest.import.data;
+        state.fileName = latest.import.file_name;
+        state.saveStatus = 'saved';
+      }
+      render();
+    }).catch(function () {
+      window.location.href = '/login.html';
+    });
+  }
+
+  checkAuthAndInit();
+})();
+</script>
+</body>
+</html>

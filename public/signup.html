@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Create an account — Mentour Suite</title>
+<link rel="stylesheet" href="/shared.css">
+</head>
+<body>
+<div class="auth-page">
+  <div class="auth-card">
+    <div class="auth-kicker">Mentour Suite</div>
+    <h1 class="auth-title">Create an account.</h1>
+    <p class="auth-copy">Set up your company, or join one that's already here.</p>
+
+    <div class="auth-toggle">
+      <button type="button" id="tab-new" class="active">New company</button>
+      <button type="button" id="tab-join">Join with invite code</button>
+    </div>
+
+    <form id="new-org-form">
+      <label>Company name
+        <input type="text" name="orgName" required placeholder="Mentour Corp">
+      </label>
+      <label>Your name
+        <input type="text" name="name" required>
+      </label>
+      <label>Email
+        <input type="email" name="email" required autocomplete="email">
+      </label>
+      <label>Password
+        <input type="password" name="password" required minlength="8" autocomplete="new-password">
+      </label>
+      <div class="auth-error" id="new-org-error" hidden></div>
+      <button type="submit" class="auth-btn">Create company account</button>
+    </form>
+
+    <form id="join-form" hidden>
+      <label>Invite code
+        <input type="text" name="inviteCode" required placeholder="from your teammate">
+      </label>
+      <label>Your name
+        <input type="text" name="name" required>
+      </label>
+      <label>Email
+        <input type="email" name="email" required autocomplete="email">
+      </label>
+      <label>Password
+        <input type="password" name="password" required minlength="8" autocomplete="new-password">
+      </label>
+      <div class="auth-error" id="join-error" hidden></div>
+      <button type="submit" class="auth-btn">Join company</button>
+    </form>
+
+    <div class="auth-footer">
+      Already have an account? <a href="/login.html">Sign in</a>
+    </div>
+  </div>
+</div>
+<script>
+  var tabNew = document.getElementById('tab-new');
+  var tabJoin = document.getElementById('tab-join');
+  var newForm = document.getElementById('new-org-form');
+  var joinForm = document.getElementById('join-form');
+
+  tabNew.addEventListener('click', function () {
+    tabNew.classList.add('active'); tabJoin.classList.remove('active');
+    newForm.hidden = false; joinForm.hidden = true;
+  });
+  tabJoin.addEventListener('click', function () {
+    tabJoin.classList.add('active'); tabNew.classList.remove('active');
+    joinForm.hidden = false; newForm.hidden = true;
+  });
+
+  async function submitForm(form, url, bodyFn, errorElId) {
+    var errorEl = document.getElementById(errorElId);
+    errorEl.hidden = true;
+    var btn = form.querySelector('button');
+    var originalText = btn.textContent;
+    btn.disabled = true; btn.textContent = 'Creating\u2026';
+    try {
+      var res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(bodyFn(form)) });
+      var data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Something went wrong.');
+      window.location.href = '/';
+    } catch (err) {
+      errorEl.textContent = err.message;
+      errorEl.hidden = false;
+      btn.disabled = false; btn.textContent = originalText;
+    }
+  }
+
+  newForm.addEventListener('submit', function (e) {
+    e.preventDefault();
+    submitForm(newForm, '/api/auth/signup', function (f) {
+      return { orgName: f.orgName.value, name: f.name.value, email: f.email.value, password: f.password.value };
+    }, 'new-org-error');
+  });
+
+  joinForm.addEventListener('submit', function (e) {
+    e.preventDefault();
+    submitForm(joinForm, '/api/auth/join', function (f) {
+      return { inviteCode: f.inviteCode.value.trim(), name: f.name.value, email: f.email.value, password: f.password.value };
+    }, 'join-error');
+  });
+</script>
+</body>
+</html>

@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sign in — Mentour Suite</title>
+<link rel="stylesheet" href="/shared.css">
+</head>
+<body>
+<div class="auth-page">
+  <div class="auth-card">
+    <div class="auth-kicker">Mentour Suite</div>
+    <h1 class="auth-title">Sign in.</h1>
+    <p class="auth-copy">Ledger and Margin, in one place.</p>
+
+    <form id="login-form">
+      <label>Email
+        <input type="email" name="email" required autocomplete="email">
+      </label>
+      <label>Password
+        <input type="password" name="password" required autocomplete="current-password">
+      </label>
+      <div id="error" class="auth-error" hidden></div>
+      <button type="submit" class="auth-btn">Sign in</button>
+    </form>
+
+    <div class="auth-footer">
+      New here? <a href="/signup.html">Create an account</a>
+    </div>
+  </div>
+</div>
+<script>
+  document.getElementById('login-form').addEventListener('submit', async function (e) {
+    e.preventDefault();
+    var errorEl = document.getElementById('error');
+    errorEl.hidden = true;
+    var form = e.target;
+    var body = { email: form.email.value, password: form.password.value };
+    var btn = form.querySelector('button');
+    btn.disabled = true; btn.textContent = 'Signing in\u2026';
+    try {
+      var res = await fetch('/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      var data = await res.json();
+      if (!res.ok) { throw new Error(data.error || 'Something went wrong.'); }
+      window.location.href = '/';
+    } catch (err) {
+      errorEl.textContent = err.message;
+      errorEl.hidden = false;
+      btn.disabled = false; btn.textContent = 'Sign in';
+    }
+  });
+</script>
+</body>
+</html>

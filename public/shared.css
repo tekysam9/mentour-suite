@@ -1,0 +1,90 @@
+:root {
+  --ink: #16241C;
+  --paper: #F2F5F0;
+  --card: #FFFFFF;
+  --line: #DCE3D9;
+  --text: #1A241C;
+  --text-muted: #5B6B60;
+  --brass: #B9862E;
+  --pine: #2E6F52;
+  --brick: #9B3B3B;
+}
+* { box-sizing: border-box; }
+html, body {
+  margin: 0; padding: 0; background: var(--paper); color: var(--text);
+  font-family: -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  min-height: 100vh;
+}
+.serif { font-family: Georgia, 'Iowan Old Style', 'Palatino Linotype', serif; }
+
+/* ---------- auth pages ---------- */
+.auth-page { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 24px; }
+.auth-card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 40px 36px; width: 100%; max-width: 380px; box-shadow: 0 1px 2px rgba(22,36,28,0.04); }
+.auth-kicker { font-size: 11.5px; letter-spacing: 0.06em; color: var(--pine); font-weight: 600; margin-bottom: 8px; }
+.auth-title { font-family: Georgia, 'Iowan Old Style', 'Palatino Linotype', serif; font-weight: 600; font-size: 32px; color: var(--ink); margin: 0 0 6px; }
+.auth-copy { font-size: 13.5px; color: var(--text-muted); margin: 0 0 26px; }
+.auth-card form { display: flex; flex-direction: column; gap: 16px; }
+.auth-card label { display: flex; flex-direction: column; gap: 6px; font-size: 12.5px; font-weight: 500; color: var(--text-muted); }
+.auth-card input {
+  border: 1px solid var(--line); border-radius: 6px; padding: 10px 12px; font-size: 14px;
+  font-family: inherit; color: var(--text); background: var(--paper); outline: none;
+}
+.auth-card input:focus { border-color: var(--pine); }
+.auth-btn {
+  background: var(--pine); color: #EFF3EC; border: none; border-radius: 6px; padding: 11px 14px;
+  font-size: 14px; font-weight: 600; cursor: pointer; font-family: inherit; margin-top: 4px;
+}
+.auth-btn:hover { background: #275F46; }
+.auth-btn:disabled { opacity: 0.6; cursor: default; }
+.auth-error {
+  background: #F6E9E9; border: 1px solid #E3C3C3; color: #6E2626; padding: 9px 11px;
+  border-radius: 6px; font-size: 12.5px; line-height: 1.5;
+}
+.auth-footer { margin-top: 22px; font-size: 12.5px; color: var(--text-muted); text-align: center; }
+.auth-footer a { color: var(--pine); text-decoration: none; font-weight: 500; }
+.auth-footer a:hover { text-decoration: underline; }
+
+.auth-toggle { display: flex; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; margin-bottom: 22px; }
+.auth-toggle button {
+  flex: 1; padding: 8px; background: var(--card); border: none; font-size: 12.5px; font-weight: 500;
+  color: var(--text-muted); cursor: pointer; font-family: inherit;
+}
+.auth-toggle button.active { background: var(--ink); color: #EFF3EC; }
+
+/* ---------- landing / picker page ---------- */
+.landing-header {
+  background: var(--ink); color: #EFF3EC; padding: 22px 28px; display: flex; align-items: center;
+  justify-content: space-between; gap: 16px; flex-wrap: wrap; border-bottom: 3px solid var(--brass);
+}
+.landing-wordmark { font-family: Georgia, 'Iowan Old Style', 'Palatino Linotype', serif; font-size: 22px; font-weight: 600; }
+.landing-sub { font-size: 12.5px; color: #B9C4B4; margin-top: 3px; }
+.landing-account { font-size: 12.5px; color: #C9D3C4; text-align: right; }
+.landing-btn {
+  display: inline-flex; align-items: center; gap: 7px; border: 1px solid rgba(239,243,236,0.35);
+  background: transparent; color: #EFF3EC; padding: 7px 13px; border-radius: 5px; font-size: 12.5px;
+  font-weight: 500; cursor: pointer; font-family: inherit; margin-top: 8px;
+}
+.landing-btn:hover { background: rgba(239,243,236,0.1); }
+
+.landing-body { max-width: 880px; margin: 0 auto; padding: 56px 24px; }
+.landing-greeting { font-family: Georgia, 'Iowan Old Style', 'Palatino Linotype', serif; font-size: 34px; font-weight: 600; color: var(--ink); margin: 0 0 8px; }
+.landing-copy { font-size: 14.5px; color: var(--text-muted); margin: 0 0 36px; max-width: 520px; line-height: 1.6; }
+
+.app-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; margin-bottom: 40px; }
+@media (max-width: 700px) { .app-grid { grid-template-columns: 1fr; } }
+.app-card {
+  display: block; text-decoration: none; background: var(--card); border: 1px solid var(--line);
+  border-radius: 12px; padding: 26px; transition: border-color .15s ease, box-shadow .15s ease;
+}
+.app-card:hover { border-color: var(--pine); box-shadow: 0 2px 8px rgba(22,36,28,0.06); }
+.app-card-name { font-family: Georgia, 'Iowan Old Style', 'Palatino Linotype', serif; font-size: 24px; font-weight: 600; color: var(--ink); margin-bottom: 6px; }
+.app-card-desc { font-size: 13px; color: var(--text-muted); line-height: 1.55; }
+.app-card-arrow { color: var(--pine); font-size: 13px; font-weight: 600; margin-top: 14px; display: inline-block; }
+
+.invite-box { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 20px 24px; max-width: 520px; }
+.invite-box-title { font-size: 12px; font-weight: 600; color: var(--ink); margin-bottom: 6px; }
+.invite-box-copy { font-size: 12.5px; color: var(--text-muted); margin-bottom: 12px; line-height: 1.5; }
+.invite-code-row { display: flex; align-items: center; gap: 10px; }
+.invite-code { font-family: ui-monospace, 'SF Mono', Consolas, monospace; background: var(--paper); border: 1px solid var(--line); border-radius: 6px; padding: 7px 11px; font-size: 13px; color: var(--ink); }
+.invite-copy-btn { border: 1px solid var(--line); background: var(--card); border-radius: 6px; padding: 7px 12px; font-size: 12px; cursor: pointer; font-family: inherit; color: var(--text); }
+.invite-copy-btn:hover { background: var(--paper); }

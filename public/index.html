@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Mentour Suite</title>
+<link rel="stylesheet" href="/shared.css">
+</head>
+<body>
+<div id="app"></div>
+<script>
+  function escapeHtml(s) {
+    if (s === null || s === undefined) return '';
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  }
+
+  function render(user) {
+    var inviteBox = '';
+    if (user.role === 'owner') {
+      inviteBox =
+        '<div class="invite-box">' +
+          '<div class="invite-box-title">Invite your team</div>' +
+          '<div class="invite-box-copy">Share this code so teammates at ' + escapeHtml(user.organization.name) + ' can create their own login and see the same data.</div>' +
+          '<div class="invite-code-row">' +
+            '<span class="invite-code" id="invite-code">' + escapeHtml(user.organization.inviteCode) + '</span>' +
+            '<button class="invite-copy-btn" id="copy-btn" type="button">Copy</button>' +
+          '</div>' +
+        '</div>';
+    }
+
+    document.getElementById('app').innerHTML =
+      '<div class="landing-header">' +
+        '<div><div class="landing-wordmark">Mentour Suite</div><div class="landing-sub">' + escapeHtml(user.organization.name) + '</div></div>' +
+        '<div class="landing-account">Signed in as ' + escapeHtml(user.name) + '<br>' +
+          '<button class="landing-btn" id="logout-btn" type="button">Log out</button>' +
+        '</div>' +
+      '</div>' +
+      '<div class="landing-body">' +
+        '<h1 class="landing-greeting">Welcome back.</h1>' +
+        '<p class="landing-copy">Pick a dashboard. Each one remembers the last file your team imported \u2014 you only need to re-upload when the underlying data changes.</p>' +
+        '<div class="app-grid">' +
+          '<a class="app-card" href="/ledger.html">' +
+            '<div class="app-card-name">Ledger.</div>' +
+            '<div class="app-card-desc">Subvendor payments, month by month \u2014 who\u2019s working where, cost to Mentour Corp, billing rate, and who\u2019s still active.</div>' +
+            '<span class="app-card-arrow">Open Ledger \u2192</span>' +
+          '</a>' +
+          '<a class="app-card" href="/margin.html">' +
+            '<div class="app-card-name">Margin.</div>' +
+            '<div class="app-card-desc">The consultant roster \u2014 client placement, cost and billing rate per hour, gross margin, and active vs. left.</div>' +
+            '<span class="app-card-arrow">Open Margin \u2192</span>' +
+          '</a>' +
+        '</div>' +
+        inviteBox +
+      '</div>';
+
+    document.getElementById('logout-btn').addEventListener('click', async function () {
+      await fetch('/api/auth/logout', { method: 'POST' });
+      window.location.href = '/login.html';
+    });
+
+    var copyBtn = document.getElementById('copy-btn');
+    if (copyBtn) {
+      copyBtn.addEventListener('click', function () {
+        var code = document.getElementById('invite-code').textContent;
+        navigator.clipboard.writeText(code).then(function () {
+          copyBtn.textContent = 'Copied';
+          setTimeout(function () { copyBtn.textContent = 'Copy'; }, 1500);
+        });
+      });
+    }
+  }
+
+  fetch('/api/auth/me').then(function (res) {
+    if (res.status !== 200) { window.location.href = '/login.html'; return null; }
+    return res.json();
+  }).then(function (data) {
+    if (data) render(data.user);
+  }).catch(function () {
+    window.location.href = '/login.html';
+  });
+</script>
+</body>
+</html>
