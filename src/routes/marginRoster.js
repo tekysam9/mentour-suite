@@ -4,6 +4,14 @@
 // Wired into the /api/margin import router as its onSave hook — runs in
 // the same transaction as the margin_imports insert, so the two can never
 // go out of sync.
+//
+// Also resolves each row's consultant/client/program/subvendor against the
+// directory tables (creating a record the first time a name is seen,
+// reusing it after) and stores the resulting ids alongside the existing
+// text columns. See directoryUpsert.js and db/schema.sql for the
+// client/program field-mapping explanation.
+
+const { normalizeName, upsertConsultant, upsertSubvendor, upsertClient, upsertProgram } = require('./directoryUpsert');
 
 function toNullableNumber(value) {
   if (value === null || value === undefined || value === '') return null;
@@ -32,15 +40,67 @@ async function saveMarginRoster(conn, { organizationId, importId, data }) {
   const records = data && Array.isArray(data.records) ? data.records : [];
   if (!records.length) return;
 
-  const rows = records
-    .filter((r) => r && toNullableText(r.name, 255)) // name is NOT NULL; skip anything malformed rather than fail the whole upload
-    .map((r) => [
+  const valid = records.filter((r) => r && toNullableText(r.name, 255));
+  if (!valid.length) return;
+
+  // Resolve each distinct name once, not once per row — most names repeat
+  // across dozens of rows in a real roster.
+  const consultantIds = new Map(); // normalized name -> id
+  const clientIds = new Map(); // normalized program value -> client id
+  const programIds = new Map(); // "clientId|detail" -> program id
+  const subvendorIds = new Map(); // normalized name -> id
+
+  for (const r of valid) {
+    const consultantKey = normalizeName(r.name);
+    if (consultantKey && !consultantIds.has(consultantKey)) {
+      consultantIds.set(consultantKey, await upsertConsultant(conn, organizationId, r.name));
+    }
+
+    // "Program" is the end-client/account name in this data (see
+    // schema.sql's comment on the clients/programs tables).
+    const clientKey = normalizeName(r.program);
+    if (clientKey && !clientIds.has(clientKey)) {
+      clientIds.set(clientKey, await upsertClient(conn, organizationId, r.program));
+    }
+
+    const clientId = clientKey ? clientIds.get(clientKey) : null;
+    const programDetailKey = normalizeName(r.clientDetail);
+    if (clientId && programDetailKey) {
+      const programKey = clientId + '|' + programDetailKey;
+      if (!programIds.has(programKey)) {
+        programIds.set(programKey, await upsertProgram(conn, organizationId, clientId, r.clientDetail));
+      }
+    }
+
+    // Only a real "Subvendor" employment row names an actual vendor company
+    // — for W2/1099/direct rows, subvendorText holds a marker like "W2",
+    // not a vendor, so skip creating a bogus subvendor record for those.
+    if (r.employmentType === 'Subvendor') {
+      const subvendorKey = normalizeName(r.subvendorText);
+      if (subvendorKey && !subvendorIds.has(subvendorKey)) {
+        subvendorIds.set(subvendorKey, await upsertSubvendor(conn, organizationId, r.subvendorText));
+      }
+    }
+  }
+
+  const rows = valid.map((r) => {
+    const consultantKey = normalizeName(r.name);
+    const clientKey = normalizeName(r.program);
+    const clientId = clientKey ? clientIds.get(clientKey) || null : null;
+    const programDetailKey = normalizeName(r.clientDetail);
+    const programId = clientId && programDetailKey ? programIds.get(clientId + '|' + programDetailKey) || null : null;
+    const subvendorKey = r.employmentType === 'Subvendor' ? normalizeName(r.subvendorText) : null;
+
+    return [
       importId,
       organizationId,
       toNullableText(r.name, 255),
+      consultantKey ? consultantIds.get(consultantKey) || null : null,
       toNullableText(r.client, 255),
       toNullableText(r.program, 255),
+      clientId,
       toNullableText(r.clientDetail, 255),
+      programId,
       toNullableNumber(r.cost),
       toNullableNumber(r.billing),
       toNullableNumber(r.margin),
@@ -50,17 +110,18 @@ async function saveMarginRoster(conn, { organizationId, importId, data }) {
       toNullableDate(r.leftDate),
       toNullableText(r.recruiter, 255),
       toNullableText(r.subvendorText, 255),
+      subvendorKey ? subvendorIds.get(subvendorKey) || null : null,
       toNullableText(r.employmentType, 64),
       toNullableText(r.sourceSheet, 255),
-    ]);
-
-  if (!rows.length) return;
+    ];
+  });
 
   await conn.query(
     `INSERT INTO margin_roster_entries
-       (import_id, organization_id, name, client, program, client_detail,
-        cost, billing, margin, status, joined_text, left_text, left_date,
-        recruiter, subvendor_text, employment_type, source_sheet)
+       (import_id, organization_id, name, consultant_id, client, program, client_id,
+        client_detail, program_id, cost, billing, margin, status, joined_text,
+        left_text, left_date, recruiter, subvendor_text, subvendor_id,
+        employment_type, source_sheet)
      VALUES ?`,
     [rows]
   );

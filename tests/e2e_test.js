@@ -211,6 +211,97 @@ async function main() {
       );
       check('roster rows stay scoped to their own organization (no cross-tenant mixing)',
         orgCounts.length === 2 && orgCounts.every((row) => row.n > 0), orgCounts);
+
+      // 21. The Margin upload above should have populated the directory:
+      // a consultant for each named person, a client for each Program value,
+      // a program for each clientDetail under its client, and a subvendor
+      // only for the row whose employment type is actually 'Subvendor'
+      // (the W2 row's subvendorText is a marker, not a real vendor name).
+      r = await owner.fetch('/api/directory/consultants');
+      check('directory consultants populated from margin upload', r.status === 200 &&
+        r.body.consultants.length === 2 &&
+        r.body.consultants.some((c) => c.name === 'Jordan Blake') &&
+        r.body.consultants.some((c) => c.name === 'Priya Natarajan'), r.body);
+
+      r = await owner.fetch('/api/directory/clients');
+      check('directory clients populated from Program values', r.status === 200 &&
+        r.body.clients.length === 2 &&
+        r.body.clients.some((c) => c.name === 'Acme') &&
+        r.body.clients.some((c) => c.name === 'Globex'), r.body);
+
+      r = await owner.fetch('/api/directory/programs');
+      check('directory programs populated from clientDetail, linked to its client', r.status === 200 &&
+        r.body.programs.length === 1 &&
+        r.body.programs[0].name === 'Platform' && r.body.programs[0].client_name === 'Acme', r.body);
+
+      r = await owner.fetch('/api/directory/subvendors');
+      check('directory subvendors only created for real Subvendor rows (W2 marker excluded)',
+        r.status === 200 && r.body.subvendors.length === 1 && r.body.subvendors[0].name === 'Vendor Co', r.body);
+
+      r = await owner.fetch('/api/directory/consultants');
+      const jordanRecord = r.body.consultants.find((c) => c.name === 'Jordan Blake');
+      check('consultant found for editing', !!jordanRecord, r.body);
+
+      // 22. Editing a consultant's contact details persists...
+      r = await owner.fetch('/api/directory/consultants/' + jordanRecord.id, {
+        method: 'PATCH', body: JSON.stringify({ email: 'jordan@acme.test', phone: '555-0100', address: '1 Acme Way' }),
+      });
+      check('consultant edit returns 200 with updated fields', r.status === 200 &&
+        r.body.record.email === 'jordan@acme.test' && r.body.record.phone === '555-0100', r.body);
+
+      // 23. ...and a second org can't edit (or see) the first org's directory.
+      r = await otherOrgUser.fetch('/api/directory/consultants/' + jordanRecord.id, {
+        method: 'PATCH', body: JSON.stringify({ email: 'hijacked@evil.test' }),
+      });
+      check('cross-tenant directory edit blocked (404)', r.status === 404, r);
+
+      // 24. ...and survives a second, unrelated upload touching the same org
+      // (upsert must never overwrite existing contact details).
+      r = await owner.fetch('/api/margin', { method: 'POST', body: JSON.stringify({
+        fileName: 'Roster2.xlsx',
+        data: { kpis: {}, records: [{ name: 'Jordan Blake', client: 'Acme / Platform', program: 'Acme', clientDetail: 'Platform', cost: 86, billing: 141, margin: 55, status: 'Active', employmentType: 'W2 (direct)', subvendorText: 'W2' }] },
+      }) });
+      check('second margin upload for same consultant returns 201', r.status === 201, r);
+      r = await owner.fetch('/api/directory/consultants');
+      const jordanAfter = r.body.consultants.find((c) => c.name === 'Jordan Blake');
+      check('edited contact details survive a later import (not overwritten)',
+        jordanAfter && jordanAfter.email === 'jordan@acme.test' && jordanAfter.margin_rows === 2, jordanAfter);
+
+      // 25. A Ledger upload naming the same consultant and the same
+      // subvendor resolves to the SAME directory records, not new ones —
+      // the whole point of sharing the directory across both tools.
+      r = await owner.fetch('/api/ledger', { method: 'POST', body: JSON.stringify({
+        fileName: 'LedgerRoster.xlsx',
+        data: {
+          kpis: {},
+          consultants: [{
+            name: 'Jordan Blake',
+            placements: [{ subvendor: 'Vendor Co', period: 'Jan 2026', name: 'Jordan Blake', amount: 5000, rate: 85, hours: 160, month: 'Jan 2026', clientTag: 'HCL' }],
+          }],
+        },
+      }) });
+      check('ledger upload with roster consultants returns 201', r.status === 201, r);
+
+      r = await owner.fetch('/api/directory/consultants');
+      const jordanShared = r.body.consultants.find((c) => c.name === 'Jordan Blake');
+      check('same consultant record used across Ledger and Margin (shared identity)',
+        jordanShared && jordanShared.id === jordanRecord.id &&
+        jordanShared.margin_rows === 2 && jordanShared.ledger_rows === 1 &&
+        jordanShared.email === 'jordan@acme.test', jordanShared);
+
+      r = await owner.fetch('/api/directory/subvendors');
+      check('subvendor "Vendor Co" shared across Ledger and Margin, not duplicated',
+        r.body.subvendors.length === 1 && r.body.subvendors[0].ledger_rows === 1 && r.body.subvendors[0].margin_rows === 1,
+        r.body.subvendors);
+
+      const [ledgerRosterRows] = await dbConn.query(
+        'SELECT name, subvendor_text, client_tag, amount, consultant_id, subvendor_id FROM ledger_roster_entries WHERE consultant_id = ?',
+        [jordanRecord.id]
+      );
+      check('ledger_roster_entries row written with correct fields and linked ids',
+        ledgerRosterRows.length === 1 && ledgerRosterRows[0].name === 'Jordan Blake' &&
+        Number(ledgerRosterRows[0].amount) === 5000 && ledgerRosterRows[0].consultant_id === jordanRecord.id,
+        ledgerRosterRows);
     } finally {
       await dbConn.end();
     }

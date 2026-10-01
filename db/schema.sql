@@ -77,5 +77,121 @@ CREATE TABLE IF NOT EXISTS margin_roster_entries (
   INDEX idx_margin_roster_org_status (organization_id, status)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+-- ---------------------------------------------------------------------------
+-- Directory: consultants, clients, programs, subvendors as real records with
+-- their own contact details (email/phone/address), instead of just names
+-- copied out of a spreadsheet. Populated automatically the first time a name
+-- is seen in an upload (Ledger or Margin) and left alone after that — a save
+-- never overwrites details someone has filled in through the Directory page.
+--
+-- Consultants and subvendors are shared between Ledger and Margin (the same
+-- person/vendor uploaded through either tool resolves to one record, matched
+-- on name, case/whitespace-insensitive, per organization). Clients and
+-- programs only come from Margin — Ledger has no equivalent concept (its
+-- "client" is just an HCL / Non-HCL tag, not a named account).
+--
+-- In Margin's own data, what the dashboard labels "Program" (e.g. "Acme") is
+-- actually the end-client/account name, and the text after a "/" in the
+-- "Client / Account" column (e.g. "Platform") is the specific engagement
+-- under that account. So: `clients` is keyed on the Program value, and
+-- `programs` is keyed on that post-slash detail, linked under its client.
+-- ---------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS consultants (
+  id              INT AUTO_INCREMENT PRIMARY KEY,
+  organization_id INT NOT NULL,
+  name            VARCHAR(255) NOT NULL,
+  email           VARCHAR(255),
+  phone           VARCHAR(64),
+  address         VARCHAR(500),
+  created_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE,
+  UNIQUE KEY uq_consultants_org_name (organization_id, name)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS subvendors (
+  id              INT AUTO_INCREMENT PRIMARY KEY,
+  organization_id INT NOT NULL,
+  name            VARCHAR(255) NOT NULL,
+  email           VARCHAR(255),
+  phone           VARCHAR(64),
+  address         VARCHAR(500),
+  created_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE,
+  UNIQUE KEY uq_subvendors_org_name (organization_id, name)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS clients (
+  id              INT AUTO_INCREMENT PRIMARY KEY,
+  organization_id INT NOT NULL,
+  name            VARCHAR(255) NOT NULL,
+  email           VARCHAR(255),
+  phone           VARCHAR(64),
+  address         VARCHAR(500),
+  created_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE,
+  UNIQUE KEY uq_clients_org_name (organization_id, name)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS programs (
+  id              INT AUTO_INCREMENT PRIMARY KEY,
+  organization_id INT NOT NULL,
+  client_id       INT NOT NULL,
+  name            VARCHAR(255) NOT NULL,
+  email           VARCHAR(255),
+  phone           VARCHAR(64),
+  address         VARCHAR(500),
+  created_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE,
+  FOREIGN KEY (client_id) REFERENCES clients(id) ON DELETE CASCADE,
+  UNIQUE KEY uq_programs_client_name (client_id, name)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Link margin_roster_entries rows to the directory records they resolved to.
+-- Nullable: a W2/1099/direct-employment row has no real subvendor, and a row
+-- with no "/" in Client / Account has no program detail, so those stay NULL.
+ALTER TABLE margin_roster_entries ADD COLUMN IF NOT EXISTS consultant_id INT NULL AFTER name;
+ALTER TABLE margin_roster_entries ADD COLUMN IF NOT EXISTS client_id INT NULL AFTER program;
+ALTER TABLE margin_roster_entries ADD COLUMN IF NOT EXISTS program_id INT NULL AFTER client_detail;
+ALTER TABLE margin_roster_entries ADD COLUMN IF NOT EXISTS subvendor_id INT NULL AFTER subvendor_text;
+
+-- One row per consultant per Ledger upload (same pattern as
+-- margin_roster_entries). Ledger's natural grain is a subvendor payment
+-- line, not a roster snapshot, so one row here is one consultant's payment
+-- for one subvendor in one month of one upload, not "the current roster."
+CREATE TABLE IF NOT EXISTS ledger_roster_entries (
+  id              INT AUTO_INCREMENT PRIMARY KEY,
+  import_id       INT NOT NULL,
+  organization_id INT NOT NULL,
+  consultant_id   INT NULL,
+  subvendor_id    INT NULL,
+  name            VARCHAR(255) NOT NULL,
+  subvendor_text  VARCHAR(255),
+  client_tag      VARCHAR(32),
+  month_label     VARCHAR(64),
+  period_text     VARCHAR(255),
+  amount          DECIMAL(12,2),
+  rate            DECIMAL(12,2),
+  hours           DECIMAL(10,2),
+  paid_date       DATE,
+  notes           VARCHAR(500),
+  FOREIGN KEY (import_id) REFERENCES ledger_imports(id) ON DELETE CASCADE,
+  FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE,
+  INDEX idx_ledger_roster_import (import_id),
+  INDEX idx_ledger_roster_org_name (organization_id, name)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Foreign keys for the directory links, added after both sides exist.
+ALTER TABLE margin_roster_entries ADD CONSTRAINT fk_margin_roster_consultant FOREIGN KEY IF NOT EXISTS (consultant_id) REFERENCES consultants(id) ON DELETE SET NULL;
+ALTER TABLE margin_roster_entries ADD CONSTRAINT fk_margin_roster_client FOREIGN KEY IF NOT EXISTS (client_id) REFERENCES clients(id) ON DELETE SET NULL;
+ALTER TABLE margin_roster_entries ADD CONSTRAINT fk_margin_roster_program FOREIGN KEY IF NOT EXISTS (program_id) REFERENCES programs(id) ON DELETE SET NULL;
+ALTER TABLE margin_roster_entries ADD CONSTRAINT fk_margin_roster_subvendor FOREIGN KEY IF NOT EXISTS (subvendor_id) REFERENCES subvendors(id) ON DELETE SET NULL;
+ALTER TABLE ledger_roster_entries ADD CONSTRAINT fk_ledger_roster_consultant FOREIGN KEY IF NOT EXISTS (consultant_id) REFERENCES consultants(id) ON DELETE SET NULL;
+ALTER TABLE ledger_roster_entries ADD CONSTRAINT fk_ledger_roster_subvendor FOREIGN KEY IF NOT EXISTS (subvendor_id) REFERENCES subvendors(id) ON DELETE SET NULL;
+
 -- Session store table (used by express-mysql-session; it will create/manage
 -- this automatically, but it's listed here for visibility). No action needed.

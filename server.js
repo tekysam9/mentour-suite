@@ -6,6 +6,8 @@ const { sessionMiddleware } = require('./src/auth');
 const authRoutes = require('./src/routes/auth');
 const createImportRouter = require('./src/routes/imports');
 const { saveMarginRoster } = require('./src/routes/marginRoster');
+const { saveLedgerRoster } = require('./src/routes/ledgerRoster');
+const directoryRoutes = require('./src/routes/directory');
 
 const app = express();
 
@@ -16,8 +18,9 @@ app.use(express.json({ limit: '15mb' }));
 app.use(sessionMiddleware);
 
 app.use('/api/auth', authRoutes);
-app.use('/api/ledger', createImportRouter('ledger_imports'));
+app.use('/api/ledger', createImportRouter('ledger_imports', { onSave: saveLedgerRoster }));
 app.use('/api/margin', createImportRouter('margin_imports', { onSave: saveMarginRoster }));
+app.use('/api/directory', directoryRoutes);
 
 app.use(express.static(path.join(__dirname, 'public')));
 

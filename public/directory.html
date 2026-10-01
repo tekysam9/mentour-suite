@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Directory — Mentour Suite</title>
+<link rel="stylesheet" href="/shared.css">
+<style>
+  .dir-body { max-width: 1040px; margin: 0 auto; padding: 40px 24px 64px; }
+  .dir-back { font-size: 12.5px; color: var(--pine); text-decoration: none; font-weight: 500; }
+  .dir-back:hover { text-decoration: underline; }
+  .dir-title { font-family: Georgia, 'Iowan Old Style', 'Palatino Linotype', serif; font-size: 30px; font-weight: 600; color: var(--ink); margin: 14px 0 6px; }
+  .dir-copy { font-size: 13.5px; color: var(--text-muted); margin: 0 0 28px; max-width: 560px; line-height: 1.6; }
+
+  .dir-tabs { display: flex; gap: 6px; border-bottom: 1px solid var(--line); margin-bottom: 22px; }
+  .dir-tab {
+    background: none; border: none; font-family: inherit; font-size: 13.5px; font-weight: 600;
+    color: var(--text-muted); padding: 10px 16px; cursor: pointer; border-bottom: 2px solid transparent;
+    margin-bottom: -1px;
+  }
+  .dir-tab.active { color: var(--ink); border-bottom-color: var(--pine); }
+  .dir-tab:hover:not(.active) { color: var(--ink); }
+
+  .dir-table-wrap { background: var(--card); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+  table.dir-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .dir-table th {
+    text-align: left; font-size: 11px; font-weight: 600; color: var(--text-muted);
+    padding: 11px 14px; border-bottom: 1px solid var(--line); background: var(--paper);
+    white-space: nowrap;
+  }
+  .dir-table td { padding: 10px 14px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+  .dir-table tr:last-child td { border-bottom: none; }
+  .dir-name { font-weight: 600; color: var(--ink); }
+  .dir-muted { color: var(--text-muted); }
+  .dir-empty-cell { color: var(--text-muted); font-style: italic; }
+  .dir-count { font-size: 11px; color: var(--text-muted); white-space: nowrap; }
+  .dir-count strong { color: var(--text); font-weight: 600; }
+
+  .dir-field-input {
+    border: 1px solid var(--line); border-radius: 5px; padding: 6px 8px; font-size: 13px;
+    font-family: inherit; color: var(--text); background: var(--paper); outline: none; width: 100%; min-width: 120px;
+  }
+  .dir-field-input:focus { border-color: var(--pine); }
+  .dir-row-actions { display: flex; gap: 6px; white-space: nowrap; }
+  .dir-btn {
+    border: 1px solid var(--line); background: var(--card); border-radius: 5px; padding: 6px 11px;
+    font-size: 12px; font-weight: 500; cursor: pointer; font-family: inherit; color: var(--text);
+  }
+  .dir-btn:hover { background: var(--paper); }
+  .dir-btn-primary { background: var(--pine); border-color: var(--pine); color: #EFF3EC; }
+  .dir-btn-primary:hover { background: #275F46; }
+  .dir-btn-save-status { font-size: 11.5px; color: var(--pine); font-weight: 500; }
+
+  .dir-loading, .dir-empty-state { padding: 40px; text-align: center; color: var(--text-muted); font-size: 13.5px; }
+</style>
+</head>
+<body>
+<div id="app"></div>
+<script>
+  function escapeHtml(s) {
+    if (s === null || s === undefined) return '';
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  }
+
+  var TABS = [
+    { key: 'consultants', label: 'Consultants', endpoint: '/api/directory/consultants', listKey: 'consultants' },
+    { key: 'clients', label: 'Clients', endpoint: '/api/directory/clients', listKey: 'clients' },
+    { key: 'programs', label: 'Programs', endpoint: '/api/directory/programs', listKey: 'programs' },
+    { key: 'subvendors', label: 'Subvendors', endpoint: '/api/directory/subvendors', listKey: 'subvendors' },
+  ];
+
+  var state = {
+    user: null,
+    activeTab: 'consultants',
+    cache: {}, // tabKey -> records array
+    loading: false,
+    editingId: null, // record id currently being edited, or null
+    saveStatus: null, // 'saving' | 'saved' | 'error' | null, for the row being edited
+  };
+
+  var appEl = document.getElementById('app');
+
+  function usageBadge(record) {
+    var parts = [];
+    if (typeof record.margin_rows === 'number') parts.push('<strong>' + record.margin_rows + '</strong> Margin');
+    if (typeof record.ledger_rows === 'number') parts.push('<strong>' + record.ledger_rows + '</strong> Ledger');
+    if (typeof record.program_count === 'number') parts.push('<strong>' + record.program_count + '</strong> programs');
+    return parts.length ? '<span class="dir-count">' + parts.join(' · ') + '</span>' : '';
+  }
+
+  function contactCell(record, field) {
+    if (state.editingId === record.id) {
+      return '<input class="dir-field-input" data-field="' + field + '" value="' + escapeHtml(record[field] || '') + '">';
+    }
+    var v = record[field];
+    return v ? escapeHtml(v) : '<span class="dir-empty-cell">—</span>';
+  }
+
+  function renderTable(tab, records) {
+    if (!records.length) {
+      return '<div class="dir-empty-state">No ' + tab.label.toLowerCase() + ' yet — upload a file in Ledger or Margin and they’ll show up here automatically.</div>';
+    }
+    var extraCol = tab.key === 'programs' ? '<th>Client</th>' : '';
+    var rows = records.map(function (r) {
+      var editing = state.editingId === r.id;
+      var nameCell = tab.key === 'programs'
+        ? '<td class="dir-name">' + escapeHtml(r.name) + '</td><td class="dir-muted">' + escapeHtml(r.client_name) + '</td>'
+        : '<td class="dir-name">' + escapeHtml(r.name) + '</td>';
+      var actions;
+      if (editing) {
+        actions =
+          '<div class="dir-row-actions">' +
+            '<button class="dir-btn dir-btn-primary" data-action="save" data-id="' + r.id + '" data-tab="' + tab.key + '">Save</button>' +
+            '<button class="dir-btn" data-action="cancel">Cancel</button>' +
+            (state.saveStatus === 'error' ? '<span class="dir-btn-save-status" style="color:#9B3B3B">Couldn’t save</span>' : '') +
+          '</div>';
+      } else {
+        actions = '<button class="dir-btn" data-action="edit" data-id="' + r.id + '">Edit</button>';
+      }
+      return '<tr>' +
+        nameCell +
+        '<td>' + contactCell(r, 'email') + '</td>' +
+        '<td>' + contactCell(r, 'phone') + '</td>' +
+        '<td>' + contactCell(r, 'address') + '</td>' +
+        '<td>' + usageBadge(r) + '</td>' +
+        '<td>' + actions + '</td>' +
+      '</tr>';
+    }).join('');
+
+    return '<div class="dir-table-wrap"><table class="dir-table"><thead><tr>' +
+      '<th>Name</th>' + extraCol + '<th>Email</th><th>Phone</th><th>Address</th><th>Seen in</th><th></th>' +
+      '</tr></thead><tbody>' + rows + '</tbody></table></div>';
+  }
+
+  function render() {
+    var tabsHtml = TABS.map(function (t) {
+      return '<button class="dir-tab' + (state.activeTab === t.key ? ' active' : '') + '" data-tab="' + t.key + '">' + t.label + '</button>';
+    }).join('');
+
+    var activeTab = TABS.filter(function (t) { return t.key === state.activeTab; })[0];
+    var body;
+    if (state.loading) {
+      body = '<div class="dir-loading">Loading…</div>';
+    } else {
+      body = renderTable(activeTab, state.cache[activeTab.key] || []);
+    }
+
+    appEl.innerHTML =
+      '<div class="landing-header">' +
+        '<div><div class="landing-wordmark">Mentour Suite</div><div class="landing-sub">' + escapeHtml(state.user.organization.name) + '</div></div>' +
+        '<div class="landing-account">Signed in as ' + escapeHtml(state.user.name) + '<br>' +
+          '<button class="landing-btn" id="logout-btn" type="button">Log out</button>' +
+        '</div>' +
+      '</div>' +
+      '<div class="dir-body">' +
+        '<a class="dir-back" href="/">← Back to dashboards</a>' +
+        '<h1 class="dir-title">Directory.</h1>' +
+        '<p class="dir-copy">Everyone and every account your team has ever uploaded, in one place — add an email, phone, or address once and it stays, no matter how many more files come in.</p>' +
+        '<div class="dir-tabs">' + tabsHtml + '</div>' +
+        body +
+      '</div>';
+
+    document.getElementById('logout-btn').addEventListener('click', async function () {
+      await fetch('/api/auth/logout', { method: 'POST' });
+      window.location.href = '/login.html';
+    });
+  }
+
+  function loadTab(tabKey) {
+    var tab = TABS.filter(function (t) { return t.key === tabKey; })[0];
+    if (state.cache[tabKey]) { render(); return; }
+    state.loading = true;
+    render();
+    fetch(tab.endpoint).then(function (res) {
+      if (!res.ok) throw new Error('load failed');
+      return res.json();
+    }).then(function (body) {
+      state.cache[tabKey] = body[tab.listKey] || [];
+      state.loading = false;
+      render();
+    }).catch(function () {
+      state.cache[tabKey] = [];
+      state.loading = false;
+      render();
+    });
+  }
+
+  appEl.addEventListener('click', function (e) {
+    var tabBtn = e.target.closest('[data-tab]');
+    if (tabBtn && tabBtn.classList.contains('dir-tab')) {
+      state.activeTab = tabBtn.getAttribute('data-tab');
+      state.editingId = null;
+      state.saveStatus = null;
+      loadTab(state.activeTab);
+      return;
+    }
+
+    var editBtn = e.target.closest('[data-action="edit"]');
+    if (editBtn) {
+      state.editingId = Number(editBtn.getAttribute('data-id'));
+      state.saveStatus = null;
+      render();
+      return;
+    }
+
+    var cancelBtn = e.target.closest('[data-action="cancel"]');
+    if (cancelBtn) {
+      state.editingId = null;
+      state.saveStatus = null;
+      render();
+      return;
+    }
+
+    var saveBtn = e.target.closest('[data-action="save"]');
+    if (saveBtn) {
+      var id = saveBtn.getAttribute('data-id');
+      var tabKey = saveBtn.getAttribute('data-tab');
+      var row = saveBtn.closest('tr');
+      var payload = {};
+      row.querySelectorAll('input[data-field]').forEach(function (input) {
+        payload[input.getAttribute('data-field')] = input.value;
+      });
+      var endpointBase = tabKey === 'consultants' ? '/api/directory/consultants'
+        : tabKey === 'clients' ? '/api/directory/clients'
+        : tabKey === 'programs' ? '/api/directory/programs'
+        : '/api/directory/subvendors';
+
+      state.saveStatus = 'saving';
+      fetch(endpointBase + '/' + id, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+      }).then(function (res) {
+        if (!res.ok) throw new Error('save failed');
+        return res.json();
+      }).then(function (body) {
+        var list = state.cache[tabKey] || [];
+        var idx = list.findIndex(function (r) { return r.id === Number(id); });
+        if (idx > -1) list[idx] = Object.assign({}, list[idx], body.record);
+        state.editingId = null;
+        state.saveStatus = 'saved';
+        render();
+      }).catch(function () {
+        state.saveStatus = 'error';
+        render();
+      });
+    }
+  });
+
+  fetch('/api/auth/me').then(function (res) {
+    if (res.status !== 200) { window.location.href = '/login.html'; return null; }
+    return res.json();
+  }).then(function (data) {
+    if (!data) return;
+    state.user = data.user;
+    loadTab(state.activeTab);
+  }).catch(function () {
+    window.location.href = '/login.html';
+  });
+</script>
+</body>
+</html>
