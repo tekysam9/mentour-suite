@@ -35,6 +35,30 @@ async function saveLedgerRoster(conn, { organizationId, importId, data }) {
   const consultants = data && Array.isArray(data.consultants) ? data.consultants : [];
   if (!consultants.length) return;
 
+  // public/ledger.html's processWorkbook() already settles each consultant's
+  // status across the whole file ('Active' | 'Left' | 'Inactive' — see its
+  // buildConsultants()) before this payload is posted, so there's no
+  // per-row ambiguity to resolve the way Margin's rows have. A subvendor's
+  // status rides along with whichever consultants use it: active if at
+  // least one currently-active consultant is placed through it anywhere in
+  // this file.
+  function toDirectoryStatus(rawStatus) {
+    return rawStatus === 'Active' ? 'active' : 'inactive';
+  }
+
+  const subvendorStatus = new Map();
+  for (const c of consultants) {
+    if (!c || !toNullableText(c.name, 255)) continue;
+    const placements = Array.isArray(c.placements) ? c.placements : [];
+    const consultantIsActive = c.status === 'Active';
+    for (const p of placements) {
+      if (!p) continue;
+      const subvendorKey = normalizeName(p.subvendor);
+      if (!subvendorKey || subvendorKey === '(unspecified)') continue;
+      subvendorStatus.set(subvendorKey, subvendorStatus.get(subvendorKey) === 'active' || consultantIsActive ? 'active' : 'inactive');
+    }
+  }
+
   const consultantIds = new Map();
   const subvendorIds = new Map();
   const flatRows = [];
@@ -46,14 +70,14 @@ async function saveLedgerRoster(conn, { organizationId, importId, data }) {
 
     const consultantKey = normalizeName(c.name);
     if (consultantKey && !consultantIds.has(consultantKey)) {
-      consultantIds.set(consultantKey, await upsertConsultant(conn, organizationId, c.name));
+      consultantIds.set(consultantKey, await upsertConsultant(conn, organizationId, c.name, toDirectoryStatus(c.status)));
     }
 
     for (const p of placements) {
       if (!p) continue;
       const subvendorKey = normalizeName(p.subvendor);
       if (subvendorKey && subvendorKey !== '(unspecified)' && !subvendorIds.has(subvendorKey)) {
-        subvendorIds.set(subvendorKey, await upsertSubvendor(conn, organizationId, p.subvendor));
+        subvendorIds.set(subvendorKey, await upsertSubvendor(conn, organizationId, p.subvendor, subvendorStatus.get(subvendorKey)));
       }
       flatRows.push({ name: c.name, consultantKey, p, subvendorKey });
     }

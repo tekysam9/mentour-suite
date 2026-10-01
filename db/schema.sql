@@ -101,6 +101,7 @@ CREATE TABLE IF NOT EXISTS consultants (
   id              INT AUTO_INCREMENT PRIMARY KEY,
   organization_id INT NOT NULL,
   name            VARCHAR(255) NOT NULL,
+  status          ENUM('active', 'inactive') NOT NULL DEFAULT 'active',
   email           VARCHAR(255),
   phone           VARCHAR(64),
   address         VARCHAR(500),
@@ -114,6 +115,7 @@ CREATE TABLE IF NOT EXISTS subvendors (
   id              INT AUTO_INCREMENT PRIMARY KEY,
   organization_id INT NOT NULL,
   name            VARCHAR(255) NOT NULL,
+  status          ENUM('active', 'inactive') NOT NULL DEFAULT 'active',
   email           VARCHAR(255),
   phone           VARCHAR(64),
   address         VARCHAR(500),
@@ -127,6 +129,7 @@ CREATE TABLE IF NOT EXISTS clients (
   id              INT AUTO_INCREMENT PRIMARY KEY,
   organization_id INT NOT NULL,
   name            VARCHAR(255) NOT NULL,
+  status          ENUM('active', 'inactive') NOT NULL DEFAULT 'active',
   email           VARCHAR(255),
   phone           VARCHAR(64),
   address         VARCHAR(500),
@@ -141,6 +144,7 @@ CREATE TABLE IF NOT EXISTS programs (
   organization_id INT NOT NULL,
   client_id       INT NOT NULL,
   name            VARCHAR(255) NOT NULL,
+  status          ENUM('active', 'inactive') NOT NULL DEFAULT 'active',
   email           VARCHAR(255),
   phone           VARCHAR(64),
   address         VARCHAR(500),
@@ -150,6 +154,16 @@ CREATE TABLE IF NOT EXISTS programs (
   FOREIGN KEY (client_id) REFERENCES clients(id) ON DELETE CASCADE,
   UNIQUE KEY uq_programs_client_name (client_id, name)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Upgrade path for a database that already has these tables from before
+-- Active/Inactive existed. New rows get it from the CREATE TABLE default
+-- above; this ALTER adds it to already-deployed tables (defaulting every
+-- existing record to 'active' until its next upload resolves the real
+-- status -- see directoryUpsert.js).
+ALTER TABLE consultants ADD COLUMN IF NOT EXISTS status ENUM('active', 'inactive') NOT NULL DEFAULT 'active' AFTER name;
+ALTER TABLE subvendors ADD COLUMN IF NOT EXISTS status ENUM('active', 'inactive') NOT NULL DEFAULT 'active' AFTER name;
+ALTER TABLE clients ADD COLUMN IF NOT EXISTS status ENUM('active', 'inactive') NOT NULL DEFAULT 'active' AFTER name;
+ALTER TABLE programs ADD COLUMN IF NOT EXISTS status ENUM('active', 'inactive') NOT NULL DEFAULT 'active' AFTER name;
 
 -- Link margin_roster_entries rows to the directory records they resolved to.
 -- Nullable: a W2/1099/direct-employment row has no real subvendor, and a row
@@ -192,6 +206,38 @@ ALTER TABLE margin_roster_entries ADD CONSTRAINT fk_margin_roster_program FOREIG
 ALTER TABLE margin_roster_entries ADD CONSTRAINT fk_margin_roster_subvendor FOREIGN KEY IF NOT EXISTS (subvendor_id) REFERENCES subvendors(id) ON DELETE SET NULL;
 ALTER TABLE ledger_roster_entries ADD CONSTRAINT fk_ledger_roster_consultant FOREIGN KEY IF NOT EXISTS (consultant_id) REFERENCES consultants(id) ON DELETE SET NULL;
 ALTER TABLE ledger_roster_entries ADD CONSTRAINT fk_ledger_roster_subvendor FOREIGN KEY IF NOT EXISTS (subvendor_id) REFERENCES subvendors(id) ON DELETE SET NULL;
+
+-- ---------------------------------------------------------------------------
+-- "Smart parser" duplicate detection. An exact name match (case/whitespace
+-- insensitive, see directoryUpsert.js) always resolves to the same record
+-- and never creates a second one. This table is for the close-but-not-exact
+-- case -- a likely typo or formatting slip ("Jon Smith" vs "John Smith") --
+-- which is never merged automatically, since two different people can
+-- genuinely share a very similar name. Instead it's logged here the moment
+-- a brand-new record is created, for a person to confirm or dismiss from
+-- the Directory page (see directoryDedup.js and the /api/directory/duplicates
+-- routes).
+--
+-- table_name is one of 'consultants' | 'subvendors' | 'clients' | 'programs'.
+-- No FK on record_id/matched_record_id -- which table they point into
+-- depends on table_name, so the app is responsible for cleaning up a flag
+-- when either side of the pair is deleted or merged.
+-- ---------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS directory_duplicate_candidates (
+  id                INT AUTO_INCREMENT PRIMARY KEY,
+  organization_id   INT NOT NULL,
+  table_name        VARCHAR(32) NOT NULL,
+  record_id         INT NOT NULL,
+  matched_record_id INT NOT NULL,
+  similarity        DECIMAL(4,3) NOT NULL,
+  status            ENUM('open', 'dismissed', 'merged') NOT NULL DEFAULT 'open',
+  created_at        TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  resolved_at       TIMESTAMP NULL,
+  FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE,
+  UNIQUE KEY uq_dup_pair (table_name, record_id, matched_record_id),
+  INDEX idx_dup_org_status (organization_id, table_name, status)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- Session store table (used by express-mysql-session; it will create/manage
 -- this automatically, but it's listed here for visibility). No action needed.

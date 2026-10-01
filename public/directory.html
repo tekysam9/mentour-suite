@@ -52,6 +52,34 @@
   .dir-btn-save-status { font-size: 11.5px; color: var(--pine); font-weight: 500; }
 
   .dir-loading, .dir-empty-state { padding: 40px; text-align: center; color: var(--text-muted); font-size: 13.5px; }
+
+  .dir-status-badge {
+    display: inline-block; font-size: 11px; font-weight: 600; padding: 3px 9px; border-radius: 99px; white-space: nowrap;
+  }
+  .dir-status-active { background: #EAF3EE; color: #2E6F52; }
+  .dir-status-inactive { background: #F5F1E4; color: #97854A; }
+
+  .dir-controls { display: flex; justify-content: flex-end; margin-bottom: 12px; }
+  .dir-controls select {
+    border: 1px solid var(--line); border-radius: 6px; padding: 6px 10px; font-size: 12.5px;
+    font-family: inherit; color: var(--text); background: var(--card); outline: none;
+  }
+
+  .dir-dupe-panel {
+    background: #FBF7EC; border: 1px solid #E6D9AE; border-radius: 10px; padding: 14px 16px; margin-bottom: 16px;
+  }
+  .dir-dupe-title { font-size: 12.5px; font-weight: 700; color: #7A6421; margin: 0 0 4px; }
+  .dir-dupe-copy { font-size: 12px; color: #8A7430; margin: 0 0 12px; line-height: 1.5; }
+  .dir-dupe-row {
+    display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+    background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; margin-bottom: 8px;
+  }
+  .dir-dupe-row:last-child { margin-bottom: 0; }
+  .dir-dupe-names { font-size: 13px; color: var(--ink); }
+  .dir-dupe-names strong { font-weight: 600; }
+  .dir-dupe-pct { font-size: 11px; color: var(--text-muted); margin-left: 6px; }
+  .dir-dupe-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+  .dir-btn-small { font-size: 11.5px; padding: 5px 9px; }
 </style>
 </head>
 <body>
@@ -73,12 +101,21 @@
     user: null,
     activeTab: 'consultants',
     cache: {}, // tabKey -> records array
+    duplicates: {}, // tabKey -> open duplicate-candidate rows
     loading: false,
     editingId: null, // record id currently being edited, or null
     saveStatus: null, // 'saving' | 'saved' | 'error' | null, for the row being edited
+    statusFilter: 'all', // 'all' | 'active' | 'inactive'
+    dupeBusyId: null, // flag_id currently being merged/dismissed, or null
   };
 
   var appEl = document.getElementById('app');
+
+  function statusBadge(status) {
+    var active = status === 'active';
+    return '<span class="dir-status-badge ' + (active ? 'dir-status-active' : 'dir-status-inactive') + '">' +
+      (active ? 'Active' : 'Inactive') + '</span>';
+  }
 
   function usageBadge(record) {
     var parts = [];
@@ -96,9 +133,15 @@
     return v ? escapeHtml(v) : '<span class="dir-empty-cell">—</span>';
   }
 
-  function renderTable(tab, records) {
-    if (!records.length) {
+  function renderTable(tab, allRecords) {
+    var records = state.statusFilter === 'all' ? allRecords
+      : allRecords.filter(function (r) { return r.status === state.statusFilter; });
+
+    if (!allRecords.length) {
       return '<div class="dir-empty-state">No ' + tab.label.toLowerCase() + ' yet — upload a file in Ledger or Margin and they’ll show up here automatically.</div>';
+    }
+    if (!records.length) {
+      return '<div class="dir-empty-state">No ' + state.statusFilter + ' ' + tab.label.toLowerCase() + '.</div>';
     }
     var extraCol = tab.key === 'programs' ? '<th>Client</th>' : '';
     var rows = records.map(function (r) {
@@ -119,6 +162,7 @@
       }
       return '<tr>' +
         nameCell +
+        '<td>' + statusBadge(r.status) + '</td>' +
         '<td>' + contactCell(r, 'email') + '</td>' +
         '<td>' + contactCell(r, 'phone') + '</td>' +
         '<td>' + contactCell(r, 'address') + '</td>' +
@@ -128,8 +172,44 @@
     }).join('');
 
     return '<div class="dir-table-wrap"><table class="dir-table"><thead><tr>' +
-      '<th>Name</th>' + extraCol + '<th>Email</th><th>Phone</th><th>Address</th><th>Seen in</th><th></th>' +
+      '<th>Name</th>' + extraCol + '<th>Status</th><th>Email</th><th>Phone</th><th>Address</th><th>Seen in</th><th></th>' +
       '</tr></thead><tbody>' + rows + '</tbody></table></div>';
+  }
+
+  // "Smart parser" duplicate review: names that look like the same
+  // consultant/client/program/subvendor but didn't match exactly, flagged
+  // by the server for a person to confirm or dismiss — never merged
+  // automatically (see src/routes/directoryDedup.js).
+  function renderDuplicates(tab) {
+    var candidates = state.duplicates[tab.key] || [];
+    if (!candidates.length) return '';
+
+    var rows = candidates.map(function (c) {
+      var busy = state.dupeBusyId === c.flag_id;
+      var pct = Math.round(c.similarity * 100) + '% match';
+      return '<div class="dir-dupe-row">' +
+        '<div class="dir-dupe-names">' +
+          '<strong>' + escapeHtml(c.record_name) + '</strong> vs <strong>' + escapeHtml(c.matched_name) + '</strong>' +
+          '<span class="dir-dupe-pct">' + pct + '</span>' +
+        '</div>' +
+        '<div class="dir-dupe-actions">' +
+          '<button class="dir-btn dir-btn-small" data-action="dup-merge" data-flag-id="' + c.flag_id + '" data-keep="record"' + (busy ? ' disabled' : '') + '>' +
+            'Keep “' + escapeHtml(c.record_name) + '”</button>' +
+          '<button class="dir-btn dir-btn-small" data-action="dup-merge" data-flag-id="' + c.flag_id + '" data-keep="matched"' + (busy ? ' disabled' : '') + '>' +
+            'Keep “' + escapeHtml(c.matched_name) + '”</button>' +
+          '<button class="dir-btn dir-btn-small" data-action="dup-dismiss" data-flag-id="' + c.flag_id + '"' + (busy ? ' disabled' : '') + '>' +
+            'Not a duplicate</button>' +
+        '</div>' +
+      '</div>';
+    }).join('');
+
+    return '<div class="dir-dupe-panel">' +
+      '<p class="dir-dupe-title">Possible duplicates (' + candidates.length + ')</p>' +
+      '<p class="dir-dupe-copy">These names looked close enough to already-listed ' + tab.label.toLowerCase() + ' that they might be the same ' +
+        (tab.key === 'consultants' ? 'person' : tab.key === 'subvendors' ? 'vendor' : tab.key === 'clients' ? 'account' : 'program') +
+        ', typo’d or formatted differently — nothing was merged automatically. Keep one name to merge the two records (their upload history moves to the one you keep), or mark it not a duplicate to leave both as-is.</p>' +
+      rows +
+    '</div>';
   }
 
   function render() {
@@ -138,11 +218,20 @@
     }).join('');
 
     var activeTab = TABS.filter(function (t) { return t.key === state.activeTab; })[0];
-    var body;
+    var body, dupePanel, controls;
     if (state.loading) {
       body = '<div class="dir-loading">Loading…</div>';
+      dupePanel = '';
+      controls = '';
     } else {
       body = renderTable(activeTab, state.cache[activeTab.key] || []);
+      dupePanel = renderDuplicates(activeTab);
+      controls =
+        '<div class="dir-controls"><select data-filter="status">' +
+          '<option value="all"' + (state.statusFilter === 'all' ? ' selected' : '') + '>All statuses</option>' +
+          '<option value="active"' + (state.statusFilter === 'active' ? ' selected' : '') + '>Active</option>' +
+          '<option value="inactive"' + (state.statusFilter === 'inactive' ? ' selected' : '') + '>Inactive</option>' +
+        '</select></div>';
     }
 
     appEl.innerHTML =
@@ -155,8 +244,10 @@
       '<div class="dir-body">' +
         '<a class="dir-back" href="/">← Back to dashboards</a>' +
         '<h1 class="dir-title">Directory.</h1>' +
-        '<p class="dir-copy">Everyone and every account your team has ever uploaded, in one place — add an email, phone, or address once and it stays, no matter how many more files come in.</p>' +
+        '<p class="dir-copy">Everyone and every account your team has ever uploaded, in one place — add an email, phone, or address once and it stays, no matter how many more files come in. Status tracks each upload automatically: active if it showed up that way in the most recent file, inactive otherwise.</p>' +
         '<div class="dir-tabs">' + tabsHtml + '</div>' +
+        dupePanel +
+        controls +
         body +
       '</div>';
 
@@ -166,8 +257,22 @@
     });
   }
 
+  function loadDuplicates(tabKey) {
+    fetch('/api/directory/duplicates?table=' + encodeURIComponent(tabKey)).then(function (res) {
+      if (!res.ok) throw new Error('load failed');
+      return res.json();
+    }).then(function (body) {
+      state.duplicates[tabKey] = body.duplicates || [];
+      render();
+    }).catch(function () {
+      // Non-essential panel — a failed load just means it stays hidden.
+      state.duplicates[tabKey] = state.duplicates[tabKey] || [];
+    });
+  }
+
   function loadTab(tabKey) {
     var tab = TABS.filter(function (t) { return t.key === tabKey; })[0];
+    if (!state.duplicates[tabKey]) loadDuplicates(tabKey);
     if (state.cache[tabKey]) { render(); return; }
     state.loading = true;
     render();
@@ -191,6 +296,7 @@
       state.activeTab = tabBtn.getAttribute('data-tab');
       state.editingId = null;
       state.saveStatus = null;
+      state.statusFilter = 'all';
       loadTab(state.activeTab);
       return;
     }
@@ -242,6 +348,61 @@
         state.saveStatus = 'error';
         render();
       });
+      return;
+    }
+
+    var dupMergeBtn = e.target.closest('[data-action="dup-merge"]');
+    if (dupMergeBtn) {
+      var flagId = dupMergeBtn.getAttribute('data-flag-id');
+      var keep = dupMergeBtn.getAttribute('data-keep');
+      var tabKey = state.activeTab;
+      state.dupeBusyId = Number(flagId);
+      render();
+      fetch('/api/directory/duplicates/' + flagId + '/merge', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ keep: keep }),
+      }).then(function (res) {
+        if (!res.ok) throw new Error('merge failed');
+        return res.json();
+      }).then(function () {
+        // The merge changes the underlying records (one disappears, the
+        // other may pick up the merged status/history), so refetch this
+        // tab's list rather than trying to patch the cache by hand.
+        delete state.cache[tabKey];
+        state.duplicates[tabKey] = (state.duplicates[tabKey] || []).filter(function (c) { return c.flag_id !== Number(flagId); });
+        state.dupeBusyId = null;
+        loadTab(tabKey);
+      }).catch(function () {
+        state.dupeBusyId = null;
+        render();
+      });
+      return;
+    }
+
+    var dupDismissBtn = e.target.closest('[data-action="dup-dismiss"]');
+    if (dupDismissBtn) {
+      var dismissFlagId = dupDismissBtn.getAttribute('data-flag-id');
+      var dismissTabKey = state.activeTab;
+      state.dupeBusyId = Number(dismissFlagId);
+      render();
+      fetch('/api/directory/duplicates/' + dismissFlagId + '/dismiss', { method: 'POST' }).then(function (res) {
+        if (!res.ok) throw new Error('dismiss failed');
+        return res.json();
+      }).then(function () {
+        state.duplicates[dismissTabKey] = (state.duplicates[dismissTabKey] || []).filter(function (c) { return c.flag_id !== Number(dismissFlagId); });
+        state.dupeBusyId = null;
+        render();
+      }).catch(function () {
+        state.dupeBusyId = null;
+        render();
+      });
+    }
+  });
+
+  appEl.addEventListener('change', function (e) {
+    var statusSelect = e.target.closest('[data-filter="status"]');
+    if (statusSelect) {
+      state.statusFilter = statusSelect.value;
+      render();
     }
   });
 

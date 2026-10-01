@@ -238,6 +238,23 @@ async function main() {
       check('directory subvendors only created for real Subvendor rows (W2 marker excluded)',
         r.status === 200 && r.body.subvendors.length === 1 && r.body.subvendors[0].name === 'Vendor Co', r.body);
 
+      // 21b. Status auto-syncs from this first upload: Jordan's row said
+      // Active, Priya's said Left, so that's what each directory record
+      // (and the client/program Jordan's row rolled up into) should show —
+      // unlike email/phone/address, status is allowed to track the upload.
+      r = await owner.fetch('/api/directory/consultants');
+      check('consultant status set from upload (Active)',
+        r.body.consultants.find((c) => c.name === 'Jordan Blake').status === 'active', r.body.consultants);
+      check('consultant status set from upload (Left -> inactive)',
+        r.body.consultants.find((c) => c.name === 'Priya Natarajan').status === 'inactive', r.body.consultants);
+
+      r = await owner.fetch('/api/directory/clients');
+      check('client status active when its row is Active', r.body.clients.find((c) => c.name === 'Acme').status === 'active', r.body.clients);
+      check('client status inactive when its row is Left', r.body.clients.find((c) => c.name === 'Globex').status === 'inactive', r.body.clients);
+
+      r = await owner.fetch('/api/directory/programs');
+      check('program status active alongside its client', r.body.programs.find((p) => p.name === 'Platform').status === 'active', r.body.programs);
+
       r = await owner.fetch('/api/directory/consultants');
       const jordanRecord = r.body.consultants.find((c) => c.name === 'Jordan Blake');
       check('consultant found for editing', !!jordanRecord, r.body);
@@ -275,7 +292,7 @@ async function main() {
         data: {
           kpis: {},
           consultants: [{
-            name: 'Jordan Blake',
+            name: 'Jordan Blake', status: 'Active',
             placements: [{ subvendor: 'Vendor Co', period: 'Jan 2026', name: 'Jordan Blake', amount: 5000, rate: 85, hours: 160, month: 'Jan 2026', clientTag: 'HCL' }],
           }],
         },
@@ -302,6 +319,111 @@ async function main() {
         ledgerRosterRows.length === 1 && ledgerRosterRows[0].name === 'Jordan Blake' &&
         Number(ledgerRosterRows[0].amount) === 5000 && ledgerRosterRows[0].consultant_id === jordanRecord.id,
         ledgerRosterRows);
+
+      // 26. The ledger upload above used "Vendor Co" for a currently-active
+      // consultant (Jordan), so the shared subvendor record should now read
+      // active even though the earlier Margin row that first created it
+      // ("Priya Natarajan", Left) said otherwise — status always reflects
+      // whichever upload touched it most recently.
+      r = await owner.fetch('/api/directory/subvendors');
+      check('subvendor status auto-syncs to active from the later Ledger upload',
+        r.body.subvendors.find((s) => s.name === 'Vendor Co').status === 'active', r.body.subvendors);
+
+      // 27. A later upload marking the same consultant Left should flip
+      // their status back to inactive — and roll their client/program along
+      // with them — without touching the contact details saved earlier.
+      r = await owner.fetch('/api/margin', { method: 'POST', body: JSON.stringify({
+        fileName: 'Roster3.xlsx',
+        data: { kpis: {}, records: [{
+          name: 'Jordan Blake', client: 'Acme / Platform', program: 'Acme', clientDetail: 'Platform',
+          cost: 86, billing: 141, margin: 55, status: 'Left', employmentType: 'W2 (direct)', subvendorText: 'W2',
+        }] },
+      }) });
+      check('third margin upload (Jordan marked Left) returns 201', r.status === 201, r);
+
+      r = await owner.fetch('/api/directory/consultants');
+      const jordanFinal = r.body.consultants.find((c) => c.name === 'Jordan Blake');
+      check('consultant status flips to inactive on a later upload, contact details untouched',
+        jordanFinal && jordanFinal.status === 'inactive' && jordanFinal.email === 'jordan@acme.test', jordanFinal);
+
+      r = await owner.fetch('/api/directory/clients');
+      check('client status flips to inactive once its only row goes Left',
+        r.body.clients.find((c) => c.name === 'Acme').status === 'inactive', r.body.clients);
+
+      r = await owner.fetch('/api/directory/programs');
+      check('program status flips to inactive alongside its client',
+        r.body.programs.find((p) => p.name === 'Platform').status === 'inactive', r.body.programs);
+
+      // 28. Smart-parser duplicate flagging: a typo'd name close to an
+      // existing consultant should NOT create a silent duplicate — it
+      // still gets its own record (matching stays exact-name-only), but
+      // the near-match is logged for a person to confirm, never merged on
+      // its own.
+      r = await owner.fetch('/api/margin', { method: 'POST', body: JSON.stringify({
+        fileName: 'Typo1.xlsx',
+        data: { kpis: {}, records: [{
+          name: 'Jordn Blake', client: 'Initech', program: 'Initech', cost: 50, billing: 90, margin: 40,
+          status: 'Active', employmentType: 'W2 (direct)', subvendorText: 'W2',
+        }] },
+      }) });
+      check('typo’d consultant upload ("Jordn Blake") returns 201', r.status === 201, r);
+
+      r = await owner.fetch('/api/directory/consultants');
+      check('a close-but-not-exact name still gets its own record (no silent auto-merge)',
+        r.body.consultants.some((c) => c.name === 'Jordan Blake') && r.body.consultants.some((c) => c.name === 'Jordn Blake'),
+        r.body.consultants);
+
+      r = await owner.fetch('/api/directory/duplicates?table=consultants');
+      const jordnFlag = r.body.duplicates.find((d) => d.record_name === 'Jordn Blake');
+      check('near-duplicate flagged for review with a high similarity score',
+        r.status === 200 && jordnFlag && jordnFlag.matched_name === 'Jordan Blake' && jordnFlag.similarity >= 0.82, r.body);
+
+      r = await otherOrgUser.fetch('/api/directory/duplicates/' + jordnFlag.flag_id + '/dismiss', { method: 'POST' });
+      check('cross-tenant duplicate dismiss blocked (404)', r.status === 404, r);
+
+      r = await owner.fetch('/api/directory/duplicates/' + jordnFlag.flag_id + '/dismiss', { method: 'POST' });
+      check('dismissing a flagged duplicate returns ok', r.status === 200 && r.body.ok === true, r);
+
+      r = await owner.fetch('/api/directory/duplicates?table=consultants');
+      check('dismissed duplicate no longer listed as open', !r.body.duplicates.some((d) => d.flag_id === jordnFlag.flag_id), r.body);
+
+      r = await owner.fetch('/api/directory/consultants');
+      check('dismissing a duplicate leaves both records intact',
+        r.body.consultants.some((c) => c.name === 'Jordan Blake') && r.body.consultants.some((c) => c.name === 'Jordn Blake'),
+        r.body.consultants);
+
+      // 29. Confirming a flagged duplicate merges the two: the loser's
+      // upload history (margin_roster_entries here) moves to the record
+      // that's kept, and the loser row itself is gone.
+      r = await owner.fetch('/api/margin', { method: 'POST', body: JSON.stringify({
+        fileName: 'Typo2.xlsx',
+        data: { kpis: {}, records: [{
+          name: 'Priya Natarjan', client: 'Globex', program: 'Globex', cost: 91, billing: 151, margin: 60,
+          status: 'Active', employmentType: 'Subvendor', subvendorText: 'Vendor Co',
+        }] },
+      }) });
+      check('typo’d consultant upload ("Priya Natarjan") returns 201', r.status === 201, r);
+
+      r = await owner.fetch('/api/directory/duplicates?table=consultants');
+      const priyaFlag = r.body.duplicates.find((d) => d.record_name === 'Priya Natarjan');
+      check('second near-duplicate also flagged', !!priyaFlag && priyaFlag.matched_name === 'Priya Natarajan', r.body);
+
+      r = await owner.fetch('/api/directory/duplicates/' + priyaFlag.flag_id + '/merge', {
+        method: 'POST', body: JSON.stringify({ keep: 'matched' }),
+      });
+      check('merge keeping the original record returns the survivor',
+        r.status === 200 && r.body.kept.name === 'Priya Natarajan' && r.body.removedId === priyaFlag.record_id, r.body);
+
+      r = await owner.fetch('/api/directory/consultants');
+      check('merged-away typo no longer appears in the directory',
+        !r.body.consultants.some((c) => c.name === 'Priya Natarjan'), r.body.consultants);
+      const priyaMerged = r.body.consultants.find((c) => c.name === 'Priya Natarajan');
+      check('surviving record absorbed the merged-in upload (margin_rows went from 1 to 2)',
+        priyaMerged && priyaMerged.margin_rows === 2, priyaMerged);
+
+      r = await owner.fetch('/api/directory/duplicates?table=consultants');
+      check('no open duplicate flags left referencing the merged-away record',
+        !r.body.duplicates.some((d) => d.record_id === priyaFlag.record_id || d.matched_id === priyaFlag.record_id), r.body);
     } finally {
       await dbConn.end();
     }

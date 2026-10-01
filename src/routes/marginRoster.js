@@ -43,6 +43,40 @@ async function saveMarginRoster(conn, { organizationId, importId, data }) {
   const valid = records.filter((r) => r && toNullableText(r.name, 255));
   if (!valid.length) return;
 
+  // Pass 1: settle each name's directory status for this import before
+  // touching the database. A consultant/client/program/subvendor is
+  // "active" here if *any* row in this upload says so (someone can have
+  // several placement rows in one file) — Active wins over Left/Unknown
+  // when they disagree, since the point is "still going as of this file."
+  // See directoryUpsert.js for why status is the one field that's allowed
+  // to change on every save, unlike email/phone/address.
+  function bumpStatus(map, key, rowStatus) {
+    if (!key) return;
+    const isActive = rowStatus === 'Active';
+    map.set(key, map.get(key) === 'active' || isActive ? 'active' : 'inactive');
+  }
+
+  const consultantStatus = new Map();
+  const clientStatus = new Map();
+  const programStatus = new Map(); // "clientKey|detailKey" -> status (text-keyed; client id isn't known yet)
+  const subvendorStatus = new Map();
+
+  for (const r of valid) {
+    bumpStatus(consultantStatus, normalizeName(r.name), r.status);
+
+    const clientKey = normalizeName(r.program);
+    bumpStatus(clientStatus, clientKey, r.status);
+
+    const programDetailKey = normalizeName(r.clientDetail);
+    if (clientKey && programDetailKey) {
+      bumpStatus(programStatus, clientKey + '|' + programDetailKey, r.status);
+    }
+
+    if (r.employmentType === 'Subvendor') {
+      bumpStatus(subvendorStatus, normalizeName(r.subvendorText), r.status);
+    }
+  }
+
   // Resolve each distinct name once, not once per row — most names repeat
   // across dozens of rows in a real roster.
   const consultantIds = new Map(); // normalized name -> id
@@ -53,14 +87,14 @@ async function saveMarginRoster(conn, { organizationId, importId, data }) {
   for (const r of valid) {
     const consultantKey = normalizeName(r.name);
     if (consultantKey && !consultantIds.has(consultantKey)) {
-      consultantIds.set(consultantKey, await upsertConsultant(conn, organizationId, r.name));
+      consultantIds.set(consultantKey, await upsertConsultant(conn, organizationId, r.name, consultantStatus.get(consultantKey)));
     }
 
     // "Program" is the end-client/account name in this data (see
     // schema.sql's comment on the clients/programs tables).
     const clientKey = normalizeName(r.program);
     if (clientKey && !clientIds.has(clientKey)) {
-      clientIds.set(clientKey, await upsertClient(conn, organizationId, r.program));
+      clientIds.set(clientKey, await upsertClient(conn, organizationId, r.program, clientStatus.get(clientKey)));
     }
 
     const clientId = clientKey ? clientIds.get(clientKey) : null;
@@ -68,7 +102,8 @@ async function saveMarginRoster(conn, { organizationId, importId, data }) {
     if (clientId && programDetailKey) {
       const programKey = clientId + '|' + programDetailKey;
       if (!programIds.has(programKey)) {
-        programIds.set(programKey, await upsertProgram(conn, organizationId, clientId, r.clientDetail));
+        const status = programStatus.get(clientKey + '|' + programDetailKey);
+        programIds.set(programKey, await upsertProgram(conn, organizationId, clientId, r.clientDetail, status));
       }
     }
 
@@ -78,7 +113,7 @@ async function saveMarginRoster(conn, { organizationId, importId, data }) {
     if (r.employmentType === 'Subvendor') {
       const subvendorKey = normalizeName(r.subvendorText);
       if (subvendorKey && !subvendorIds.has(subvendorKey)) {
-        subvendorIds.set(subvendorKey, await upsertSubvendor(conn, organizationId, r.subvendorText));
+        subvendorIds.set(subvendorKey, await upsertSubvendor(conn, organizationId, r.subvendorText, subvendorStatus.get(subvendorKey)));
       }
     }
   }
