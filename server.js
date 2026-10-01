@@ -5,6 +5,7 @@ const express = require('express');
 const { sessionMiddleware } = require('./src/auth');
 const authRoutes = require('./src/routes/auth');
 const createImportRouter = require('./src/routes/imports');
+const { saveMarginRoster } = require('./src/routes/marginRoster');
 
 const app = express();
 
@@ -16,7 +17,7 @@ app.use(sessionMiddleware);
 
 app.use('/api/auth', authRoutes);
 app.use('/api/ledger', createImportRouter('ledger_imports'));
-app.use('/api/margin', createImportRouter('margin_imports'));
+app.use('/api/margin', createImportRouter('margin_imports', { onSave: saveMarginRoster }));
 
 app.use(express.static(path.join(__dirname, 'public')));
 

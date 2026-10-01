@@ -1,6 +1,7 @@
 require('dotenv').config({ path: require('path').join(__dirname, '..', '.env') });
 const { spawn } = require('child_process');
 const path = require('path');
+const mysql = require('mysql2/promise');
 
 const BASE = 'http://localhost:3000';
 let pass = 0, fail = 0;
@@ -148,6 +149,71 @@ async function main() {
     check('margin latest is independent of ledger data', r.body.import.data.kpis.activeCount === 39, r.body);
     r = await owner.fetch('/api/ledger/latest');
     check('ledger data unaffected by margin save', r.body.import.data.kpis.totalConsultants === 56, r.body);
+
+    // 20. A Margin upload with real roster records also lands in
+    // margin_roster_entries as normalized rows, not just the JSON blob —
+    // including a malformed record (no name) being skipped rather than
+    // failing the whole save, and a second org's rows staying separate.
+    const rosterPayload = {
+      fileName: 'Roster.xlsx',
+      data: {
+        kpis: { activeCount: 2 },
+        records: [
+          {
+            name: 'Jordan Blake', client: 'Acme / Platform', program: 'Acme', clientDetail: 'Platform',
+            cost: 85.5, billing: 140, margin: 54.5, status: 'Active', joined: '2023-01-15',
+            leftText: null, leftDate: null, recruiter: 'Sam Lee',
+            subvendorText: 'W2', employmentType: 'W2 (direct)', sourceSheet: 'Total',
+          },
+          {
+            name: 'Priya Natarajan', client: 'Globex', program: 'Globex', clientDetail: null,
+            cost: 90, billing: 150, margin: 60, status: 'Left', joined: '2022-06-01',
+            leftText: null, leftDate: '2026-03-01T00:00:00.000Z', recruiter: null,
+            subvendorText: 'Vendor Co', employmentType: 'Subvendor', sourceSheet: 'Left 2026',
+          },
+          { name: null, client: 'Should be skipped', program: 'X', cost: 1, billing: 2, margin: 1, status: 'Active' },
+        ],
+      },
+    };
+    r = await owner.fetch('/api/margin', { method: 'POST', body: JSON.stringify(rosterPayload) });
+    check('save margin roster returns 201', r.status === 201, r);
+    const marginImportId = r.body.import.id;
+
+    r = await otherOrgUser.fetch('/api/margin', { method: 'POST', body: JSON.stringify({ fileName: 'Other.xlsx', data: { kpis: {}, records: [{ name: 'Not Mine', program: 'Y', status: 'Active' }] } }) });
+    check('second org margin roster save returns 201', r.status === 201, r);
+
+    const dbConn = await mysql.createConnection({
+      host: process.env.DB_HOST, port: Number(process.env.DB_PORT || 3306),
+      user: process.env.DB_USER, password: process.env.DB_PASSWORD, database: process.env.DB_NAME,
+    });
+    try {
+      const [rosterRows] = await dbConn.query(
+        'SELECT name, program, cost, billing, margin, status, employment_type, left_date FROM margin_roster_entries WHERE import_id = ? ORDER BY name',
+        [marginImportId]
+      );
+      check('malformed record (no name) skipped, valid two kept', rosterRows.length === 2, rosterRows);
+      check('roster row has correct numeric/text fields', rosterRows[0] &&
+        rosterRows[0].name === 'Jordan Blake' && Number(rosterRows[0].cost) === 85.5 &&
+        rosterRows[0].employment_type === 'W2 (direct)', rosterRows[0]);
+      // mysql2 returns DATE columns as JS Date objects at local midnight;
+      // String(date) gives a locale-formatted string, not ISO, and
+      // toISOString() can shift the calendar day across timezones. Compare
+      // the local date parts MySQL actually stored instead.
+      const ld = rosterRows[1] && rosterRows[1].left_date;
+      const ldStr = ld && `${ld.getFullYear()}-${String(ld.getMonth() + 1).padStart(2, '0')}-${String(ld.getDate()).padStart(2, '0')}`;
+      check('roster row parses a real left_date', rosterRows[1] &&
+        rosterRows[1].name === 'Priya Natarajan' && ldStr === '2026-03-01', { row: rosterRows[1], parsed: ldStr });
+
+      const [orgCounts] = await dbConn.query(
+        `SELECT o.name AS org_name, COUNT(*) AS n FROM margin_roster_entries m
+         JOIN organizations o ON o.id = m.organization_id
+         GROUP BY o.id ORDER BY o.id`
+      );
+      check('roster rows stay scoped to their own organization (no cross-tenant mixing)',
+        orgCounts.length === 2 && orgCounts.every((row) => row.n > 0), orgCounts);
+    } finally {
+      await dbConn.end();
+    }
 
     console.log('\n' + '='.repeat(50));
     console.log(`RESULTS: ${pass} passed, ${fail} failed`);
