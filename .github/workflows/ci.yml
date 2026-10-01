@@ -1,0 +1,39 @@
+name: CI
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      db:
+        image: mariadb:11
+        env:
+          MARIADB_DATABASE: mstest
+          MARIADB_USER: ms
+          MARIADB_PASSWORD: mspass
+          MARIADB_ROOT_PASSWORD: rootpass
+        ports: ['3306:3306']
+        options: >-
+          --health-cmd="healthcheck.sh --connect --innodb_initialized"
+          --health-interval=5s --health-timeout=5s --health-retries=20
+    env:
+      DB_HOST: 127.0.0.1
+      DB_PORT: 3306
+      DB_NAME: mstest
+      DB_USER: ms
+      DB_PASSWORD: mspass
+      SESSION_SECRET: ci_only_not_a_real_secret_0123456789
+      NODE_ENV: development
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - name: Apply schema
+        run: mysql -h 127.0.0.1 -u ms -pmspass mstest < db/schema.sql
+      - run: node tests/static_integration_test.js
+      - run: node tests/e2e_test.js
