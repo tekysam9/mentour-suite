@@ -13,6 +13,7 @@ const express = require('express');
 const pool = require('../db');
 const { requireAuth } = require('../auth');
 const { TABLES: DIRECTORY_TABLES } = require('./directoryDedup');
+const { upsertAssignmentBilling } = require('./assignmentUpsert');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -24,6 +25,7 @@ const REFERENCING_COLUMNS = {
   consultants: [
     { table: 'margin_roster_entries', column: 'consultant_id' },
     { table: 'ledger_roster_entries', column: 'consultant_id' },
+    { table: 'consultant_assignments', column: 'consultant_id' },
   ],
   subvendors: [
     { table: 'margin_roster_entries', column: 'subvendor_id' },
@@ -32,11 +34,37 @@ const REFERENCING_COLUMNS = {
   clients: [
     { table: 'margin_roster_entries', column: 'client_id' },
     { table: 'programs', column: 'client_id' },
+    { table: 'consultant_assignments', column: 'client_id' },
   ],
   programs: [
     { table: 'margin_roster_entries', column: 'program_id' },
+    { table: 'consultant_assignments', column: 'program_id' },
   ],
 };
+
+// After reassigning ids in a merge, two consultant_assignments rows can end
+// up representing the exact same (consultant, client, program) pairing
+// (e.g. both merged consultants already had their own billing row for the
+// same client). Keep the most recently touched one and drop the rest,
+// scoped to this organization since consultant_assignments has no unique
+// constraint of its own to lean on (see assignmentUpsert.js).
+async function dedupeAssignments(conn, organizationId) {
+  const [dupeGroups] = await conn.query(
+    `SELECT consultant_id, client_id, program_id, MAX(id) AS keep_id
+     FROM consultant_assignments
+     WHERE organization_id = ?
+     GROUP BY consultant_id, client_id, program_id
+     HAVING COUNT(*) > 1`,
+    [organizationId]
+  );
+  for (const g of dupeGroups) {
+    await conn.query(
+      `DELETE FROM consultant_assignments
+       WHERE organization_id = ? AND consultant_id <=> ? AND client_id <=> ? AND program_id <=> ? AND id != ?`,
+      [organizationId, g.consultant_id, g.client_id, g.program_id, g.keep_id]
+    );
+  }
+}
 
 function pickContactFields(body) {
   const out = {};
@@ -78,7 +106,8 @@ router.get('/consultants', async (req, res, next) => {
     const [rows] = await pool.query(
       `SELECT c.*,
          (SELECT COUNT(*) FROM margin_roster_entries m WHERE m.consultant_id = c.id) AS margin_rows,
-         (SELECT COUNT(*) FROM ledger_roster_entries l WHERE l.consultant_id = c.id) AS ledger_rows
+         (SELECT COUNT(*) FROM ledger_roster_entries l WHERE l.consultant_id = c.id) AS ledger_rows,
+         (SELECT COUNT(*) FROM consultant_assignments a WHERE a.consultant_id = c.id) AS assignment_count
        FROM consultants c WHERE c.organization_id = ? ORDER BY c.name`,
       [req.user.organization_id]
     );
@@ -89,6 +118,119 @@ router.get('/consultants', async (req, res, next) => {
 });
 
 router.patch('/consultants/:id', (req, res, next) => updateContactFields('consultants', req, res, next));
+
+// --- Assignments: a consultant's billing rate per client/program ---
+//
+// Auto-populated and kept in sync from every Margin upload (see
+// assignmentUpsert.js) — this is the manual side: adding a pairing an
+// upload hasn't covered yet, correcting a billing figure, or removing a
+// stale one. See the consultant_assignments comment in db/schema.sql for
+// why billing (unlike email/phone/address) is allowed to be overwritten by
+// a later upload.
+
+async function findConsultant(id, organizationId) {
+  const [rows] = await pool.query('SELECT id FROM consultants WHERE id = ? AND organization_id = ?', [id, organizationId]);
+  return rows[0] || null;
+}
+
+router.get('/consultants/:id/assignments', async (req, res, next) => {
+  try {
+    const consultant = await findConsultant(req.params.id, req.user.organization_id);
+    if (!consultant) return res.status(404).json({ error: 'Not found.' });
+
+    const [rows] = await pool.query(
+      `SELECT a.id, a.billing, a.source, a.client_id, a.program_id,
+         cl.name AS client_name, p.name AS program_name
+       FROM consultant_assignments a
+       LEFT JOIN clients cl ON cl.id = a.client_id
+       LEFT JOIN programs p ON p.id = a.program_id
+       WHERE a.organization_id = ? AND a.consultant_id = ?
+       ORDER BY cl.name, p.name`,
+      [req.user.organization_id, req.params.id]
+    );
+    res.json({ assignments: rows });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.post('/consultants/:id/assignments', async (req, res, next) => {
+  try {
+    const consultant = await findConsultant(req.params.id, req.user.organization_id);
+    if (!consultant) return res.status(404).json({ error: 'Not found.' });
+
+    const body = req.body || {};
+    const clientId = body.client_id ? Number(body.client_id) : null;
+    const programId = body.program_id ? Number(body.program_id) : null;
+    const billing = body.billing === null || body.billing === undefined || body.billing === ''
+      ? null : Number(body.billing);
+    if (billing !== null && !Number.isFinite(billing)) {
+      return res.status(400).json({ error: 'Billing must be a number.' });
+    }
+
+    if (clientId) {
+      const [clientRows] = await pool.query('SELECT id FROM clients WHERE id = ? AND organization_id = ?', [clientId, req.user.organization_id]);
+      if (!clientRows.length) return res.status(400).json({ error: 'Unknown client.' });
+    }
+    if (programId) {
+      const [programRows] = await pool.query(
+        'SELECT id FROM programs WHERE id = ? AND organization_id = ? AND client_id <=> ?',
+        [programId, req.user.organization_id, clientId]
+      );
+      if (!programRows.length) return res.status(400).json({ error: 'Unknown program, or it doesn’t belong to that client.' });
+    }
+
+    const assignmentId = await upsertAssignmentBilling(pool, {
+      organizationId: req.user.organization_id, consultantId: Number(req.params.id),
+      clientId, programId, billing, source: 'manual',
+    });
+
+    const [rows] = await pool.query(
+      `SELECT a.id, a.billing, a.source, a.client_id, a.program_id,
+         cl.name AS client_name, p.name AS program_name
+       FROM consultant_assignments a
+       LEFT JOIN clients cl ON cl.id = a.client_id
+       LEFT JOIN programs p ON p.id = a.program_id
+       WHERE a.id = ?`,
+      [assignmentId]
+    );
+    res.status(201).json({ assignment: rows[0] });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.patch('/assignments/:id', async (req, res, next) => {
+  try {
+    const billing = req.body && req.body.billing !== undefined && req.body.billing !== null && req.body.billing !== ''
+      ? Number(req.body.billing) : null;
+    if (req.body && req.body.billing !== undefined && req.body.billing !== null && req.body.billing !== '' && !Number.isFinite(billing)) {
+      return res.status(400).json({ error: 'Billing must be a number.' });
+    }
+    const [result] = await pool.query(
+      `UPDATE consultant_assignments SET billing = ?, source = 'manual' WHERE id = ? AND organization_id = ?`,
+      [billing, req.params.id, req.user.organization_id]
+    );
+    if (result.affectedRows === 0) return res.status(404).json({ error: 'Not found.' });
+    const [rows] = await pool.query('SELECT * FROM consultant_assignments WHERE id = ?', [req.params.id]);
+    res.json({ assignment: rows[0] });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.delete('/assignments/:id', async (req, res, next) => {
+  try {
+    const [result] = await pool.query(
+      'DELETE FROM consultant_assignments WHERE id = ? AND organization_id = ?',
+      [req.params.id, req.user.organization_id]
+    );
+    if (result.affectedRows === 0) return res.status(404).json({ error: 'Not found.' });
+    res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
 
 // --- Subvendors (shared between Ledger and Margin) ---
 
@@ -243,6 +385,9 @@ router.post('/duplicates/:id/merge', async (req, res, next) => {
         `UPDATE ${ref.table} SET ${ref.column} = ? WHERE ${ref.column} = ? AND organization_id = ?`,
         [keepId, loseId, req.user.organization_id]
       );
+    }
+    if (REFERENCING_COLUMNS[tableName] && REFERENCING_COLUMNS[tableName].some((ref) => ref.table === 'consultant_assignments')) {
+      await dedupeAssignments(conn, req.user.organization_id);
     }
 
     await conn.query(`DELETE FROM ${tableName} WHERE id = ? AND organization_id = ?`, [loseId, req.user.organization_id]);

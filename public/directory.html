@@ -80,6 +80,26 @@
   .dir-dupe-pct { font-size: 11px; color: var(--text-muted); margin-left: 6px; }
   .dir-dupe-actions { display: flex; gap: 6px; flex-wrap: wrap; }
   .dir-btn-small { font-size: 11.5px; padding: 5px 9px; }
+
+  .dir-assign-toggle {
+    background: none; border: none; font-family: inherit; font-size: 11.5px; font-weight: 600;
+    color: var(--pine); cursor: pointer; padding: 0; margin-top: 4px; display: block;
+  }
+  .dir-assign-toggle:hover { text-decoration: underline; }
+  .dir-assign-row td { background: var(--paper); padding: 12px 14px 16px; }
+  .dir-assign-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  .dir-assign-table th {
+    text-align: left; font-size: 10.5px; font-weight: 600; color: var(--text-muted);
+    padding: 6px 10px; text-transform: uppercase; letter-spacing: 0.02em;
+  }
+  .dir-assign-table td { padding: 7px 10px; vertical-align: middle; }
+  .dir-assign-table tr:not(:last-child) td { border-bottom: 1px solid var(--line); }
+  .dir-assign-source { font-size: 10px; color: var(--text-muted); font-style: italic; }
+  .dir-assign-add-row select, .dir-assign-add-row input {
+    border: 1px solid var(--line); border-radius: 5px; padding: 5px 8px; font-size: 12.5px;
+    font-family: inherit; color: var(--text); background: var(--card); outline: none;
+  }
+  .dir-assign-empty { font-size: 12px; color: var(--text-muted); font-style: italic; padding: 4px 10px 10px; }
 </style>
 </head>
 <body>
@@ -107,6 +127,10 @@
     saveStatus: null, // 'saving' | 'saved' | 'error' | null, for the row being edited
     statusFilter: 'all', // 'all' | 'active' | 'inactive'
     dupeBusyId: null, // flag_id currently being merged/dismissed, or null
+    expandedAssignmentsId: null, // consultant id whose Assignments panel is open, or null
+    assignments: {}, // consultantId -> array of assignment rows (null while loading)
+    editingAssignmentId: null, // assignment id whose billing input is open
+    assignmentStatus: null, // 'saving' | 'error' | null
   };
 
   var appEl = document.getElementById('app');
@@ -115,6 +139,12 @@
     var active = status === 'active';
     return '<span class="dir-status-badge ' + (active ? 'dir-status-active' : 'dir-status-inactive') + '">' +
       (active ? 'Active' : 'Inactive') + '</span>';
+  }
+
+  function fmtMoney(v) {
+    if (v === null || v === undefined || v === '') return '—';
+    var n = Number(v);
+    return Number.isFinite(n) ? '$' + n.toFixed(2) + '/hr' : '—';
   }
 
   function usageBadge(record) {
@@ -160,15 +190,26 @@
       } else {
         actions = '<button class="dir-btn" data-action="edit" data-id="' + r.id + '">Edit</button>';
       }
-      return '<tr>' +
+      var assignToggle = '';
+      if (tab.key === 'consultants') {
+        var expanded = state.expandedAssignmentsId === r.id;
+        var n = typeof r.assignment_count === 'number' ? r.assignment_count : null;
+        assignToggle = '<button class="dir-assign-toggle" data-action="toggle-assignments" data-id="' + r.id + '">' +
+          (expanded ? '▾ Hide billing' : '▸ Billing' + (n ? ' (' + n + ')' : '')) + '</button>';
+      }
+      var mainRow = '<tr>' +
         nameCell +
         '<td>' + statusBadge(r.status) + '</td>' +
         '<td>' + contactCell(r, 'email') + '</td>' +
         '<td>' + contactCell(r, 'phone') + '</td>' +
         '<td>' + contactCell(r, 'address') + '</td>' +
         '<td>' + usageBadge(r) + '</td>' +
-        '<td>' + actions + '</td>' +
+        '<td>' + actions + assignToggle + '</td>' +
       '</tr>';
+      if (tab.key === 'consultants' && state.expandedAssignmentsId === r.id) {
+        return mainRow + renderAssignmentsPanel(r);
+      }
+      return mainRow;
     }).join('');
 
     return '<div class="dir-table-wrap"><table class="dir-table"><thead><tr>' +
@@ -212,6 +253,81 @@
     '</div>';
   }
 
+  // Billing assignments: a consultant can be billed on more than one
+  // client/program at once, so this is its own expandable panel under
+  // their row rather than a field in the main table. Auto-populated from
+  // uploads (see src/routes/assignmentUpsert.js); addable/editable by hand
+  // here too, for a pairing no file covers yet.
+  function renderAssignAddRow(consultantId) {
+    var clients = state.cache.clients || [];
+    var programs = state.cache.programs || [];
+    if (!clients.length && !programs.length) {
+      return '<div class="dir-assign-empty">Loading clients…</div>';
+    }
+    var options = '<option value="">— choose a client or program —</option>';
+    if (clients.length) {
+      options += '<optgroup label="Client only">' + clients.map(function (c) {
+        return '<option value="client:' + c.id + '">' + escapeHtml(c.name) + '</option>';
+      }).join('') + '</optgroup>';
+    }
+    if (programs.length) {
+      options += '<optgroup label="Client / Program">' + programs.map(function (p) {
+        return '<option value="program:' + p.id + '">' + escapeHtml(p.client_name) + ' / ' + escapeHtml(p.name) + '</option>';
+      }).join('') + '</optgroup>';
+    }
+    return '<div class="dir-row-actions dir-assign-add-row" style="margin-top:8px">' +
+      '<select data-role="new-assignment-target">' + options + '</select>' +
+      '<input type="number" step="0.01" placeholder="Billing $/hr" data-role="new-assignment-billing" style="width:110px">' +
+      '<button class="dir-btn dir-btn-small dir-btn-primary" data-action="assign-add" data-consultant-id="' + consultantId + '">+ Add</button>' +
+    '</div>';
+  }
+
+  function renderAssignmentsPanel(consultant) {
+    var list = state.assignments[consultant.id];
+    var body;
+    if (list === undefined || list === null) {
+      body = '<div class="dir-assign-empty">Loading…</div>';
+    } else if (!list.length) {
+      body = '<div class="dir-assign-empty">No billing assignments yet.</div>' + renderAssignAddRow(consultant.id);
+    } else {
+      var rows = list.map(function (a) {
+        var editing = state.editingAssignmentId === a.id;
+        var label = a.client_name
+          ? (a.program_name ? escapeHtml(a.client_name) + ' / ' + escapeHtml(a.program_name) : escapeHtml(a.client_name))
+          : '<span class="dir-empty-cell">—</span>';
+        var billingCell = editing
+          ? '<input type="number" step="0.01" class="dir-field-input" data-assign-billing value="' + escapeHtml(a.billing === null ? '' : a.billing) + '" style="width:90px">'
+          : fmtMoney(a.billing);
+        var actions = editing
+          ? '<button class="dir-btn dir-btn-small dir-btn-primary" data-action="assign-save" data-assignment-id="' + a.id + '">Save</button>' +
+            '<button class="dir-btn dir-btn-small" data-action="assign-cancel">Cancel</button>'
+          : '<button class="dir-btn dir-btn-small" data-action="assign-edit" data-assignment-id="' + a.id + '">Edit</button>' +
+            '<button class="dir-btn dir-btn-small" data-action="assign-delete" data-assignment-id="' + a.id + '">Remove</button>';
+        return '<tr>' +
+          '<td>' + label + '</td>' +
+          '<td>' + billingCell + '</td>' +
+          '<td><span class="dir-assign-source">' + (a.source === 'upload' ? 'from upload' : 'manual') + '</span></td>' +
+          '<td>' + actions + (state.assignmentStatus === 'error' && editing ? ' <span class="dir-btn-save-status" style="color:#9B3B3B">Couldn’t save</span>' : '') + '</td>' +
+        '</tr>';
+      }).join('');
+      body = '<table class="dir-assign-table"><thead><tr><th>Client / Program</th><th>Billing</th><th></th><th></th></tr></thead><tbody>' + rows + '</tbody></table>' +
+        renderAssignAddRow(consultant.id);
+    }
+    return '<tr class="dir-assign-row"><td colspan="7">' + body + '</td></tr>';
+  }
+
+  function ensureClientsAndProgramsLoaded(cb) {
+    var need = [];
+    if (!state.cache.clients) {
+      need.push(fetch('/api/directory/clients').then(function (r) { return r.json(); }).then(function (b) { state.cache.clients = b.clients || []; }));
+    }
+    if (!state.cache.programs) {
+      need.push(fetch('/api/directory/programs').then(function (r) { return r.json(); }).then(function (b) { state.cache.programs = b.programs || []; }));
+    }
+    if (!need.length) { cb(); return; }
+    Promise.all(need).then(cb).catch(cb);
+  }
+
   function render() {
     var tabsHtml = TABS.map(function (t) {
       return '<button class="dir-tab' + (state.activeTab === t.key ? ' active' : '') + '" data-tab="' + t.key + '">' + t.label + '</button>';
@@ -244,7 +360,7 @@
       '<div class="dir-body">' +
         '<a class="dir-back" href="/">← Back to dashboards</a>' +
         '<h1 class="dir-title">Directory.</h1>' +
-        '<p class="dir-copy">Everyone and every account your team has ever uploaded, in one place — add an email, phone, or address once and it stays, no matter how many more files come in. Status tracks each upload automatically: active if it showed up that way in the most recent file, inactive otherwise.</p>' +
+        '<p class="dir-copy">Everyone and every account your team has ever uploaded, in one place — add an email, phone, or address once and it stays, no matter how many more files come in. Status tracks each upload automatically: active if it showed up that way in the most recent file, inactive otherwise. On Consultants, open “Billing” on a row to see or add their rate on each client/program.</p>' +
         '<div class="dir-tabs">' + tabsHtml + '</div>' +
         dupePanel +
         controls +
@@ -393,6 +509,134 @@
         render();
       }).catch(function () {
         state.dupeBusyId = null;
+        render();
+      });
+      return;
+    }
+
+    var toggleAssignBtn = e.target.closest('[data-action="toggle-assignments"]');
+    if (toggleAssignBtn) {
+      var cId = Number(toggleAssignBtn.getAttribute('data-id'));
+      if (state.expandedAssignmentsId === cId) {
+        state.expandedAssignmentsId = null;
+        render();
+        return;
+      }
+      state.expandedAssignmentsId = cId;
+      state.editingAssignmentId = null;
+      state.assignmentStatus = null;
+      if (!state.assignments[cId]) {
+        state.assignments[cId] = null; // loading marker
+        fetch('/api/directory/consultants/' + cId + '/assignments').then(function (res) {
+          if (!res.ok) throw new Error('load failed');
+          return res.json();
+        }).then(function (body) {
+          state.assignments[cId] = body.assignments || [];
+          render();
+        }).catch(function () {
+          state.assignments[cId] = [];
+          render();
+        });
+      }
+      ensureClientsAndProgramsLoaded(function () { render(); });
+      render();
+      return;
+    }
+
+    var assignEditBtn = e.target.closest('[data-action="assign-edit"]');
+    if (assignEditBtn) {
+      state.editingAssignmentId = Number(assignEditBtn.getAttribute('data-assignment-id'));
+      state.assignmentStatus = null;
+      render();
+      return;
+    }
+
+    var assignCancelBtn = e.target.closest('[data-action="assign-cancel"]');
+    if (assignCancelBtn) {
+      state.editingAssignmentId = null;
+      state.assignmentStatus = null;
+      render();
+      return;
+    }
+
+    var assignSaveBtn = e.target.closest('[data-action="assign-save"]');
+    if (assignSaveBtn) {
+      var assignmentId = assignSaveBtn.getAttribute('data-assignment-id');
+      var billingInputEl = assignSaveBtn.closest('tr').querySelector('[data-assign-billing]');
+      var billingVal = billingInputEl ? billingInputEl.value : '';
+      var consultantIdForSave = state.expandedAssignmentsId;
+      state.assignmentStatus = 'saving';
+      fetch('/api/directory/assignments/' + assignmentId, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ billing: billingVal }),
+      }).then(function (res) {
+        if (!res.ok) throw new Error('save failed');
+        return res.json();
+      }).then(function (body) {
+        var list = state.assignments[consultantIdForSave] || [];
+        var idx = list.findIndex(function (a) { return a.id === Number(assignmentId); });
+        if (idx > -1) list[idx] = Object.assign({}, list[idx], body.assignment);
+        state.editingAssignmentId = null;
+        state.assignmentStatus = null;
+        render();
+      }).catch(function () {
+        state.assignmentStatus = 'error';
+        render();
+      });
+      return;
+    }
+
+    var assignDeleteBtn = e.target.closest('[data-action="assign-delete"]');
+    if (assignDeleteBtn) {
+      var deleteAssignmentId = assignDeleteBtn.getAttribute('data-assignment-id');
+      var consultantIdForDelete = state.expandedAssignmentsId;
+      fetch('/api/directory/assignments/' + deleteAssignmentId, { method: 'DELETE' }).then(function (res) {
+        if (!res.ok) throw new Error('delete failed');
+        return res.json();
+      }).then(function () {
+        state.assignments[consultantIdForDelete] = (state.assignments[consultantIdForDelete] || []).filter(function (a) { return a.id !== Number(deleteAssignmentId); });
+        var list2 = state.cache.consultants || [];
+        var cRec2 = list2.find(function (c) { return c.id === Number(consultantIdForDelete); });
+        if (cRec2 && typeof cRec2.assignment_count === 'number') cRec2.assignment_count = Math.max(0, cRec2.assignment_count - 1);
+        render();
+      }).catch(function () {
+        state.assignmentStatus = 'error';
+        render();
+      });
+      return;
+    }
+
+    var assignAddBtn = e.target.closest('[data-action="assign-add"]');
+    if (assignAddBtn) {
+      var addConsultantId = assignAddBtn.getAttribute('data-consultant-id');
+      var wrap = assignAddBtn.closest('.dir-assign-add-row');
+      var targetSelect = wrap.querySelector('[data-role="new-assignment-target"]');
+      var billingInput = wrap.querySelector('[data-role="new-assignment-billing"]');
+      var targetVal = targetSelect ? targetSelect.value : '';
+      if (!targetVal) return;
+      var payload = { billing: billingInput ? billingInput.value : '' };
+      if (targetVal.indexOf('client:') === 0) {
+        payload.client_id = Number(targetVal.slice(7));
+      } else if (targetVal.indexOf('program:') === 0) {
+        var programId = Number(targetVal.slice(8));
+        payload.program_id = programId;
+        var prog = (state.cache.programs || []).find(function (p) { return p.id === programId; });
+        if (prog) payload.client_id = prog.client_id;
+      }
+      fetch('/api/directory/consultants/' + addConsultantId + '/assignments', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+      }).then(function (res) {
+        if (!res.ok) throw new Error('add failed');
+        return res.json();
+      }).then(function (body) {
+        var list = state.assignments[addConsultantId] || [];
+        list.push(body.assignment);
+        state.assignments[addConsultantId] = list;
+        var consultantList = state.cache.consultants || [];
+        var cRec = consultantList.find(function (c) { return c.id === Number(addConsultantId); });
+        if (cRec) cRec.assignment_count = list.length;
+        render();
+      }).catch(function () {
+        state.assignmentStatus = 'error';
         render();
       });
     }

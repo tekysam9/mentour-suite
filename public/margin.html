@@ -233,13 +233,28 @@
       else if (/^1099\b/i.test(subText)) employmentType = '1099 (direct)';
       else if (!subText) employmentType = 'Unspecified';
 
+      // "Client / Account" in the workbook is really two things joined by a
+      // slash: an account/reseller name (e.g. "CDW") and, after the slash,
+      // the actual end-client (e.g. "Daikin Applied"). The "Program" column
+      // already shows the pre-slash part on its own, so the Client column
+      // itself only needs the post-slash part — showing the raw
+      // "CDW/Daikin Applied" string in both places was redundant and read
+      // as one garbled field. The original raw string is kept as
+      // `rawClient` for the row's expanded detail view and for search, so
+      // typing "CDW" still finds the row even though it's not in the
+      // visible Client column anymore.
+      var rawClient = client;
       var program = client, clientDetail = null;
       var slash = client.indexOf('/');
-      if (slash > -1) { program = client.slice(0, slash).trim(); clientDetail = client.slice(slash + 1).trim(); }
+      if (slash > -1) {
+        program = client.slice(0, slash).trim();
+        clientDetail = client.slice(slash + 1).trim();
+        if (clientDetail) client = clientDetail;
+      }
       if (!program) program = '(unspecified)';
 
       records.push({
-        name: titleCase(name), joined: joined, client: client, program: program, clientDetail: clientDetail,
+        name: titleCase(name), joined: joined, client: client, rawClient: rawClient, program: program, clientDetail: clientDetail,
         cost: cost, billing: billing, margin: margin, status: status,
         leftText: leftText, leftDate: leftDate, recruiter: recruiter || null,
         subvendorText: subText, employmentType: employmentType, sourceSheet: sourceLabel,
@@ -375,7 +390,7 @@
     if (q) {
       list = list.filter(function (x) {
         return x.r.name.toLowerCase().indexOf(q) > -1 ||
-          x.r.client.toLowerCase().indexOf(q) > -1 ||
+          x.r.rawClient.toLowerCase().indexOf(q) > -1 ||
           x.r.subvendorText.toLowerCase().indexOf(q) > -1;
       });
     }
@@ -693,7 +708,7 @@
     }
     var expandRow = (
       '<tr class="cl-expand-row"><td colspan="' + COLUMNS.length + '"><div class="cl-expand-inner"><div class="cl-expand-grid">' +
-        field('Full client / account string', r.client) +
+        field('Full client / account string', r.rawClient) +
         field('Recruiter', r.recruiter) +
         field('Status detail', leftInfo) +
         field('Employment / subvendor', r.subvendorText) +

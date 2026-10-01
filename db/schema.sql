@@ -208,6 +208,40 @@ ALTER TABLE ledger_roster_entries ADD CONSTRAINT fk_ledger_roster_consultant FOR
 ALTER TABLE ledger_roster_entries ADD CONSTRAINT fk_ledger_roster_subvendor FOREIGN KEY IF NOT EXISTS (subvendor_id) REFERENCES subvendors(id) ON DELETE SET NULL;
 
 -- ---------------------------------------------------------------------------
+-- Assignments: a consultant's billing rate on a specific client/program.
+-- One consultant can be billed on more than one client/program at once (or
+-- over time), so this is its own table rather than a field on `consultants`
+-- -- each row is one (consultant, client, program) pairing and its current
+-- billing $/hr. `program_id` is nullable (a Margin row with no "/" in its
+-- Client / Account value has no program detail); `client_id` is nullable too
+-- so a manually-added assignment doesn't have to specify one up front.
+--
+-- Populated automatically from every Margin upload (one row per distinct
+-- pairing seen, billing kept in sync with the file -- see
+-- src/routes/assignmentUpsert.js) and also addable/editable by hand from
+-- the Directory's Consultants tab, e.g. for a pairing not yet in any
+-- upload. Unlike email/phone/address, a later upload DOES overwrite the
+-- billing on a matching pairing -- same reasoning as `status` elsewhere in
+-- this file: billing is meant to track the latest file, not a fact a
+-- person is expected to maintain by hand once it's covered by uploads.
+CREATE TABLE IF NOT EXISTS consultant_assignments (
+  id              INT AUTO_INCREMENT PRIMARY KEY,
+  organization_id INT NOT NULL,
+  consultant_id   INT NOT NULL,
+  client_id       INT NULL,
+  program_id      INT NULL,
+  billing         DECIMAL(12,2) NULL,
+  source          ENUM('upload', 'manual') NOT NULL DEFAULT 'manual',
+  created_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE,
+  FOREIGN KEY (consultant_id) REFERENCES consultants(id) ON DELETE CASCADE,
+  FOREIGN KEY (client_id) REFERENCES clients(id) ON DELETE CASCADE,
+  FOREIGN KEY (program_id) REFERENCES programs(id) ON DELETE CASCADE,
+  INDEX idx_assignment_org_consultant (organization_id, consultant_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- ---------------------------------------------------------------------------
 -- "Smart parser" duplicate detection. An exact name match (case/whitespace
 -- insensitive, see directoryUpsert.js) always resolves to the same record
 -- and never creates a second one. This table is for the close-but-not-exact

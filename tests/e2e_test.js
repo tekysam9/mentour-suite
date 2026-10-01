@@ -258,6 +258,56 @@ async function main() {
       r = await owner.fetch('/api/directory/consultants');
       const jordanRecord = r.body.consultants.find((c) => c.name === 'Jordan Blake');
       check('consultant found for editing', !!jordanRecord, r.body);
+      check('consultant list reports its assignment count', jordanRecord.assignment_count === 1, jordanRecord);
+
+      // 21c. The Margin upload auto-populated a billing assignment for
+      // Jordan's one pairing (Acme / Platform, $140/hr) — this is the
+      // same consultant_assignments row the Directory's Consultants tab
+      // would expand to show.
+      r = await owner.fetch('/api/directory/consultants/' + jordanRecord.id + '/assignments');
+      check('billing assignment auto-populated from upload', r.status === 200 &&
+        r.body.assignments.length === 1 && r.body.assignments[0].client_name === 'Acme' &&
+        r.body.assignments[0].program_name === 'Platform' && Number(r.body.assignments[0].billing) === 140 &&
+        r.body.assignments[0].source === 'upload', r.body);
+
+      r = await otherOrgUser.fetch('/api/directory/consultants/' + jordanRecord.id + '/assignments');
+      check('cross-tenant assignment list blocked (404)', r.status === 404, r);
+
+      // A second, unrelated engagement for the same consultant — added by
+      // hand rather than from a file, which is the whole point: one
+      // consultant, more than one billing rate at once.
+      const globexClient = (await owner.fetch('/api/directory/clients')).body.clients.find((c) => c.name === 'Globex');
+      r = await owner.fetch('/api/directory/consultants/' + jordanRecord.id + '/assignments', {
+        method: 'POST', body: JSON.stringify({ client_id: globexClient.id, billing: 99.99 }),
+      });
+      check('manually adding a second assignment returns 201', r.status === 201 &&
+        r.body.assignment.client_name === 'Globex' && r.body.assignment.program_id === null &&
+        Number(r.body.assignment.billing) === 99.99 && r.body.assignment.source === 'manual', r.body);
+      const manualAssignmentId = r.body.assignment.id;
+
+      r = await owner.fetch('/api/directory/consultants/' + jordanRecord.id + '/assignments', {
+        method: 'POST', body: JSON.stringify({ client_id: 999999, billing: 10 }),
+      });
+      check('adding an assignment against an unknown client is rejected', r.status === 400, r);
+
+      r = await owner.fetch('/api/directory/consultants/' + jordanRecord.id + '/assignments');
+      check('consultant now shows both assignments', r.body.assignments.length === 2, r.body.assignments);
+
+      r = await owner.fetch('/api/directory/assignments/' + manualAssignmentId, {
+        method: 'PATCH', body: JSON.stringify({ billing: 120.5 }),
+      });
+      check('editing a manual assignment’s billing returns 200', r.status === 200 && Number(r.body.assignment.billing) === 120.5, r.body);
+
+      r = await otherOrgUser.fetch('/api/directory/assignments/' + manualAssignmentId, {
+        method: 'PATCH', body: JSON.stringify({ billing: 1 }),
+      });
+      check('cross-tenant assignment edit blocked (404)', r.status === 404, r);
+
+      r = await owner.fetch('/api/directory/assignments/' + manualAssignmentId, { method: 'DELETE' });
+      check('deleting an assignment returns ok', r.status === 200 && r.body.ok === true, r);
+
+      r = await owner.fetch('/api/directory/consultants/' + jordanRecord.id + '/assignments');
+      check('deleted assignment no longer listed', r.body.assignments.length === 1, r.body.assignments);
 
       // 22. Editing a consultant's contact details persists...
       r = await owner.fetch('/api/directory/consultants/' + jordanRecord.id, {
@@ -354,6 +404,14 @@ async function main() {
       check('program status flips to inactive alongside its client',
         r.body.programs.find((p) => p.name === 'Platform').status === 'inactive', r.body.programs);
 
+      // 27b. That same upload's row said $141/hr, so the existing
+      // Acme/Platform assignment should have tracked it automatically —
+      // same auto-sync-from-upload reasoning as status.
+      r = await owner.fetch('/api/directory/consultants/' + jordanRecord.id + '/assignments');
+      const acmeAssignment = r.body.assignments.find((a) => a.client_name === 'Acme');
+      check('billing assignment auto-syncs to the latest upload’s rate',
+        acmeAssignment && Number(acmeAssignment.billing) === 141 && acmeAssignment.source === 'upload', r.body.assignments);
+
       // 28. Smart-parser duplicate flagging: a typo'd name close to an
       // existing consultant should NOT create a silent duplicate — it
       // still gets its own record (matching stays exact-name-only), but
@@ -420,6 +478,16 @@ async function main() {
       const priyaMerged = r.body.consultants.find((c) => c.name === 'Priya Natarajan');
       check('surviving record absorbed the merged-in upload (margin_rows went from 1 to 2)',
         priyaMerged && priyaMerged.margin_rows === 2, priyaMerged);
+
+      // 29b. Both the original and the merged-in typo had their own
+      // billing assignment for the same Globex pairing — merging must
+      // transfer (not cascade-delete) the loser's assignment, and collapse
+      // the resulting duplicate pairing down to one row rather than
+      // leaving two billing figures for the same client.
+      r = await owner.fetch('/api/directory/consultants/' + priyaMerged.id + '/assignments');
+      check('merge transfers the loser’s billing assignment instead of losing it, deduped to one row',
+        r.body.assignments.length === 1 && r.body.assignments[0].client_name === 'Globex' &&
+        Number(r.body.assignments[0].billing) === 151, r.body.assignments);
 
       r = await owner.fetch('/api/directory/duplicates?table=consultants');
       check('no open duplicate flags left referencing the merged-away record',

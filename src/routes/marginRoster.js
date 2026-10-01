@@ -12,6 +12,7 @@
 // client/program field-mapping explanation.
 
 const { normalizeName, upsertConsultant, upsertSubvendor, upsertClient, upsertProgram } = require('./directoryUpsert');
+const { upsertAssignmentBilling } = require('./assignmentUpsert');
 
 function toNullableNumber(value) {
   if (value === null || value === undefined || value === '') return null;
@@ -118,19 +119,31 @@ async function saveMarginRoster(conn, { organizationId, importId, data }) {
     }
   }
 
-  const rows = valid.map((r) => {
+  const rows = [];
+  for (const r of valid) {
     const consultantKey = normalizeName(r.name);
     const clientKey = normalizeName(r.program);
     const clientId = clientKey ? clientIds.get(clientKey) || null : null;
     const programDetailKey = normalizeName(r.clientDetail);
     const programId = clientId && programDetailKey ? programIds.get(clientId + '|' + programDetailKey) || null : null;
     const subvendorKey = r.employmentType === 'Subvendor' ? normalizeName(r.subvendorText) : null;
+    const consultantId = consultantKey ? consultantIds.get(consultantKey) || null : null;
 
-    return [
+    // One billing assignment per (consultant, client, program) pairing this
+    // row names — kept in sync with the file every time it's re-uploaded.
+    // See assignmentUpsert.js and the consultant_assignments comment in
+    // db/schema.sql.
+    if (consultantId) {
+      await upsertAssignmentBilling(conn, {
+        organizationId, consultantId, clientId, programId, billing: toNullableNumber(r.billing), source: 'upload',
+      });
+    }
+
+    rows.push([
       importId,
       organizationId,
       toNullableText(r.name, 255),
-      consultantKey ? consultantIds.get(consultantKey) || null : null,
+      consultantId,
       toNullableText(r.client, 255),
       toNullableText(r.program, 255),
       clientId,
@@ -148,8 +161,8 @@ async function saveMarginRoster(conn, { organizationId, importId, data }) {
       subvendorKey ? subvendorIds.get(subvendorKey) || null : null,
       toNullableText(r.employmentType, 64),
       toNullableText(r.sourceSheet, 255),
-    ];
-  });
+    ]);
+  }
 
   await conn.query(
     `INSERT INTO margin_roster_entries
