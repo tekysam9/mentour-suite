@@ -15,7 +15,7 @@ function createImportRouter(tableName) {
     if (!fileName || !data) return res.status(400).json({ error: 'Missing fileName or data.' });
     try {
       const [result] = await pool.query(
-        `INSERT INTO ${tableName} (organization_id, uploaded_by, file_name, data) VALUES (?, ?, ?, CAST(? AS JSON))`,
+        `INSERT INTO ${tableName} (organization_id, uploaded_by, file_name, data) VALUES (?, ?, ?, ?)`,
         [req.user.organization_id, req.user.id, String(fileName).slice(0, 255), JSON.stringify(data)]
       );
       const [rows] = await pool.query(`SELECT id, file_name, imported_at FROM ${tableName} WHERE id = ?`, [result.insertId]);
