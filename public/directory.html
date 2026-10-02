@@ -197,8 +197,13 @@
       } else {
         body = '';
         if (marginRows.length) {
+          // Full date+time (not just the day) and the import id/sheet name
+          // are what let a person tell apart "this file was genuinely
+          // uploaded three times" from "this one upload's source sheet
+          // listed the same person more than once" — both look identical
+          // if only the calendar date is shown.
           var mBody = marginRows.map(function (m) {
-            var when = m.imported_at ? new Date(m.imported_at).toLocaleDateString() : '—';
+            var when = m.imported_at ? new Date(m.imported_at).toLocaleString() : '—';
             // A row with no "/" in its Client / Account value has no
             // separate program — see db/schema.sql's Directory comment.
             var clientProgram = m.client_detail
@@ -206,8 +211,9 @@
               : escapeHtml(m.client || '—');
             var who = tab.key === 'consultants' ? '' : '<td>' + escapeHtml(m.name) + '</td>';
             return '<tr>' +
-              '<td>' + escapeHtml(m.file_name) + '</td>' +
+              '<td>' + escapeHtml(m.file_name) + ' <span class="dir-assign-source">#' + m.import_id + '</span></td>' +
               '<td>' + when + '</td>' +
+              '<td>' + escapeHtml(m.source_sheet || '—') + '</td>' +
               who +
               '<td>' + clientProgram + '</td>' +
               '<td>' + fmtMoney(m.billing) + '</td>' +
@@ -216,16 +222,16 @@
           }).join('');
           var whoHeader = tab.key === 'consultants' ? '' : '<th>Consultant</th>';
           body += '<table class="dir-assign-table"><thead><tr>' +
-            '<th>Margin file</th><th>Uploaded</th>' + whoHeader + '<th>Client / Program</th><th>Billing</th><th>Status</th>' +
+            '<th>Margin file</th><th>Uploaded</th><th>Sheet</th>' + whoHeader + '<th>Client / Program</th><th>Billing</th><th>Status</th>' +
             '</tr></thead><tbody>' + mBody + '</tbody></table>';
         }
         if (ledgerRows.length) {
           var lBody = ledgerRows.map(function (l) {
-            var when = l.imported_at ? new Date(l.imported_at).toLocaleDateString() : '—';
+            var when = l.imported_at ? new Date(l.imported_at).toLocaleString() : '—';
             var who = tab.key === 'consultants' ? '' : '<td>' + escapeHtml(l.name) + '</td>';
             var tagMonth = [l.client_tag, l.month_label].filter(Boolean).map(escapeHtml).join(' · ') || '—';
             return '<tr>' +
-              '<td>' + escapeHtml(l.file_name) + '</td>' +
+              '<td>' + escapeHtml(l.file_name) + ' <span class="dir-assign-source">#' + l.import_id + '</span></td>' +
               '<td>' + when + '</td>' +
               who +
               '<td>' + tagMonth + '</td>' +
