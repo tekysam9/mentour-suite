@@ -26,6 +26,7 @@ const REFERENCING_COLUMNS = {
     { table: 'margin_roster_entries', column: 'consultant_id' },
     { table: 'ledger_roster_entries', column: 'consultant_id' },
     { table: 'consultant_assignments', column: 'consultant_id' },
+    { table: 'invoices', column: 'consultant_id' },
   ],
   subvendors: [
     { table: 'margin_roster_entries', column: 'subvendor_id' },
@@ -35,10 +36,12 @@ const REFERENCING_COLUMNS = {
     { table: 'margin_roster_entries', column: 'client_id' },
     { table: 'programs', column: 'client_id' },
     { table: 'consultant_assignments', column: 'client_id' },
+    { table: 'invoices', column: 'client_id' },
   ],
   programs: [
     { table: 'margin_roster_entries', column: 'program_id' },
     { table: 'consultant_assignments', column: 'program_id' },
+    { table: 'invoices', column: 'program_id' },
   ],
 };
 

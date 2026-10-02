@@ -598,6 +598,13 @@ async function main() {
       const priyaFlag = r.body.duplicates.find((d) => d.record_name === 'Priya Natarjan');
       check('second near-duplicate also flagged', !!priyaFlag && priyaFlag.matched_name === 'Priya Natarajan', r.body);
 
+      // Give the typo'd record an invoice before merging: the merge must
+      // move it to the surviving record, not cascade-delete it.
+      r = await owner.fetch('/api/invoices/generate', { method: 'POST', body: JSON.stringify({ periodMonth: '2026-09', netTerms: 'NET30', issueDate: '2026-09-01' }) });
+      check('invoice generation before merge returns 200/201', r.status === 200 || r.status === 201, r);
+      r = await owner.fetch('/api/invoices?periodMonth=2026-09');
+      const invoicesBeforeMerge = (r.body.invoices || []).length;
+
       r = await owner.fetch('/api/directory/duplicates/' + priyaFlag.flag_id + '/merge', {
         method: 'POST', body: JSON.stringify({ keep: 'matched' }),
       });
@@ -620,6 +627,11 @@ async function main() {
       check('merge transfers the loser’s billing assignment instead of losing it, deduped to one row',
         r.body.assignments.length === 1 && r.body.assignments[0].client_name === 'Globex' &&
         Number(r.body.assignments[0].billing) === 151, r.body.assignments);
+
+      r = await owner.fetch('/api/invoices?periodMonth=2026-09');
+      check('merge keeps every invoice (moved to the surviving record, none deleted)',
+        invoicesBeforeMerge > 0 && (r.body.invoices || []).length === invoicesBeforeMerge &&
+        !(r.body.invoices || []).some((i) => i.consultant_id === priyaFlag.record_id), r.body);
 
       r = await owner.fetch('/api/directory/duplicates?table=consultants');
       check('no open duplicate flags left referencing the merged-away record',
