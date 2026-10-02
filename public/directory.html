@@ -178,14 +178,21 @@
       '</button>' + programsNote;
   }
 
-  function usageColspan(tab) {
-    return tab.key === 'programs' ? 8 : 7;
+  // Total column count for the active tab's table, used as the colspan for
+  // any full-width expandable row (the usage panel, the billing panel).
+  // Consultants gets two extra columns (Client / Program, Billing) and
+  // programs gets one (Client) beyond the common Name/Status/Email/Phone/
+  // Address/Seen in/actions set.
+  function rowColspan(tab) {
+    if (tab.key === 'consultants') return 9;
+    if (tab.key === 'programs') return 8;
+    return 7;
   }
 
   function renderUsagePanel(tab, record) {
     var key = tab.key + ':' + record.id;
     var data = state.usage[key];
-    var colspan = usageColspan(tab);
+    var colspan = rowColspan(tab);
     var body;
     if (data === undefined || data === null) {
       body = '<div class="dir-assign-empty">Loading…</div>';
@@ -249,6 +256,25 @@
     return '<tr class="dir-assign-row"><td colspan="' + colspan + '">' + body + '</td></tr>';
   }
 
+  // Quick-glance Client/Program and Billing columns on the Consultants tab
+  // — one line per billing assignment (see renderAssignmentsPanel for the
+  // full editable view a click on "Billing" opens). r.assignments is
+  // embedded directly in GET /api/directory/consultants (see directory.js)
+  // so this never needs its own fetch.
+  function assignmentSummaryCells(record) {
+    var list = record.assignments || [];
+    if (!list.length) {
+      return { clientProgram: '<span class="dir-empty-cell">—</span>', billing: '<span class="dir-empty-cell">—</span>' };
+    }
+    var clientProgram = list.map(function (a) {
+      return a.client_name
+        ? (a.program_name ? escapeHtml(a.client_name) + ' / ' + escapeHtml(a.program_name) : escapeHtml(a.client_name))
+        : '<span class="dir-empty-cell">—</span>';
+    }).join('<br>');
+    var billing = list.map(function (a) { return fmtMoney(a.billing); }).join('<br>');
+    return { clientProgram: clientProgram, billing: billing };
+  }
+
   function contactCell(record, field) {
     if (state.editingId === record.id) {
       return '<input class="dir-field-input" data-field="' + field + '" value="' + escapeHtml(record[field] || '') + '">';
@@ -267,12 +293,18 @@
     if (!records.length) {
       return '<div class="dir-empty-state">No ' + state.statusFilter + ' ' + tab.label.toLowerCase() + '.</div>';
     }
-    var extraCol = tab.key === 'programs' ? '<th>Client</th>' : '';
+    var extraCol = tab.key === 'programs' ? '<th>Client</th>'
+      : tab.key === 'consultants' ? '<th>Client / Program</th><th>Billing</th>' : '';
     var rows = records.map(function (r) {
       var editing = state.editingId === r.id;
       var nameCell = tab.key === 'programs'
         ? '<td class="dir-name">' + escapeHtml(r.name) + '</td><td class="dir-muted">' + escapeHtml(r.client_name) + '</td>'
         : '<td class="dir-name">' + escapeHtml(r.name) + '</td>';
+      var billingCols = '';
+      if (tab.key === 'consultants') {
+        var sums = assignmentSummaryCells(r);
+        billingCols = '<td>' + sums.clientProgram + '</td><td>' + sums.billing + '</td>';
+      }
       var actions;
       if (editing) {
         actions =
@@ -293,6 +325,7 @@
       }
       var mainRow = '<tr>' +
         nameCell +
+        billingCols +
         '<td>' + statusBadge(r.status) + '</td>' +
         '<td>' + contactCell(r, 'email') + '</td>' +
         '<td>' + contactCell(r, 'phone') + '</td>' +
@@ -305,7 +338,7 @@
         out += renderUsagePanel(tab, r);
       }
       if (tab.key === 'consultants' && state.expandedAssignmentsId === r.id) {
-        out += renderAssignmentsPanel(r);
+        out += renderAssignmentsPanel(tab, r);
       }
       return out;
     }).join('');
@@ -380,7 +413,7 @@
     '</div>';
   }
 
-  function renderAssignmentsPanel(consultant) {
+  function renderAssignmentsPanel(tab, consultant) {
     var list = state.assignments[consultant.id];
     var body;
     if (list === undefined || list === null) {
@@ -411,7 +444,7 @@
       body = '<table class="dir-assign-table"><thead><tr><th>Client / Program</th><th>Billing</th><th></th><th></th></tr></thead><tbody>' + rows + '</tbody></table>' +
         renderAssignAddRow(consultant.id);
     }
-    return '<tr class="dir-assign-row"><td colspan="7">' + body + '</td></tr>';
+    return '<tr class="dir-assign-row"><td colspan="' + rowColspan(tab) + '">' + body + '</td></tr>';
   }
 
   function ensureClientsAndProgramsLoaded(cb) {
@@ -495,6 +528,15 @@
       return res.json();
     }).then(function (body) {
       state.cache[tabKey] = body[tab.listKey] || [];
+      // Consultants arrive with their billing assignments embedded (see
+      // GET /api/directory/consultants) — alias the same array into
+      // state.assignments so the expandable Billing panel needs no fetch of
+      // its own, and so later add/edit/delete there (which mutate that
+      // array in place) keep the inline Client/Program and Billing columns
+      // in sync automatically.
+      if (tabKey === 'consultants') {
+        state.cache[tabKey].forEach(function (r) { state.assignments[r.id] = r.assignments || []; });
+      }
       state.loading = false;
       render();
     }).catch(function () {
@@ -701,6 +743,9 @@
         var list = state.assignments[consultantIdForSave] || [];
         var idx = list.findIndex(function (a) { return a.id === Number(assignmentId); });
         if (idx > -1) list[idx] = Object.assign({}, list[idx], body.assignment);
+        state.assignments[consultantIdForSave] = list;
+        var savedCRec = (state.cache.consultants || []).find(function (c) { return c.id === Number(consultantIdForSave); });
+        if (savedCRec) savedCRec.assignments = list;
         state.editingAssignmentId = null;
         state.assignmentStatus = null;
         render();
@@ -722,7 +767,10 @@
         state.assignments[consultantIdForDelete] = (state.assignments[consultantIdForDelete] || []).filter(function (a) { return a.id !== Number(deleteAssignmentId); });
         var list2 = state.cache.consultants || [];
         var cRec2 = list2.find(function (c) { return c.id === Number(consultantIdForDelete); });
-        if (cRec2 && typeof cRec2.assignment_count === 'number') cRec2.assignment_count = Math.max(0, cRec2.assignment_count - 1);
+        if (cRec2) {
+          if (typeof cRec2.assignment_count === 'number') cRec2.assignment_count = Math.max(0, cRec2.assignment_count - 1);
+          cRec2.assignments = state.assignments[consultantIdForDelete];
+        }
         render();
       }).catch(function () {
         state.assignmentStatus = 'error';
@@ -759,7 +807,10 @@
         state.assignments[addConsultantId] = list;
         var consultantList = state.cache.consultants || [];
         var cRec = consultantList.find(function (c) { return c.id === Number(addConsultantId); });
-        if (cRec) cRec.assignment_count = list.length;
+        if (cRec) {
+          cRec.assignment_count = list.length;
+          cRec.assignments = list;
+        }
         render();
       }).catch(function () {
         state.assignmentStatus = 'error';

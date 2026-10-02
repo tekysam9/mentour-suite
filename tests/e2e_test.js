@@ -292,6 +292,10 @@ async function main() {
       const jordanRecord = r.body.consultants.find((c) => c.name === 'Jordan Blake');
       check('consultant found for editing', !!jordanRecord, r.body);
       check('consultant list reports its assignment count', jordanRecord.assignment_count === 1, jordanRecord);
+      check('consultant list embeds the assignment itself (Client/Program and Billing columns need no extra fetch)',
+        Array.isArray(jordanRecord.assignments) && jordanRecord.assignments.length === 1 &&
+        jordanRecord.assignments[0].client_name === 'Platform' && jordanRecord.assignments[0].program_name === 'Acme' &&
+        Number(jordanRecord.assignments[0].billing) === 140, jordanRecord);
 
       // 21c. The Margin upload auto-populated a billing assignment for
       // Jordan's one pairing (client "Platform", program "Acme", $140/hr)
@@ -322,6 +326,12 @@ async function main() {
         method: 'POST', body: JSON.stringify({ client_id: 999999, billing: 10 }),
       });
       check('adding an assignment against an unknown client is rejected', r.status === 400, r);
+
+      r = await owner.fetch('/api/directory/consultants');
+      const jordanWithTwo = r.body.consultants.find((c) => c.name === 'Jordan Blake');
+      check('consultant list reflects both assignments embedded, not just the count',
+        jordanWithTwo.assignment_count === 2 && jordanWithTwo.assignments.length === 2 &&
+        jordanWithTwo.assignments.some((a) => a.client_name === 'Globex' && Number(a.billing) === 99.99), jordanWithTwo);
 
       r = await owner.fetch('/api/directory/consultants/' + jordanRecord.id + '/assignments');
       check('consultant now shows both assignments', r.body.assignments.length === 2, r.body.assignments);

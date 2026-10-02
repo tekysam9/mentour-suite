@@ -111,6 +111,28 @@ router.get('/consultants', async (req, res, next) => {
        FROM consultants c WHERE c.organization_id = ? ORDER BY c.name`,
       [req.user.organization_id]
     );
+
+    // Embed each consultant's own billing assignments (same shape as
+    // GET /consultants/:id/assignments) so the list view can show a
+    // Client/Program and Billing column without a fetch per row — one
+    // extra query here instead of N later.
+    const [assignmentRows] = await pool.query(
+      `SELECT a.id, a.consultant_id, a.billing, a.source, a.client_id, a.program_id,
+         cl.name AS client_name, p.name AS program_name
+       FROM consultant_assignments a
+       LEFT JOIN clients cl ON cl.id = a.client_id
+       LEFT JOIN programs p ON p.id = a.program_id
+       WHERE a.organization_id = ?
+       ORDER BY cl.name, p.name`,
+      [req.user.organization_id]
+    );
+    const byConsultant = new Map();
+    for (const a of assignmentRows) {
+      if (!byConsultant.has(a.consultant_id)) byConsultant.set(a.consultant_id, []);
+      byConsultant.get(a.consultant_id).push(a);
+    }
+    for (const c of rows) c.assignments = byConsultant.get(c.id) || [];
+
     res.json({ consultants: rows });
   } catch (err) {
     next(err);
