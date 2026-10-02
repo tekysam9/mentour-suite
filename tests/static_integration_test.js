@@ -24,7 +24,7 @@ async function main() {
   if (!ready) { console.log('Server never came up:\n' + out); server.kill(); process.exit(1); }
 
   try {
-    const pages = ['/login.html', '/signup.html', '/index.html', '/ledger.html', '/margin.html', '/directory.html', '/shared.css'];
+    const pages = ['/login.html', '/signup.html', '/index.html', '/ledger.html', '/margin.html', '/directory.html', '/invoices.html', '/shared.css'];
     for (const p of pages) {
       const r = await fetch(BASE + p);
       check('GET ' + p + ' -> 200', r.status === 200, r.status);

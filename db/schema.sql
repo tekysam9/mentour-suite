@@ -283,5 +283,65 @@ CREATE TABLE IF NOT EXISTS directory_duplicate_candidates (
   INDEX idx_dup_org_status (organization_id, table_name, status)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+-- ---------------------------------------------------------------------------
+-- Fin-Module: monthly invoices. One invoice per (consultant, client, program)
+-- billing pairing per calendar month -- that three-field combination is the
+-- uniqueness key (see src/routes/invoices.js's generate route, which enforces
+-- it with a NULL-safe lookup before inserting, the same pattern
+-- assignmentUpsert.js uses for consultant_assignments; a plain UNIQUE KEY
+-- can't do this on its own because MySQL treats two NULLs as distinct).
+--
+-- Generated from consultant_assignments: rate is copied from that pairing's
+-- billing ($/hr, see the comment on consultant_assignments above) at the
+-- moment of generation, and the invoice is always billed to the Program on
+-- that pairing -- falling back to the Client when the pairing has no program
+-- (no "/" in the original Client / Account value), since that's the nearest
+-- billable party. A pairing with neither a client nor a program, or with no
+-- billing rate set, has nothing to invoice and is skipped.
+--
+-- hours and amount are both nullable and independently editable after
+-- generation (see PATCH /api/invoices/:id) -- hours has no system of record
+-- (see the comment on margin_roster_entries / consultant_assignments: Margin
+-- carries a $/hr rate but no hours-worked field), so this leaves it to
+-- whoever fills in the invoice, by typing hours (amount auto-computes as
+-- rate x hours) or by typing a dollar amount directly.
+--
+-- bill_to_* columns are a snapshot of the Program's (or Client's) contact
+-- details as of generation time, so a later edit to that directory record
+-- doesn't silently rewrite an already-issued invoice.
+CREATE TABLE IF NOT EXISTS invoices (
+  id                  INT AUTO_INCREMENT PRIMARY KEY,
+  organization_id     INT NOT NULL,
+  invoice_number      VARCHAR(64) NOT NULL,
+  consultant_id       INT NOT NULL,
+  client_id           INT NULL,
+  program_id          INT NULL,
+  assignment_id       INT NULL,
+  period_month        DATE NOT NULL, -- always the 1st of the month
+  rate                DECIMAL(12,2) NULL,
+  hours               DECIMAL(8,2) NULL,
+  amount              DECIMAL(12,2) NULL,
+  bill_to_name        VARCHAR(255),
+  bill_to_email       VARCHAR(255),
+  bill_to_phone       VARCHAR(64),
+  bill_to_address     VARCHAR(500),
+  net_terms           VARCHAR(16) NOT NULL DEFAULT 'NET30', -- e.g. NET15/30/45/60/90
+  issue_date          DATE NOT NULL,
+  due_date            DATE NOT NULL,
+  payment_status      ENUM('unpaid', 'paid') NOT NULL DEFAULT 'unpaid',
+  timesheet_submitted ENUM('yes', 'no') NOT NULL DEFAULT 'no',
+  notes               VARCHAR(1000),
+  created_at          TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at          TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE,
+  FOREIGN KEY (consultant_id) REFERENCES consultants(id) ON DELETE CASCADE,
+  FOREIGN KEY (client_id) REFERENCES clients(id) ON DELETE CASCADE,
+  FOREIGN KEY (program_id) REFERENCES programs(id) ON DELETE CASCADE,
+  FOREIGN KEY (assignment_id) REFERENCES consultant_assignments(id) ON DELETE SET NULL,
+  UNIQUE KEY uq_invoice_number (organization_id, invoice_number),
+  INDEX idx_invoice_org_period (organization_id, period_month),
+  INDEX idx_invoice_combo (organization_id, consultant_id, client_id, program_id, period_month)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 -- Session store table (used by express-mysql-session; it will create/manage
 -- this automatically, but it's listed here for visibility). No action needed.

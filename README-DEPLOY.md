@@ -151,6 +151,15 @@ old Client/Program records nothing points at any more, so you can clean them
 up by hand on the Directory page; it never deletes a Directory record
 itself. Safe to run more than once: a second run changes nothing.
 
+### New: Fin-Module (October 2026)
+
+Adds a fourth dashboard, "Fin-Module.", for monthly invoicing: one invoice
+per consultant/client/program billing combination, generated from the rate
+already on file in Directory, billed to the Program (or the Client when a
+pairing has no program). This only adds a new `invoices` table — re-run
+`db/schema.sql` the same way as any other update; there's no data to
+backfill.
+
 ## If you outgrow Cloud/Node.js hosting
 
 The "other companies down the line" case is already handled in the data

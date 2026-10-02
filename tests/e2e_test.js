@@ -752,6 +752,99 @@ async function main() {
         bfStats2.rosterRepointed === 0 && bfStats2.legacyClientText === 0 && bfStats2.clientsCreated === 0 &&
         bfStats2.programsCreated === 0 && bfStats2.statusChanges === 0 && bfStats2.assignmentsInserted === 0 &&
         bfStats2.assignmentsUpdated === 0 && bfStats2.assignmentsDeleted === 0 && before2 === after2, bfStats2);
+
+      // 33. Fin-Module: generate monthly invoices from consultant_assignments,
+      // one per (consultant, client, program) combo, billed to the Program
+      // (falling back to the Client when there's no program), with pairings
+      // that have no client/program or no billing rate skipped. Uses its own
+      // org so it's independent of every other test's evolving fixtures.
+      const finOwner = makeJar();
+      r = await finOwner.fetch('/api/auth/signup', { method: 'POST', body: JSON.stringify({ orgName: 'Fin Test Co', name: 'Fin Owner', email: 'fin@fintest.test', password: 'finmodulepassword1' }) });
+      check('fin-module test org signup returns 201', r.status === 201, r);
+
+      r = await finOwner.fetch('/api/margin', { method: 'POST', body: JSON.stringify({
+        fileName: 'FinRoster.xlsx',
+        data: {
+          kpis: {},
+          records: [
+            { name: 'Dana Invoice', client: 'Acme Holdings', program: 'Rocket', clientDetail: 'Acme Holdings', billing: 120, status: 'Active' },
+            { name: 'Evan NoProgram', client: 'Acme Holdings', program: 'Acme Holdings', clientDetail: null, billing: 95, status: 'Active' },
+            { name: 'Fran NoRate', client: 'Beta Corp', program: 'Orbit', clientDetail: 'Beta Corp', billing: null, status: 'Active' },
+            { name: 'Gale NoClient', client: null, program: null, clientDetail: null, billing: 200, status: 'Active' },
+          ],
+        },
+      }) });
+      check('fin-module roster upload returns 201', r.status === 201, r);
+
+      r = await finOwner.fetch('/api/invoices/generate', { method: 'POST', body: JSON.stringify({ periodMonth: '2026-10', netTerms: 'NET30', issueDate: '2026-10-01' }) });
+      check('generate returns 201', r.status === 201, r);
+      check('generate creates exactly 2 invoices (Dana and Evan)', r.body.created && r.body.created.length === 2, r.body);
+      check('generate skips exactly 2 (Fran: no rate, Gale: no client/program)', r.body.skipped && r.body.skipped.length === 2, r.body);
+      check('skip reasons are the expected two',
+        r.body.skipped.some((s) => s.consultant === 'Fran NoRate' && s.reason === 'no billing rate set') &&
+        r.body.skipped.some((s) => s.consultant === 'Gale NoClient' && s.reason === 'no client or program to bill'), r.body.skipped);
+
+      // Fetch the two created invoices with names via the list endpoint instead
+      // of relying on created-array ordering.
+      r = await finOwner.fetch('/api/invoices?periodMonth=2026-10');
+      check('list returns the 2 generated invoices for the period', r.body.invoices.length === 2, r.body);
+      const danaInv = r.body.invoices.find((i) => i.consultant_name === 'Dana Invoice');
+      const evanInv = r.body.invoices.find((i) => i.consultant_name === 'Evan NoProgram');
+      check('Dana is billed to the Program (Rocket), at her rate', !!danaInv &&
+        danaInv.bill_to_name === 'Rocket' && Number(danaInv.rate) === 120 && danaInv.client_name === 'Acme Holdings' && danaInv.program_name === 'Rocket', danaInv);
+      check('Evan has no program, so bill-to falls back to the Client (Acme Holdings)', !!evanInv &&
+        evanInv.bill_to_name === 'Acme Holdings' && Number(evanInv.rate) === 95 && evanInv.program_name === null, evanInv);
+      check('invoice numbers follow INV-YYYYMM-##### and are unique', /^INV-202610-\d{5}$/.test(danaInv.invoice_number) &&
+        /^INV-202610-\d{5}$/.test(evanInv.invoice_number) && danaInv.invoice_number !== evanInv.invoice_number, { danaInv, evanInv });
+      check('due date is NET30 out from the Oct 1 issue date', String(danaInv.due_date).slice(0, 10) === '2026-10-31', danaInv);
+      check('new invoice defaults to unpaid / timesheet not submitted', danaInv.payment_status === 'unpaid' && danaInv.timesheet_submitted === 'no', danaInv);
+
+      r = await finOwner.fetch('/api/invoices/generate', { method: 'POST', body: JSON.stringify({ periodMonth: '2026-10' }) });
+      check('re-generating the same month is idempotent (creates nothing new)', r.status === 201 && r.body.created.length === 0, r.body);
+      check('re-generating reports the existing pair as already invoiced',
+        r.body.skipped.some((s) => s.reason === 'already invoiced for this month'), r.body.skipped);
+      r = await finOwner.fetch('/api/invoices?periodMonth=2026-10');
+      check('invoice count unchanged after re-generating', r.body.invoices.length === 2, r.body);
+
+      r = await finOwner.fetch('/api/invoices/generate', { method: 'POST', body: JSON.stringify({ periodMonth: 'not-a-month' }) });
+      check('generate with a bad periodMonth returns 400', r.status === 400, r);
+
+      r = await otherOrgUser.fetch('/api/invoices?periodMonth=2026-10');
+      check('cross-tenant invoice list never shows another org’s invoices', r.status === 200 && !r.body.invoices.some((i) => i.id === danaInv.id), r.body);
+      r = await otherOrgUser.fetch('/api/invoices/' + danaInv.id);
+      check('cross-tenant invoice detail returns 404', r.status === 404, r);
+      r = await otherOrgUser.fetch('/api/invoices/' + danaInv.id, { method: 'PATCH', body: JSON.stringify({ paymentStatus: 'paid' }) });
+      check('cross-tenant invoice PATCH returns 404', r.status === 404, r);
+      r = await otherOrgUser.fetch('/api/invoices/' + danaInv.id, { method: 'DELETE' });
+      check('cross-tenant invoice DELETE returns 404', r.status === 404, r);
+
+      r = await finOwner.fetch('/api/invoices/' + danaInv.id, { method: 'PATCH', body: JSON.stringify({ hours: 160 }) });
+      check('setting hours auto-computes amount as rate x hours', r.status === 200 && Number(r.body.invoice.amount) === 19200, r.body);
+
+      r = await finOwner.fetch('/api/invoices/' + danaInv.id, { method: 'PATCH', body: JSON.stringify({ hours: 10, amount: 5000 }) });
+      check('an explicit amount always wins over the hours-derived figure', r.status === 200 &&
+        Number(r.body.invoice.hours) === 10 && Number(r.body.invoice.amount) === 5000, r.body);
+
+      r = await finOwner.fetch('/api/invoices/' + danaInv.id, { method: 'PATCH', body: JSON.stringify({
+        paymentStatus: 'paid', timesheetSubmitted: 'yes', netTerms: 'NET60', notes: 'Paid via wire',
+      }) });
+      check('payment/timesheet/net-terms/notes all patch together',
+        r.status === 200 && r.body.invoice.payment_status === 'paid' && r.body.invoice.timesheet_submitted === 'yes' &&
+        r.body.invoice.net_terms === 'NET60' && r.body.invoice.notes === 'Paid via wire', r.body);
+
+      r = await finOwner.fetch('/api/invoices/' + danaInv.id, { method: 'PATCH', body: JSON.stringify({ hours: 'not-a-number' }) });
+      check('patching hours with garbage returns 400', r.status === 400, r);
+      r = await finOwner.fetch('/api/invoices/' + danaInv.id, { method: 'PATCH', body: JSON.stringify({ paymentStatus: 'overdue' }) });
+      check('patching an invalid paymentStatus returns 400', r.status === 400, r);
+      r = await finOwner.fetch('/api/invoices/' + danaInv.id, { method: 'PATCH', body: JSON.stringify({ netTerms: 'WHENEVER' }) });
+      check('patching an invalid netTerms returns 400', r.status === 400, r);
+
+      r = await finOwner.fetch('/api/invoices/' + evanInv.id, { method: 'DELETE' });
+      check('delete invoice returns ok', r.status === 200 && r.body.ok === true, r.body);
+      r = await finOwner.fetch('/api/invoices?periodMonth=2026-10');
+      check('deleted invoice no longer appears in the list', r.body.invoices.length === 1 && r.body.invoices[0].id === danaInv.id, r.body);
+      r = await finOwner.fetch('/api/invoices/' + evanInv.id, { method: 'DELETE' });
+      check('deleting an already-deleted invoice returns 404', r.status === 404, r);
     } finally {
       await dbConn.end();
     }

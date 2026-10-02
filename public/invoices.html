@@ -1,0 +1,364 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Fin-Module — Mentour Suite</title>
+<link rel="stylesheet" href="/shared.css">
+<style>
+  .fin-body { max-width: 1180px; margin: 0 auto; padding: 40px 24px 64px; }
+  .fin-back { font-size: 12.5px; color: var(--pine); text-decoration: none; font-weight: 500; }
+  .fin-back:hover { text-decoration: underline; }
+  .fin-title { font-family: Georgia, 'Iowan Old Style', 'Palatino Linotype', serif; font-size: 30px; font-weight: 600; color: var(--ink); margin: 14px 0 6px; }
+  .fin-copy { font-size: 13.5px; color: var(--text-muted); margin: 0 0 24px; max-width: 680px; line-height: 1.6; }
+
+  .fin-generate-card {
+    background: var(--card); border: 1px solid var(--line); border-radius: 10px;
+    padding: 16px 18px; margin-bottom: 22px; display: flex; flex-wrap: wrap; align-items: flex-end; gap: 14px;
+  }
+  .fin-generate-card label { display: flex; flex-direction: column; gap: 5px; font-size: 11.5px; font-weight: 600; color: var(--text-muted); }
+  .fin-generate-card input, .fin-generate-card select {
+    border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; font-size: 13px;
+    font-family: inherit; color: var(--text); background: var(--paper); outline: none;
+  }
+  .fin-generate-card input:focus, .fin-generate-card select:focus { border-color: var(--pine); }
+  .fin-btn {
+    border: 1px solid var(--line); background: var(--card); border-radius: 6px; padding: 9px 14px;
+    font-size: 13px; font-weight: 500; cursor: pointer; font-family: inherit; color: var(--text);
+  }
+  .fin-btn:hover { background: var(--paper); }
+  .fin-btn:disabled { opacity: 0.6; cursor: default; }
+  .fin-btn-primary { background: var(--pine); border-color: var(--pine); color: #EFF3EC; }
+  .fin-btn-primary:hover { background: #275F46; }
+  .fin-btn-small { font-size: 11.5px; padding: 5px 9px; }
+  .fin-btn-danger { color: var(--brick); border-color: #E3C3C3; }
+
+  .fin-result {
+    background: #EAF3EE; border: 1px solid #CFE3D7; color: #2E6F52; border-radius: 8px;
+    padding: 10px 14px; font-size: 12.5px; margin-bottom: 18px; line-height: 1.6;
+  }
+  .fin-result-skip-list { margin: 6px 0 0; padding-left: 18px; color: #4D6B5C; }
+
+  .fin-controls { display: flex; gap: 10px; justify-content: flex-end; margin-bottom: 12px; flex-wrap: wrap; }
+  .fin-controls select, .fin-controls input {
+    border: 1px solid var(--line); border-radius: 6px; padding: 6px 10px; font-size: 12.5px;
+    font-family: inherit; color: var(--text); background: var(--card); outline: none;
+  }
+
+  .fin-table-wrap { background: var(--card); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; overflow-x: auto; }
+  table.fin-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  .fin-table th {
+    text-align: left; font-size: 10.5px; font-weight: 600; color: var(--text-muted);
+    padding: 10px 12px; border-bottom: 1px solid var(--line); background: var(--paper);
+    white-space: nowrap; text-transform: uppercase; letter-spacing: 0.02em;
+  }
+  .fin-table td { padding: 8px 12px; border-bottom: 1px solid var(--line); vertical-align: middle; white-space: nowrap; }
+  .fin-table tr:last-child td { border-bottom: none; }
+  .fin-muted { color: var(--text-muted); }
+  .fin-invoice-no { font-weight: 600; color: var(--ink); font-size: 11.5px; }
+  .fin-consultant { font-weight: 600; color: var(--ink); }
+  .fin-num-input, .fin-notes-input, .fin-date-input, .fin-select-input {
+    border: 1px solid var(--line); border-radius: 5px; padding: 5px 7px; font-size: 12.5px;
+    font-family: inherit; color: var(--text); background: var(--paper); outline: none;
+  }
+  .fin-num-input { width: 72px; }
+  .fin-notes-input { width: 140px; }
+  .fin-date-input { width: 128px; }
+  .fin-num-input:focus, .fin-notes-input:focus, .fin-date-input:focus, .fin-select-input:focus { border-color: var(--pine); }
+
+  .fin-status-badge {
+    display: inline-block; font-size: 11px; font-weight: 600; padding: 3px 9px; border-radius: 99px;
+    white-space: nowrap; border: none; cursor: pointer; font-family: inherit;
+  }
+  .fin-status-paid { background: #EAF3EE; color: #2E6F52; }
+  .fin-status-unpaid { background: #F5F1E4; color: #97854A; }
+  .fin-status-yes { background: #EAF3EE; color: #2E6F52; }
+  .fin-status-no { background: #EFEFEC; color: #7A7A72; }
+
+  .fin-loading, .fin-empty-state { padding: 40px; text-align: center; color: var(--text-muted); font-size: 13.5px; }
+  .fin-saved-tick { font-size: 11px; color: var(--pine); font-weight: 500; margin-left: 6px; }
+</style>
+</head>
+<body>
+<div id="app"></div>
+<script>
+  function escapeHtml(s) {
+    if (s === null || s === undefined) return '';
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  }
+
+  function currentYearMonth() {
+    var now = new Date();
+    return now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0');
+  }
+
+  function money(n) {
+    if (n === null || n === undefined || n === '') return '';
+    var num = Number(n);
+    if (!Number.isFinite(num)) return '';
+    return num.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  }
+
+  var appEl = document.getElementById('app');
+
+  var state = {
+    user: null,
+    loading: true,
+    invoices: [],
+    periodFilter: currentYearMonth(),
+    paymentFilter: 'all',
+    timesheetFilter: 'all',
+    generateForm: { periodMonth: currentYearMonth(), netTerms: 'NET30', issueDate: new Date().toISOString().slice(0, 10) },
+    generating: false,
+    generateResult: null,
+    savedId: null,
+  };
+
+  function clientProgramCell(inv) {
+    if (inv.program_name) return escapeHtml(inv.client_name || '') + ' / ' + escapeHtml(inv.program_name);
+    if (inv.client_name) return escapeHtml(inv.client_name);
+    return '<span class="fin-muted">—</span>';
+  }
+
+  function renderRow(inv) {
+    var savedTick = state.savedId === inv.id ? '<span class="fin-saved-tick">Saved</span>' : '';
+    return (
+      '<tr data-invoice-id="' + inv.id + '">' +
+        '<td class="fin-invoice-no">' + escapeHtml(inv.invoice_number) + '</td>' +
+        '<td class="fin-consultant">' + escapeHtml(inv.consultant_name) + '</td>' +
+        '<td>' + clientProgramCell(inv) + '</td>' +
+        '<td>' + (inv.period_month ? String(inv.period_month).slice(0, 7) : '') + '</td>' +
+        '<td>' + (inv.rate !== null ? '$' + money(inv.rate) + '/hr' : '<span class="fin-muted">—</span>') + '</td>' +
+        '<td><input class="fin-num-input" type="number" step="0.25" data-field="hours" value="' + (inv.hours !== null && inv.hours !== undefined ? inv.hours : '') + '" placeholder="—"></td>' +
+        '<td><input class="fin-num-input" type="number" step="0.01" data-field="amount" value="' + (inv.amount !== null && inv.amount !== undefined ? inv.amount : '') + '" placeholder="—"></td>' +
+        '<td>' +
+          '<select class="fin-select-input" data-field="netTerms">' +
+            ['NET15', 'NET30', 'NET45', 'NET60', 'NET90'].map(function (nt) {
+              var sel = (inv.net_terms || 'NET30').toUpperCase() === nt ? ' selected' : '';
+              return '<option value="' + nt + '"' + sel + '>' + nt + '</option>';
+            }).join('') +
+            (['NET15', 'NET30', 'NET45', 'NET60', 'NET90'].indexOf((inv.net_terms || '').toUpperCase()) === -1
+              ? '<option value="' + escapeHtml(inv.net_terms) + '" selected>' + escapeHtml(inv.net_terms) + '</option>' : '') +
+          '</select>' +
+        '</td>' +
+        '<td><input class="fin-date-input" type="date" data-field="dueDate" value="' + (inv.due_date ? String(inv.due_date).slice(0, 10) : '') + '"></td>' +
+        '<td><button type="button" class="fin-status-badge fin-status-' + inv.payment_status + '" data-action="toggle-payment">' + (inv.payment_status === 'paid' ? 'Paid' : 'Unpaid') + '</button></td>' +
+        '<td><button type="button" class="fin-status-badge fin-status-' + inv.timesheet_submitted + '" data-action="toggle-timesheet">' + (inv.timesheet_submitted === 'yes' ? 'Submitted' : 'Not yet') + '</button></td>' +
+        '<td><input class="fin-notes-input" type="text" data-field="notes" value="' + escapeHtml(inv.notes || '') + '" placeholder="Notes"></td>' +
+        '<td><button type="button" class="fin-btn fin-btn-small fin-btn-danger" data-action="delete-invoice">Delete</button>' + savedTick + '</td>' +
+      '</tr>'
+    );
+  }
+
+  function renderTable() {
+    if (state.loading) return '<div class="fin-loading">Loading…</div>';
+    if (!state.invoices.length) return '<div class="fin-empty-state">No invoices for this filter yet. Generate some above, or widen the filters.</div>';
+    return (
+      '<div class="fin-table-wrap"><table class="fin-table"><thead><tr>' +
+        '<th>Invoice #</th><th>Consultant</th><th>Client / Program</th><th>Period</th><th>Rate</th>' +
+        '<th>Hours</th><th>Amount</th><th>Net terms</th><th>Due date</th><th>Payment</th><th>Timesheet</th><th>Notes</th><th></th>' +
+      '</tr></thead><tbody>' +
+      state.invoices.map(renderRow).join('') +
+      '</tbody></table></div>'
+    );
+  }
+
+  function renderGenerateResult() {
+    if (!state.generateResult) return '';
+    var r = state.generateResult;
+    var skipHtml = '';
+    if (r.skipped && r.skipped.length) {
+      skipHtml = '<ul class="fin-result-skip-list">' + r.skipped.slice(0, 8).map(function (s) {
+        return '<li>' + escapeHtml(s.consultant) + ' — ' + escapeHtml(s.reason) + '</li>';
+      }).join('') + (r.skipped.length > 8 ? '<li>…and ' + (r.skipped.length - 8) + ' more.</li>' : '') + '</ul>';
+    }
+    return (
+      '<div class="fin-result">' +
+        'Generated <strong>' + r.created.length + '</strong> invoice' + (r.created.length === 1 ? '' : 's') +
+        (r.skipped && r.skipped.length ? ', skipped ' + r.skipped.length + '.' : '.') +
+        skipHtml +
+      '</div>'
+    );
+  }
+
+  function render() {
+    var gf = state.generateForm;
+    appEl.innerHTML =
+      '<div class="landing-header">' +
+        '<div><div class="landing-wordmark">Mentour Suite</div><div class="landing-sub">' + escapeHtml(state.user.organization.name) + '</div></div>' +
+        '<div class="landing-account">Signed in as ' + escapeHtml(state.user.name) + '<br>' +
+          '<button class="landing-btn" id="logout-btn" type="button">Log out</button>' +
+        '</div>' +
+      '</div>' +
+      '<div class="fin-body">' +
+        '<a class="fin-back" href="/">← Back to dashboards</a>' +
+        '<h1 class="fin-title">Fin-Module.</h1>' +
+        '<p class="fin-copy">One invoice per consultant/client/program billing combination, generated from the rate on file in Directory. Each invoice bills to the Program (or the Client, when that pairing has no program) — fill in hours or a flat amount, track NET terms, payment status, and whether the timesheet’s been submitted. Re-generating a month never duplicates an invoice that already exists.</p>' +
+        '<div class="fin-generate-card">' +
+          '<label>Month<input type="month" id="gen-period" value="' + escapeHtml(gf.periodMonth) + '"></label>' +
+          '<label>Net terms<select id="gen-net-terms">' +
+            ['NET15', 'NET30', 'NET45', 'NET60', 'NET90'].map(function (nt) {
+              return '<option value="' + nt + '"' + (gf.netTerms === nt ? ' selected' : '') + '>' + nt + '</option>';
+            }).join('') +
+          '</select></label>' +
+          '<label>Issue date<input type="date" id="gen-issue-date" value="' + escapeHtml(gf.issueDate) + '"></label>' +
+          '<button type="button" class="fin-btn fin-btn-primary" id="generate-btn"' + (state.generating ? ' disabled' : '') + '>' +
+            (state.generating ? 'Generating…' : 'Generate invoices') +
+          '</button>' +
+        '</div>' +
+        renderGenerateResult() +
+        '<div class="fin-controls">' +
+          '<input type="month" id="filter-period" value="' + escapeHtml(state.periodFilter) + '">' +
+          '<select id="filter-payment">' +
+            '<option value="all"' + (state.paymentFilter === 'all' ? ' selected' : '') + '>All payment statuses</option>' +
+            '<option value="unpaid"' + (state.paymentFilter === 'unpaid' ? ' selected' : '') + '>Unpaid</option>' +
+            '<option value="paid"' + (state.paymentFilter === 'paid' ? ' selected' : '') + '>Paid</option>' +
+          '</select>' +
+          '<select id="filter-timesheet">' +
+            '<option value="all"' + (state.timesheetFilter === 'all' ? ' selected' : '') + '>Timesheet: all</option>' +
+            '<option value="no"' + (state.timesheetFilter === 'no' ? ' selected' : '') + '>Not submitted</option>' +
+            '<option value="yes"' + (state.timesheetFilter === 'yes' ? ' selected' : '') + '>Submitted</option>' +
+          '</select>' +
+        '</div>' +
+        renderTable() +
+      '</div>';
+
+    document.getElementById('logout-btn').addEventListener('click', async function () {
+      await fetch('/api/auth/logout', { method: 'POST' });
+      window.location.href = '/login.html';
+    });
+  }
+
+  function loadInvoices() {
+    state.loading = true;
+    render();
+    var params = new URLSearchParams();
+    if (state.periodFilter) params.set('periodMonth', state.periodFilter);
+    if (state.paymentFilter !== 'all') params.set('paymentStatus', state.paymentFilter);
+    if (state.timesheetFilter !== 'all') params.set('timesheetSubmitted', state.timesheetFilter);
+    fetch('/api/invoices?' + params.toString()).then(function (res) {
+      if (!res.ok) throw new Error('load failed');
+      return res.json();
+    }).then(function (body) {
+      state.invoices = body.invoices || [];
+      state.loading = false;
+      render();
+    }).catch(function () {
+      state.invoices = [];
+      state.loading = false;
+      render();
+    });
+  }
+
+  function patchInvoice(id, patch) {
+    return fetch('/api/invoices/' + id, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(patch),
+    }).then(function (res) {
+      if (!res.ok) throw new Error('save failed');
+      return res.json();
+    }).then(function (body) {
+      var idx = state.invoices.findIndex(function (i) { return i.id === id; });
+      if (idx !== -1) state.invoices[idx] = Object.assign({}, state.invoices[idx], body.invoice);
+      state.savedId = id;
+      render();
+      setTimeout(function () {
+        if (state.savedId === id) { state.savedId = null; render(); }
+      }, 1500);
+    }).catch(function () {
+      alert('Could not save that change. Please try again.');
+    });
+  }
+
+  appEl.addEventListener('click', function (e) {
+    var genBtn = e.target.closest('#generate-btn');
+    if (genBtn) {
+      state.generating = true;
+      state.generateResult = null;
+      render();
+      fetch('/api/invoices/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          periodMonth: document.getElementById('gen-period').value,
+          netTerms: document.getElementById('gen-net-terms').value,
+          issueDate: document.getElementById('gen-issue-date').value,
+        }),
+      }).then(function (res) {
+        if (!res.ok) return res.json().then(function (b) { throw new Error(b.error || 'Generation failed'); });
+        return res.json();
+      }).then(function (body) {
+        state.generating = false;
+        state.generateResult = body;
+        loadInvoices();
+      }).catch(function (err) {
+        state.generating = false;
+        render();
+        alert(err.message || 'Generation failed.');
+      });
+      return;
+    }
+
+    var toggleBtn = e.target.closest('[data-action="toggle-payment"], [data-action="toggle-timesheet"]');
+    if (toggleBtn) {
+      var row = toggleBtn.closest('[data-invoice-id]');
+      var id = Number(row.getAttribute('data-invoice-id'));
+      var inv = state.invoices.filter(function (i) { return i.id === id; })[0];
+      if (!inv) return;
+      if (toggleBtn.getAttribute('data-action') === 'toggle-payment') {
+        patchInvoice(id, { paymentStatus: inv.payment_status === 'paid' ? 'unpaid' : 'paid' });
+      } else {
+        patchInvoice(id, { timesheetSubmitted: inv.timesheet_submitted === 'yes' ? 'no' : 'yes' });
+      }
+      return;
+    }
+
+    var delBtn = e.target.closest('[data-action="delete-invoice"]');
+    if (delBtn) {
+      var delRow = delBtn.closest('[data-invoice-id]');
+      var delId = Number(delRow.getAttribute('data-invoice-id'));
+      if (!confirm('Delete this invoice? This can\'t be undone.')) return;
+      fetch('/api/invoices/' + delId, { method: 'DELETE' }).then(function (res) {
+        if (!res.ok) throw new Error('delete failed');
+        state.invoices = state.invoices.filter(function (i) { return i.id !== delId; });
+        render();
+      }).catch(function () {
+        alert('Could not delete that invoice. Please try again.');
+      });
+    }
+  });
+
+  appEl.addEventListener('change', function (e) {
+    var filterPeriod = e.target.closest('#filter-period');
+    if (filterPeriod) { state.periodFilter = filterPeriod.value; loadInvoices(); return; }
+    var filterPayment = e.target.closest('#filter-payment');
+    if (filterPayment) { state.paymentFilter = filterPayment.value; loadInvoices(); return; }
+    var filterTimesheet = e.target.closest('#filter-timesheet');
+    if (filterTimesheet) { state.timesheetFilter = filterTimesheet.value; loadInvoices(); return; }
+
+    var field = e.target.closest('[data-field]');
+    if (field) {
+      var row = field.closest('[data-invoice-id]');
+      var id = Number(row.getAttribute('data-invoice-id'));
+      var fieldName = field.getAttribute('data-field');
+      var value = field.value;
+      var patch = {};
+      patch[fieldName] = value === '' ? null : value;
+      patchInvoice(id, patch);
+    }
+  });
+
+  fetch('/api/auth/me').then(function (res) {
+    if (res.status !== 200) { window.location.href = '/login.html'; return null; }
+    return res.json();
+  }).then(function (data) {
+    if (!data) return;
+    state.user = data.user;
+    loadInvoices();
+  }).catch(function () {
+    window.location.href = '/login.html';
+  });
+</script>
+</body>
+</html>
