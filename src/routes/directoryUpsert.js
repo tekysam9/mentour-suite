@@ -57,6 +57,9 @@ const DIRECTORY_TABLES = ['consultants', 'subvendors', 'clients', 'programs'];
 // client, so they need `clientId`), creating the record — with `status` —
 // if it doesn't exist yet. An existing record is returned as-is: this never
 // changes an existing row (see setDirectoryStatus for that).
+// `status: null` creates the record without a status at all (the column's
+// default: NULL, "not set", for consultants/subvendors) — used by Ledger,
+// which never decides Active/Inactive (only Margin does).
 // Returns { id, status, created } or null when there's no usable name.
 async function findOrCreateDirectoryRecord(conn, tableName, { organizationId, clientId, name, status }) {
   if (!DIRECTORY_TABLES.includes(tableName)) throw new Error('Unknown directory table: ' + tableName);
@@ -64,7 +67,7 @@ async function findOrCreateDirectoryRecord(conn, tableName, { organizationId, cl
   if (!n) return null;
   const isProgram = tableName === 'programs';
   if (isProgram && !clientId) return null;
-  const st = normalizeStatus(status);
+  const st = status === null ? null : normalizeStatus(status);
 
   const [found] = await conn.query(
     isProgram
@@ -74,14 +77,24 @@ async function findOrCreateDirectoryRecord(conn, tableName, { organizationId, cl
   );
   if (found.length) return { id: found[0].id, status: found[0].status, created: false };
 
-  const [result] = await conn.query(
-    isProgram
-      ? `INSERT INTO programs (organization_id, client_id, name, status) VALUES (?, ?, ?, ?)
-         ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)`
-      : `INSERT INTO ${tableName} (organization_id, name, status) VALUES (?, ?, ?)
-         ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)`,
-    isProgram ? [organizationId, clientId, n, st] : [organizationId, n, st]
-  );
+  let sql, params;
+  if (isProgram) {
+    sql = `INSERT INTO programs (organization_id, client_id, name, status) VALUES (?, ?, ?, ?)
+           ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)`;
+    params = [organizationId, clientId, n, st];
+  } else if (st === null) {
+    // Status column omitted on purpose (not written as NULL), so this also
+    // works on a database whose schema.sql upgrade hasn't been re-run yet
+    // (the column default there is still 'active').
+    sql = `INSERT INTO ${tableName} (organization_id, name) VALUES (?, ?)
+           ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)`;
+    params = [organizationId, n];
+  } else {
+    sql = `INSERT INTO ${tableName} (organization_id, name, status) VALUES (?, ?, ?)
+           ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)`;
+    params = [organizationId, n, st];
+  }
+  const [result] = await conn.query(sql, params);
   const id = result.insertId;
   await flagLikelyDuplicates(conn, {
     organizationId, tableName, newId: id, newName: n, scopeClientId: isProgram ? clientId : undefined,
@@ -89,11 +102,12 @@ async function findOrCreateDirectoryRecord(conn, tableName, { organizationId, cl
   return { id, status: st, created: true };
 }
 
-// Sets a record's status, writing only if it actually changes.
+// Sets a record's status, writing only if it actually changes (NULL-safe:
+// a "not set" record still gets its first real status).
 async function setDirectoryStatus(conn, tableName, id, status) {
   if (!DIRECTORY_TABLES.includes(tableName)) throw new Error('Unknown directory table: ' + tableName);
   const st = normalizeStatus(status);
-  const [result] = await conn.query(`UPDATE ${tableName} SET status = ? WHERE id = ? AND status <> ?`, [st, id, st]);
+  const [result] = await conn.query(`UPDATE ${tableName} SET status = ? WHERE id = ? AND NOT (status <=> ?)`, [st, id, st]);
   return result.affectedRows > 0;
 }
 

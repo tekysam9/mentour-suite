@@ -103,7 +103,7 @@ CREATE TABLE IF NOT EXISTS consultants (
   id              INT AUTO_INCREMENT PRIMARY KEY,
   organization_id INT NOT NULL,
   name            VARCHAR(255) NOT NULL,
-  status          ENUM('active', 'inactive') NOT NULL DEFAULT 'active',
+  status          ENUM('active', 'inactive') NULL DEFAULT NULL, -- NULL = not set yet (see below)
   email           VARCHAR(255),
   phone           VARCHAR(64),
   address         VARCHAR(500),
@@ -117,7 +117,7 @@ CREATE TABLE IF NOT EXISTS subvendors (
   id              INT AUTO_INCREMENT PRIMARY KEY,
   organization_id INT NOT NULL,
   name            VARCHAR(255) NOT NULL,
-  status          ENUM('active', 'inactive') NOT NULL DEFAULT 'active',
+  status          ENUM('active', 'inactive') NULL DEFAULT NULL, -- NULL = not set yet (see below)
   email           VARCHAR(255),
   phone           VARCHAR(64),
   address         VARCHAR(500),
@@ -166,6 +166,14 @@ ALTER TABLE consultants ADD COLUMN IF NOT EXISTS status ENUM('active', 'inactive
 ALTER TABLE subvendors ADD COLUMN IF NOT EXISTS status ENUM('active', 'inactive') NOT NULL DEFAULT 'active' AFTER name;
 ALTER TABLE clients ADD COLUMN IF NOT EXISTS status ENUM('active', 'inactive') NOT NULL DEFAULT 'active' AFTER name;
 ALTER TABLE programs ADD COLUMN IF NOT EXISTS status ENUM('active', 'inactive') NOT NULL DEFAULT 'active' AFTER name;
+
+-- Only Margin uploads set Active/Inactive. A consultant or subvendor first
+-- seen in a Ledger (sub vendor payments) upload has no status yet: NULL,
+-- shown as "Not set" in the Directory, until a Margin upload names it.
+-- (Clients/programs only ever come from Margin, so they keep NOT NULL.)
+-- Existing values are kept; safe to re-run.
+ALTER TABLE consultants MODIFY COLUMN status ENUM('active', 'inactive') NULL DEFAULT NULL;
+ALTER TABLE subvendors MODIFY COLUMN status ENUM('active', 'inactive') NULL DEFAULT NULL;
 
 -- Link margin_roster_entries rows to the directory records they resolved to.
 -- Nullable: a W2/1099/direct-employment row has no real subvendor, and a row

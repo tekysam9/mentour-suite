@@ -421,17 +421,18 @@ async function main() {
         Number(ledgerRosterRows[0].amount) === 5000 && ledgerRosterRows[0].consultant_id === jordanRecord.id,
         ledgerRosterRows);
 
-      // 26. Margin is the source of truth for Active/Inactive. The ledger
-      // upload above used "Vendor Co" for a currently-active consultant
-      // (Jordan), but Vendor Co is in a Margin upload (Priya's row, Left),
-      // so it keeps Margin's inactive status rather than the Ledger's.
+      // 26. Only Margin sets Active/Inactive; Ledger (payments) never does.
+      // The ledger upload above used "Vendor Co" for a currently-active
+      // consultant (Jordan), but Vendor Co keeps the inactive status its
+      // Margin row (Priya, Left) gave it.
       r = await owner.fetch('/api/directory/subvendors');
       check('Ledger does not change the status of a subvendor that appears in Margin (stays inactive)',
         r.body.subvendors.find((s) => s.name === 'Vendor Co').status === 'inactive', r.body.subvendors);
 
       // 26a. Margin says Active (consultant and subvendor), then a Ledger
-      // upload says Left -> both stay Active. Ledger-only records still get
-      // the Ledger's status, both on creation and on a later Ledger upload.
+      // upload says Left -> both stay Active; Margin says Left, Ledger says
+      // Active -> stays inactive. Records only ever seen in Ledger get no
+      // status at all ("Not set"), and later Ledger uploads don't give them one.
       r = await owner.fetch('/api/margin', { method: 'POST', body: JSON.stringify({
         fileName: 'RosterSub.xlsx',
         data: { kpis: {}, records: [{
@@ -449,30 +450,54 @@ async function main() {
       r = await ledgerPrecedence('LedgerStatus1.xlsx', [
         ['Sam Sublet', 'Left', 'Margin Vendor'],
         ['Jordan Blake', 'Left', 'Vendor Co'],
+        ['Priya Natarajan', 'Active', 'Vendor Co'],
         ['Lena Ledger', 'Active', 'Ledger Only Vendor'],
       ]);
-      check('ledger upload marking Margin-active people Left returns 201', r.status === 201, r);
+      check('ledger upload with statuses that disagree with Margin returns 201', r.status === 201, r);
 
       r = await owner.fetch('/api/directory/consultants');
       check('Margin Active, then Ledger Left -> consultant stays active',
         r.body.consultants.find((c) => c.name === 'Sam Sublet').status === 'active' &&
         r.body.consultants.find((c) => c.name === 'Jordan Blake').status === 'active', r.body.consultants);
-      check('ledger-only consultant is created with the Ledger status (active)',
-        r.body.consultants.find((c) => c.name === 'Lena Ledger').status === 'active', r.body.consultants);
+      check('Margin Left, then Ledger Active -> consultant stays inactive',
+        r.body.consultants.find((c) => c.name === 'Priya Natarajan').status === 'inactive', r.body.consultants);
+      check('ledger-only consultant is created with no status (not set), not the Ledger status',
+        r.body.consultants.find((c) => c.name === 'Lena Ledger').status === null, r.body.consultants);
       r = await owner.fetch('/api/directory/subvendors');
       check('Margin Active, then Ledger (only Left consultants) -> subvendor stays active',
         r.body.subvendors.find((s) => s.name === 'Margin Vendor').status === 'active', r.body.subvendors);
-      check('ledger-only subvendor is created with the Ledger status (active)',
-        r.body.subvendors.find((s) => s.name === 'Ledger Only Vendor').status === 'active', r.body.subvendors);
+      check('ledger-only subvendor is created with no status (not set)',
+        r.body.subvendors.find((s) => s.name === 'Ledger Only Vendor').status === null, r.body.subvendors);
 
       r = await ledgerPrecedence('LedgerStatus2.xlsx', [['Lena Ledger', 'Left', 'Ledger Only Vendor']]);
       check('second ledger upload (Lena Left) returns 201', r.status === 201, r);
       r = await owner.fetch('/api/directory/consultants');
-      check('ledger-only consultant still follows a later Ledger upload (-> inactive)',
-        r.body.consultants.find((c) => c.name === 'Lena Ledger').status === 'inactive', r.body.consultants);
+      check('a later Ledger upload does not set status on a ledger-only consultant either',
+        r.body.consultants.find((c) => c.name === 'Lena Ledger').status === null, r.body.consultants);
       r = await owner.fetch('/api/directory/subvendors');
-      check('ledger-only subvendor still follows a later Ledger upload (-> inactive)',
-        r.body.subvendors.find((s) => s.name === 'Ledger Only Vendor').status === 'inactive', r.body.subvendors);
+      check('a later Ledger upload does not set status on a ledger-only subvendor either',
+        r.body.subvendors.find((s) => s.name === 'Ledger Only Vendor').status === null, r.body.subvendors);
+
+      // A ledger-only record that later shows up in Margin gets Margin's status...
+      r = await owner.fetch('/api/margin', { method: 'POST', body: JSON.stringify({
+        fileName: 'RosterLena.xlsx',
+        data: { kpis: {}, records: [{
+          name: 'Lena Ledger', client: 'SubCo', program: 'SubCo', cost: 60, billing: 95, margin: 35,
+          status: 'Active', employmentType: 'Subvendor', subvendorText: 'Ledger Only Vendor',
+        }] },
+      }) });
+      check('margin upload naming the ledger-only records returns 201', r.status === 201, r);
+      r = await owner.fetch('/api/directory/consultants');
+      check('a not-set record gets its status from its first Margin upload (-> active)',
+        r.body.consultants.find((c) => c.name === 'Lena Ledger').status === 'active', r.body.consultants);
+      r = await owner.fetch('/api/directory/subvendors');
+      check('a not-set subvendor gets its status from its first Margin upload (-> active)',
+        r.body.subvendors.find((s) => s.name === 'Ledger Only Vendor').status === 'active', r.body.subvendors);
+      // ...and Ledger still can't change it afterwards.
+      await ledgerPrecedence('LedgerStatus3.xlsx', [['Lena Ledger', 'Left', 'Ledger Only Vendor']]);
+      r = await owner.fetch('/api/directory/consultants');
+      check('after Margin set it, a Ledger upload still leaves it alone',
+        r.body.consultants.find((c) => c.name === 'Lena Ledger').status === 'active', r.body.consultants);
 
       // ...and a later Margin upload still overrides as before.
       r = await owner.fetch('/api/margin', { method: 'POST', body: JSON.stringify({

@@ -58,6 +58,7 @@
   }
   .dir-status-active { background: #EAF3EE; color: #2E6F52; }
   .dir-status-inactive { background: #F5F1E4; color: #97854A; }
+  .dir-status-none { background: #EFEFEC; color: #7A7A72; }
 
   .dir-controls { display: flex; justify-content: flex-end; margin-bottom: 12px; }
   .dir-controls select {
@@ -126,7 +127,7 @@
     loading: false,
     editingId: null, // record id currently being edited, or null
     saveStatus: null, // 'saving' | 'saved' | 'error' | null, for the row being edited
-    statusFilter: 'all', // 'all' | 'active' | 'inactive'
+    statusFilter: 'all', // 'all' | 'active' | 'inactive' | 'none' (not set)
     dupeBusyId: null, // flag_id currently being merged/dismissed, or null
     expandedAssignmentsId: null, // consultant id whose Assignments panel is open, or null
     assignments: {}, // consultantId -> array of assignment rows (null while loading)
@@ -139,6 +140,11 @@
   var appEl = document.getElementById('app');
 
   function statusBadge(status) {
+    // No status yet: only seen in a Ledger (payments) upload, which never
+    // sets Active/Inactive -- only Margin uploads do.
+    if (status !== 'active' && status !== 'inactive') {
+      return '<span class="dir-status-badge dir-status-none" title="Only Margin uploads set Active/Inactive">Not set</span>';
+    }
     var active = status === 'active';
     return '<span class="dir-status-badge ' + (active ? 'dir-status-active' : 'dir-status-inactive') + '">' +
       (active ? 'Active' : 'Inactive') + '</span>';
@@ -285,13 +291,15 @@
 
   function renderTable(tab, allRecords) {
     var records = state.statusFilter === 'all' ? allRecords
-      : allRecords.filter(function (r) { return r.status === state.statusFilter; });
+      : allRecords.filter(function (r) {
+        return state.statusFilter === 'none' ? (r.status !== 'active' && r.status !== 'inactive') : r.status === state.statusFilter;
+      });
 
     if (!allRecords.length) {
       return '<div class="dir-empty-state">No ' + tab.label.toLowerCase() + ' yet — upload a file in Ledger or Margin and they’ll show up here automatically.</div>';
     }
     if (!records.length) {
-      return '<div class="dir-empty-state">No ' + state.statusFilter + ' ' + tab.label.toLowerCase() + '.</div>';
+      return '<div class="dir-empty-state">No ' + (state.statusFilter === 'none' ? 'status-not-set' : state.statusFilter) + ' ' + tab.label.toLowerCase() + '.</div>';
     }
     var extraCol = tab.key === 'programs' ? '<th>Client</th>'
       : tab.key === 'consultants' ? '<th>Client / Program</th><th>Billing</th>' : '';
@@ -478,6 +486,7 @@
           '<option value="all"' + (state.statusFilter === 'all' ? ' selected' : '') + '>All statuses</option>' +
           '<option value="active"' + (state.statusFilter === 'active' ? ' selected' : '') + '>Active</option>' +
           '<option value="inactive"' + (state.statusFilter === 'inactive' ? ' selected' : '') + '>Inactive</option>' +
+          '<option value="none"' + (state.statusFilter === 'none' ? ' selected' : '') + '>Not set (Ledger only)</option>' +
         '</select></div>';
     }
 

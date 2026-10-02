@@ -10,34 +10,19 @@
 // directory tables, the same ones Margin resolves against — a consultant
 // or subvendor uploaded through either tool becomes one directory record.
 //
-// Status precedence: the Margin file is the source of truth for
-// Active/Inactive. A Ledger upload only sets the status of a consultant or
-// subvendor that has never appeared in any Margin upload of this
-// organization (no margin_roster_entries row links to it); for anyone
-// Margin knows about, Ledger leaves status alone and the latest Margin
-// upload's value stands. Ledger still creates brand-new records (with its
-// own status) as before.
+// Status: Ledger (the sub vendor payments file) is only about payments and
+// never sets Active/Inactive on a Directory record — only Margin uploads do.
+// An existing consultant/subvendor is just looked up, never written; a
+// brand-new one is created with no status ("Not set" in the Directory)
+// until a Margin upload names it. Ledger's own dashboard (ledger.html)
+// still shows its Active/Left/Inactive view of the payments; that just
+// isn't written to the Directory.
 
-const { normalizeName, normalizeStatus, findOrCreateDirectoryRecord, setDirectoryStatus } = require('./directoryUpsert');
+const { normalizeName, findOrCreateDirectoryRecord } = require('./directoryUpsert');
 
-// Margin-linked column for each directory table Ledger touches.
-const MARGIN_LINK_COLUMN = { consultants: 'consultant_id', subvendors: 'subvendor_id' };
-
-// Like upsertConsultant/upsertSubvendor, except an existing record's status
-// is only changed when no Margin row in this organization points at it.
-async function resolveForLedger(conn, tableName, organizationId, name, rawStatus) {
-  const status = normalizeStatus(rawStatus);
-  const rec = await findOrCreateDirectoryRecord(conn, tableName, { organizationId, name, status });
-  if (!rec) return null;
-  if (!rec.created && rec.status !== status) {
-    const column = MARGIN_LINK_COLUMN[tableName];
-    const [inMargin] = await conn.query(
-      `SELECT 1 FROM margin_roster_entries WHERE organization_id = ? AND ${column} = ? LIMIT 1`,
-      [organizationId, rec.id]
-    );
-    if (!inMargin.length) await setDirectoryStatus(conn, tableName, rec.id, status);
-  }
-  return rec.id;
+async function resolveForLedger(conn, tableName, organizationId, name) {
+  const rec = await findOrCreateDirectoryRecord(conn, tableName, { organizationId, name, status: null });
+  return rec ? rec.id : null;
 }
 
 function toNullableNumber(value) {
@@ -63,30 +48,6 @@ async function saveLedgerRoster(conn, { organizationId, importId, data }) {
   const consultants = data && Array.isArray(data.consultants) ? data.consultants : [];
   if (!consultants.length) return;
 
-  // public/ledger.html's processWorkbook() already settles each consultant's
-  // status across the whole file ('Active' | 'Left' | 'Inactive' — see its
-  // buildConsultants()) before this payload is posted, so there's no
-  // per-row ambiguity to resolve the way Margin's rows have. A subvendor's
-  // status rides along with whichever consultants use it: active if at
-  // least one currently-active consultant is placed through it anywhere in
-  // this file.
-  function toDirectoryStatus(rawStatus) {
-    return rawStatus === 'Active' ? 'active' : 'inactive';
-  }
-
-  const subvendorStatus = new Map();
-  for (const c of consultants) {
-    if (!c || !toNullableText(c.name, 255)) continue;
-    const placements = Array.isArray(c.placements) ? c.placements : [];
-    const consultantIsActive = c.status === 'Active';
-    for (const p of placements) {
-      if (!p) continue;
-      const subvendorKey = normalizeName(p.subvendor);
-      if (!subvendorKey || subvendorKey === '(unspecified)') continue;
-      subvendorStatus.set(subvendorKey, subvendorStatus.get(subvendorKey) === 'active' || consultantIsActive ? 'active' : 'inactive');
-    }
-  }
-
   const consultantIds = new Map();
   const subvendorIds = new Map();
   const flatRows = [];
@@ -98,14 +59,14 @@ async function saveLedgerRoster(conn, { organizationId, importId, data }) {
 
     const consultantKey = normalizeName(c.name);
     if (consultantKey && !consultantIds.has(consultantKey)) {
-      consultantIds.set(consultantKey, await resolveForLedger(conn, 'consultants', organizationId, c.name, toDirectoryStatus(c.status)));
+      consultantIds.set(consultantKey, await resolveForLedger(conn, 'consultants', organizationId, c.name));
     }
 
     for (const p of placements) {
       if (!p) continue;
       const subvendorKey = normalizeName(p.subvendor);
       if (subvendorKey && subvendorKey !== '(unspecified)' && !subvendorIds.has(subvendorKey)) {
-        subvendorIds.set(subvendorKey, await resolveForLedger(conn, 'subvendors', organizationId, p.subvendor, subvendorStatus.get(subvendorKey)));
+        subvendorIds.set(subvendorKey, await resolveForLedger(conn, 'subvendors', organizationId, p.subvendor));
       }
       flatRows.push({ name: c.name, consultantKey, p, subvendorKey });
     }
