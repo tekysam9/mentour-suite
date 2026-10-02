@@ -410,14 +410,20 @@
   }
 
   function processWorkbook(wb) {
-    var monthOrder = wb.SheetNames.filter(function (n) { return n.trim().toLowerCase() !== 'left'; });
+    var candidateSheets = wb.SheetNames.filter(function (n) { return n.trim().toLowerCase() !== 'left'; });
     var monthlyRecords = [];
     var otherPayments = [];
+    // Only sheets that actually contain consultant payments count as pay
+    // periods. A blank or stray tab (e.g. Excel's default "Sheet1" left at
+    // the end of the workbook) must not become the "latest month", or every
+    // consultant paid in the real latest month would show as inactive.
+    var monthOrder = [];
 
-    monthOrder.forEach(function (name) {
+    candidateSheets.forEach(function (name) {
       var ws = wb.Sheets[name];
       var rows = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, defval: null });
       var parsed = parseSheet(rows, name);
+      if (parsed.records.length) monthOrder.push(name);
       monthlyRecords = monthlyRecords.concat(parsed.records);
       otherPayments = otherPayments.concat(parsed.others);
     });
