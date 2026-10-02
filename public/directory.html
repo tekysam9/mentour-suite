@@ -81,11 +81,12 @@
   .dir-dupe-actions { display: flex; gap: 6px; flex-wrap: wrap; }
   .dir-btn-small { font-size: 11.5px; padding: 5px 9px; }
 
-  .dir-assign-toggle {
+  .dir-assign-toggle, .dir-usage-toggle {
     background: none; border: none; font-family: inherit; font-size: 11.5px; font-weight: 600;
     color: var(--pine); cursor: pointer; padding: 0; margin-top: 4px; display: block;
   }
-  .dir-assign-toggle:hover { text-decoration: underline; }
+  .dir-assign-toggle:hover, .dir-usage-toggle:hover { text-decoration: underline; }
+  .dir-usage-programs-note { display: block; margin-top: 2px; }
   .dir-assign-row td { background: var(--paper); padding: 12px 14px 16px; }
   .dir-assign-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
   .dir-assign-table th {
@@ -131,6 +132,8 @@
     assignments: {}, // consultantId -> array of assignment rows (null while loading)
     editingAssignmentId: null, // assignment id whose billing input is open
     assignmentStatus: null, // 'saving' | 'error' | null
+    expandedUsageKey: null, // "tabKey:id" whose "Seen in" panel is open, or null
+    usage: {}, // "tabKey:id" -> { margin: [...], ledger: [...] } (null while loading)
   };
 
   var appEl = document.getElementById('app');
@@ -147,12 +150,97 @@
     return Number.isFinite(n) ? '$' + n.toFixed(2) + '/hr' : '—';
   }
 
-  function usageBadge(record) {
+  // "Seen in" used to be a bare count badge ("2 Margin"); it's now a
+  // toggle that expands into the actual uploads behind that count (see
+  // renderUsagePanel and GET /api/directory/:table/:id/usage).
+  function usageUploadSummary(record) {
     var parts = [];
     if (typeof record.margin_rows === 'number') parts.push('<strong>' + record.margin_rows + '</strong> Margin');
     if (typeof record.ledger_rows === 'number') parts.push('<strong>' + record.ledger_rows + '</strong> Ledger');
-    if (typeof record.program_count === 'number') parts.push('<strong>' + record.program_count + '</strong> programs');
-    return parts.length ? '<span class="dir-count">' + parts.join(' · ') + '</span>' : '';
+    return parts.join(' · ');
+  }
+
+  function usageCell(tab, record) {
+    var uploadTotal = (record.margin_rows || 0) + (record.ledger_rows || 0);
+    var summary = usageUploadSummary(record);
+    var programsNote = typeof record.program_count === 'number'
+      ? '<span class="dir-count dir-usage-programs-note"><strong>' + record.program_count + '</strong> programs</span>'
+      : '';
+
+    if (!uploadTotal) {
+      return (summary ? '<span class="dir-count">' + summary + '</span>' : '<span class="dir-empty-cell">—</span>') + programsNote;
+    }
+
+    var key = tab.key + ':' + record.id;
+    var expanded = state.expandedUsageKey === key;
+    return '<button class="dir-usage-toggle" data-action="toggle-usage" data-table="' + tab.key + '" data-id="' + record.id + '">' +
+        (expanded ? '▾ Hide' : '▸ ' + summary) +
+      '</button>' + programsNote;
+  }
+
+  function usageColspan(tab) {
+    return tab.key === 'programs' ? 8 : 7;
+  }
+
+  function renderUsagePanel(tab, record) {
+    var key = tab.key + ':' + record.id;
+    var data = state.usage[key];
+    var colspan = usageColspan(tab);
+    var body;
+    if (data === undefined || data === null) {
+      body = '<div class="dir-assign-empty">Loading…</div>';
+    } else {
+      var marginRows = data.margin || [];
+      var ledgerRows = data.ledger || [];
+      if (!marginRows.length && !ledgerRows.length) {
+        body = '<div class="dir-assign-empty">No upload history found.</div>';
+      } else {
+        body = '';
+        if (marginRows.length) {
+          var mBody = marginRows.map(function (m) {
+            var when = m.imported_at ? new Date(m.imported_at).toLocaleDateString() : '—';
+            // A row with no "/" in its Client / Account value has no
+            // separate program — see db/schema.sql's Directory comment.
+            var clientProgram = m.client_detail
+              ? escapeHtml(m.client) + ' / ' + escapeHtml(m.program)
+              : escapeHtml(m.client || '—');
+            var who = tab.key === 'consultants' ? '' : '<td>' + escapeHtml(m.name) + '</td>';
+            return '<tr>' +
+              '<td>' + escapeHtml(m.file_name) + '</td>' +
+              '<td>' + when + '</td>' +
+              who +
+              '<td>' + clientProgram + '</td>' +
+              '<td>' + fmtMoney(m.billing) + '</td>' +
+              '<td>' + (m.status ? escapeHtml(m.status) : '—') + '</td>' +
+            '</tr>';
+          }).join('');
+          var whoHeader = tab.key === 'consultants' ? '' : '<th>Consultant</th>';
+          body += '<table class="dir-assign-table"><thead><tr>' +
+            '<th>Margin file</th><th>Uploaded</th>' + whoHeader + '<th>Client / Program</th><th>Billing</th><th>Status</th>' +
+            '</tr></thead><tbody>' + mBody + '</tbody></table>';
+        }
+        if (ledgerRows.length) {
+          var lBody = ledgerRows.map(function (l) {
+            var when = l.imported_at ? new Date(l.imported_at).toLocaleDateString() : '—';
+            var who = tab.key === 'consultants' ? '' : '<td>' + escapeHtml(l.name) + '</td>';
+            var tagMonth = [l.client_tag, l.month_label].filter(Boolean).map(escapeHtml).join(' · ') || '—';
+            return '<tr>' +
+              '<td>' + escapeHtml(l.file_name) + '</td>' +
+              '<td>' + when + '</td>' +
+              who +
+              '<td>' + tagMonth + '</td>' +
+              '<td>' + fmtMoney(l.rate) + '</td>' +
+              '<td>' + (l.amount !== null && l.amount !== undefined ? '$' + Number(l.amount).toFixed(2) : '—') + '</td>' +
+            '</tr>';
+          }).join('');
+          var lWhoHeader = tab.key === 'consultants' ? '' : '<th>Consultant</th>';
+          body += '<table class="dir-assign-table" style="margin-top:10px"><thead><tr>' +
+            '<th>Ledger file</th><th>Uploaded</th>' + lWhoHeader + '<th>Tag / Month</th><th>Rate</th><th>Amount</th>' +
+            '</tr></thead><tbody>' + lBody + '</tbody></table>';
+        }
+      }
+    }
+    return '<tr class="dir-assign-row"><td colspan="' + colspan + '">' + body + '</td></tr>';
   }
 
   function contactCell(record, field) {
@@ -203,13 +291,17 @@
         '<td>' + contactCell(r, 'email') + '</td>' +
         '<td>' + contactCell(r, 'phone') + '</td>' +
         '<td>' + contactCell(r, 'address') + '</td>' +
-        '<td>' + usageBadge(r) + '</td>' +
+        '<td>' + usageCell(tab, r) + '</td>' +
         '<td>' + actions + assignToggle + '</td>' +
       '</tr>';
-      if (tab.key === 'consultants' && state.expandedAssignmentsId === r.id) {
-        return mainRow + renderAssignmentsPanel(r);
+      var out = mainRow;
+      if (state.expandedUsageKey === tab.key + ':' + r.id) {
+        out += renderUsagePanel(tab, r);
       }
-      return mainRow;
+      if (tab.key === 'consultants' && state.expandedAssignmentsId === r.id) {
+        out += renderAssignmentsPanel(r);
+      }
+      return out;
     }).join('');
 
     return '<div class="dir-table-wrap"><table class="dir-table"><thead><tr>' +
@@ -360,7 +452,7 @@
       '<div class="dir-body">' +
         '<a class="dir-back" href="/">← Back to dashboards</a>' +
         '<h1 class="dir-title">Directory.</h1>' +
-        '<p class="dir-copy">Everyone and every account your team has ever uploaded, in one place — add an email, phone, or address once and it stays, no matter how many more files come in. Status tracks each upload automatically: active if it showed up that way in the most recent file, inactive otherwise. On Consultants, open “Billing” on a row to see or add their rate on each client/program.</p>' +
+        '<p class="dir-copy">Everyone and every account your team has ever uploaded, in one place — add an email, phone, or address once and it stays, no matter how many more files come in. Status tracks each upload automatically: active if it showed up that way in the most recent file, inactive otherwise. Open “Seen in” on a row to see exactly which uploads named it. On Consultants, open “Billing” to see or add their rate on each client/program.</p>' +
         '<div class="dir-tabs">' + tabsHtml + '</div>' +
         dupePanel +
         controls +
@@ -511,6 +603,34 @@
         state.dupeBusyId = null;
         render();
       });
+      return;
+    }
+
+    var toggleUsageBtn = e.target.closest('[data-action="toggle-usage"]');
+    if (toggleUsageBtn) {
+      var uTable = toggleUsageBtn.getAttribute('data-table');
+      var uId = Number(toggleUsageBtn.getAttribute('data-id'));
+      var uKey = uTable + ':' + uId;
+      if (state.expandedUsageKey === uKey) {
+        state.expandedUsageKey = null;
+        render();
+        return;
+      }
+      state.expandedUsageKey = uKey;
+      if (!state.usage[uKey]) {
+        state.usage[uKey] = null; // loading marker
+        fetch('/api/directory/' + uTable + '/' + uId + '/usage').then(function (res) {
+          if (!res.ok) throw new Error('load failed');
+          return res.json();
+        }).then(function (body) {
+          state.usage[uKey] = { margin: body.margin || [], ledger: body.ledger || [] };
+          render();
+        }).catch(function () {
+          state.usage[uKey] = { margin: [], ledger: [] };
+          render();
+        });
+      }
+      render();
       return;
     }
 

@@ -123,6 +123,29 @@ saved, for anyone signed in to that company.
 Either way, environment variables and the database persist across
 redeploys — you only did steps 1, 4, and 5 once.
 
+If an update adds new tables or columns, re-run `db/schema.sql` the same
+way you did in step 5 (phpMyAdmin import, or `npm run init-db`) — it's
+written so running it again is always safe and never erases existing data,
+it only adds what's missing.
+
+### One-time fix: Client/Program swap (October 2026)
+
+This update corrected how the Directory reads the Margin file's "Client /
+Account" column: for a value like "Wipro/TD Bank", "TD Bank" is now
+correctly treated as the Client and "Wipro" as the Program (it used to be
+the other way round). After redeploying this update and re-running
+`db/schema.sql`, also run this once to fix up data from files uploaded
+before the correction:
+
+```
+npm run backfill-client-program-swap
+```
+
+It re-reads the original upload data already stored in the database (no
+need to re-upload any files), fixes the Client/Program links, and prints
+anything left over that's safe to clean up by hand on the Directory page.
+Safe to run more than once if you're not sure whether it already ran.
+
 ## If you outgrow Cloud/Node.js hosting
 
 The "other companies down the line" case is already handled in the data

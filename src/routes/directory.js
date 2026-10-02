@@ -289,6 +289,76 @@ router.get('/programs', async (req, res, next) => {
 
 router.patch('/programs/:id', (req, res, next) => updateContactFields('programs', req, res, next));
 
+// --- "Seen in" usage detail ---
+//
+// The directory list routes above return bare counts (margin_rows,
+// ledger_rows) for a quick "Seen in" badge. This route is what backs the
+// expandable panel: the actual uploads behind that count, so a person can
+// see which file(s) named this record and with what details, not just a
+// number.
+
+// Which margin_roster_entries/ledger_roster_entries column links back to
+// each directory table. Clients and programs are Margin-only (see
+// schema.sql's Directory comment), so they have no ledger entry.
+const MARGIN_USAGE_COLUMN = {
+  consultants: 'consultant_id',
+  subvendors: 'subvendor_id',
+  clients: 'client_id',
+  programs: 'program_id',
+};
+const LEDGER_USAGE_COLUMN = {
+  consultants: 'consultant_id',
+  subvendors: 'subvendor_id',
+};
+
+router.get('/:table/:id/usage', async (req, res, next) => {
+  try {
+    const tableName = req.params.table;
+    if (!DIRECTORY_TABLES.includes(tableName)) {
+      return res.status(400).json({ error: 'Unknown table. Use consultants, subvendors, clients, or programs.' });
+    }
+
+    const [recordRows] = await pool.query(
+      `SELECT id, name FROM ${tableName} WHERE id = ? AND organization_id = ?`,
+      [req.params.id, req.user.organization_id]
+    );
+    const record = recordRows[0];
+    if (!record) return res.status(404).json({ error: 'Not found.' });
+
+    const marginColumn = MARGIN_USAGE_COLUMN[tableName];
+    const [marginRows] = await pool.query(
+      `SELECT mi.id AS import_id, mi.file_name, mi.imported_at,
+         m.name, m.client, m.program, m.client_detail, m.cost, m.billing, m.margin,
+         m.status, m.employment_type, m.subvendor_text, m.source_sheet
+       FROM margin_roster_entries m
+       JOIN margin_imports mi ON mi.id = m.import_id
+       WHERE m.organization_id = ? AND m.${marginColumn} = ?
+       ORDER BY mi.imported_at DESC, m.id DESC`,
+      [req.user.organization_id, req.params.id]
+    );
+
+    let ledgerRows = [];
+    const ledgerColumn = LEDGER_USAGE_COLUMN[tableName];
+    if (ledgerColumn) {
+      const [rows] = await pool.query(
+        `SELECT li.id AS import_id, li.file_name, li.imported_at,
+           l.name, l.subvendor_text, l.client_tag, l.month_label, l.period_text,
+           l.amount, l.rate, l.hours, l.paid_date, l.notes
+         FROM ledger_roster_entries l
+         JOIN ledger_imports li ON li.id = l.import_id
+         WHERE l.organization_id = ? AND l.${ledgerColumn} = ?
+         ORDER BY li.imported_at DESC, l.id DESC`,
+        [req.user.organization_id, req.params.id]
+      );
+      ledgerRows = rows;
+    }
+
+    res.json({ table: tableName, record, margin: marginRows, ledger: ledgerRows });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // --- Smart-parser duplicate review ---
 //
 // See directoryDedup.js for how a candidate gets flagged in the first

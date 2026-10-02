@@ -160,7 +160,7 @@ async function main() {
         kpis: { activeCount: 2 },
         records: [
           {
-            name: 'Jordan Blake', client: 'Acme / Platform', program: 'Acme', clientDetail: 'Platform',
+            name: 'Jordan Blake', client: 'Platform', program: 'Acme', clientDetail: 'Platform',
             cost: 85.5, billing: 140, margin: 54.5, status: 'Active', joined: '2023-01-15',
             leftText: null, leftDate: null, recruiter: 'Sam Lee',
             subvendorText: 'W2', employmentType: 'W2 (direct)', sourceSheet: 'Total',
@@ -213,10 +213,12 @@ async function main() {
         orgCounts.length === 2 && orgCounts.every((row) => row.n > 0), orgCounts);
 
       // 21. The Margin upload above should have populated the directory:
-      // a consultant for each named person, a client for each Program value,
-      // a program for each clientDetail under its client, and a subvendor
-      // only for the row whose employment type is actually 'Subvendor'
-      // (the W2 row's subvendorText is a marker, not a real vendor name).
+      // a consultant for each named person, a client for each real
+      // end-client name (the post-slash text in "Client / Account", e.g.
+      // "Acme / Platform" names client "Platform"), a program for each
+      // pre-slash Program value under its client, and a subvendor only for
+      // the row whose employment type is actually 'Subvendor' (the W2
+      // row's subvendorText is a marker, not a real vendor name).
       r = await owner.fetch('/api/directory/consultants');
       check('directory consultants populated from margin upload', r.status === 200 &&
         r.body.consultants.length === 2 &&
@@ -224,19 +226,49 @@ async function main() {
         r.body.consultants.some((c) => c.name === 'Priya Natarajan'), r.body);
 
       r = await owner.fetch('/api/directory/clients');
-      check('directory clients populated from Program values', r.status === 200 &&
+      check('directory clients populated from the post-slash Client / Account text', r.status === 200 &&
         r.body.clients.length === 2 &&
-        r.body.clients.some((c) => c.name === 'Acme') &&
+        r.body.clients.some((c) => c.name === 'Platform') &&
         r.body.clients.some((c) => c.name === 'Globex'), r.body);
 
       r = await owner.fetch('/api/directory/programs');
-      check('directory programs populated from clientDetail, linked to its client', r.status === 200 &&
+      check('directory programs populated from the pre-slash Program value, linked to its client', r.status === 200 &&
         r.body.programs.length === 1 &&
-        r.body.programs[0].name === 'Platform' && r.body.programs[0].client_name === 'Acme', r.body);
+        r.body.programs[0].name === 'Acme' && r.body.programs[0].client_name === 'Platform', r.body);
 
       r = await owner.fetch('/api/directory/subvendors');
       check('directory subvendors only created for real Subvendor rows (W2 marker excluded)',
         r.status === 200 && r.body.subvendors.length === 1 && r.body.subvendors[0].name === 'Vendor Co', r.body);
+
+      // 21a. "Seen in" usage detail: the margin_rows/ledger_rows counts on
+      // each directory record expand into the actual upload rows behind
+      // them (file name, date, and the row's own detail) via a generic
+      // usage route shared by all four tabs.
+      const jordanForUsage = (await owner.fetch('/api/directory/consultants')).body.consultants.find((c) => c.name === 'Jordan Blake');
+      r = await owner.fetch('/api/directory/consultants/' + jordanForUsage.id + '/usage');
+      check('consultant usage detail returns the margin upload row behind its count', r.status === 200 &&
+        r.body.margin.length === 1 && r.body.margin[0].file_name === 'Roster.xlsx' &&
+        r.body.margin[0].client === 'Platform' && r.body.margin[0].program === 'Acme' &&
+        Number(r.body.margin[0].billing) === 140, r.body);
+
+      const platformClient = (await owner.fetch('/api/directory/clients')).body.clients.find((c) => c.name === 'Platform');
+      r = await owner.fetch('/api/directory/clients/' + platformClient.id + '/usage');
+      check('client usage detail shows which consultant the row belongs to', r.status === 200 &&
+        r.body.margin.length === 1 && r.body.margin[0].name === 'Jordan Blake', r.body);
+
+      const acmeProgram = (await owner.fetch('/api/directory/programs')).body.programs.find((p) => p.name === 'Acme');
+      r = await owner.fetch('/api/directory/programs/' + acmeProgram.id + '/usage');
+      check('program usage detail returns its margin row', r.status === 200 &&
+        r.body.margin.length === 1 && r.body.margin[0].client === 'Platform', r.body);
+
+      r = await owner.fetch('/api/directory/consultants/999999/usage');
+      check('usage detail for an unknown record returns 404', r.status === 404, r);
+
+      r = await otherOrgUser.fetch('/api/directory/consultants/' + jordanForUsage.id + '/usage');
+      check('cross-tenant usage detail blocked (404)', r.status === 404, r);
+
+      r = await owner.fetch('/api/directory/bogus-table/1/usage');
+      check('usage detail for an unknown table returns 400', r.status === 400, r);
 
       // 21b. Status auto-syncs from this first upload: Jordan's row said
       // Active, Priya's said Left, so that's what each directory record
@@ -249,11 +281,11 @@ async function main() {
         r.body.consultants.find((c) => c.name === 'Priya Natarajan').status === 'inactive', r.body.consultants);
 
       r = await owner.fetch('/api/directory/clients');
-      check('client status active when its row is Active', r.body.clients.find((c) => c.name === 'Acme').status === 'active', r.body.clients);
+      check('client status active when its row is Active', r.body.clients.find((c) => c.name === 'Platform').status === 'active', r.body.clients);
       check('client status inactive when its row is Left', r.body.clients.find((c) => c.name === 'Globex').status === 'inactive', r.body.clients);
 
       r = await owner.fetch('/api/directory/programs');
-      check('program status active alongside its client', r.body.programs.find((p) => p.name === 'Platform').status === 'active', r.body.programs);
+      check('program status active alongside its client', r.body.programs.find((p) => p.name === 'Acme').status === 'active', r.body.programs);
 
       r = await owner.fetch('/api/directory/consultants');
       const jordanRecord = r.body.consultants.find((c) => c.name === 'Jordan Blake');
@@ -261,13 +293,13 @@ async function main() {
       check('consultant list reports its assignment count', jordanRecord.assignment_count === 1, jordanRecord);
 
       // 21c. The Margin upload auto-populated a billing assignment for
-      // Jordan's one pairing (Acme / Platform, $140/hr) — this is the
-      // same consultant_assignments row the Directory's Consultants tab
-      // would expand to show.
+      // Jordan's one pairing (client "Platform", program "Acme", $140/hr)
+      // — this is the same consultant_assignments row the Directory's
+      // Consultants tab would expand to show.
       r = await owner.fetch('/api/directory/consultants/' + jordanRecord.id + '/assignments');
       check('billing assignment auto-populated from upload', r.status === 200 &&
-        r.body.assignments.length === 1 && r.body.assignments[0].client_name === 'Acme' &&
-        r.body.assignments[0].program_name === 'Platform' && Number(r.body.assignments[0].billing) === 140 &&
+        r.body.assignments.length === 1 && r.body.assignments[0].client_name === 'Platform' &&
+        r.body.assignments[0].program_name === 'Acme' && Number(r.body.assignments[0].billing) === 140 &&
         r.body.assignments[0].source === 'upload', r.body);
 
       r = await otherOrgUser.fetch('/api/directory/consultants/' + jordanRecord.id + '/assignments');
@@ -326,7 +358,7 @@ async function main() {
       // (upsert must never overwrite existing contact details).
       r = await owner.fetch('/api/margin', { method: 'POST', body: JSON.stringify({
         fileName: 'Roster2.xlsx',
-        data: { kpis: {}, records: [{ name: 'Jordan Blake', client: 'Acme / Platform', program: 'Acme', clientDetail: 'Platform', cost: 86, billing: 141, margin: 55, status: 'Active', employmentType: 'W2 (direct)', subvendorText: 'W2' }] },
+        data: { kpis: {}, records: [{ name: 'Jordan Blake', client: 'Platform', program: 'Acme', clientDetail: 'Platform', cost: 86, billing: 141, margin: 55, status: 'Active', employmentType: 'W2 (direct)', subvendorText: 'W2' }] },
       }) });
       check('second margin upload for same consultant returns 201', r.status === 201, r);
       r = await owner.fetch('/api/directory/consultants');
@@ -361,6 +393,14 @@ async function main() {
         r.body.subvendors.length === 1 && r.body.subvendors[0].ledger_rows === 1 && r.body.subvendors[0].margin_rows === 1,
         r.body.subvendors);
 
+      // Usage detail should now show both an upload's worth of Margin rows
+      // and the one Ledger row, with the Ledger row's own fields intact.
+      r = await owner.fetch('/api/directory/consultants/' + jordanRecord.id + '/usage');
+      check('consultant usage detail includes both Margin and Ledger uploads', r.status === 200 &&
+        r.body.margin.length === 2 && r.body.ledger.length === 1 &&
+        r.body.ledger[0].file_name === 'LedgerRoster.xlsx' && r.body.ledger[0].client_tag === 'HCL' &&
+        Number(r.body.ledger[0].amount) === 5000, r.body);
+
       const [ledgerRosterRows] = await dbConn.query(
         'SELECT name, subvendor_text, client_tag, amount, consultant_id, subvendor_id FROM ledger_roster_entries WHERE consultant_id = ?',
         [jordanRecord.id]
@@ -385,7 +425,7 @@ async function main() {
       r = await owner.fetch('/api/margin', { method: 'POST', body: JSON.stringify({
         fileName: 'Roster3.xlsx',
         data: { kpis: {}, records: [{
-          name: 'Jordan Blake', client: 'Acme / Platform', program: 'Acme', clientDetail: 'Platform',
+          name: 'Jordan Blake', client: 'Platform', program: 'Acme', clientDetail: 'Platform',
           cost: 86, billing: 141, margin: 55, status: 'Left', employmentType: 'W2 (direct)', subvendorText: 'W2',
         }] },
       }) });
@@ -398,19 +438,19 @@ async function main() {
 
       r = await owner.fetch('/api/directory/clients');
       check('client status flips to inactive once its only row goes Left',
-        r.body.clients.find((c) => c.name === 'Acme').status === 'inactive', r.body.clients);
+        r.body.clients.find((c) => c.name === 'Platform').status === 'inactive', r.body.clients);
 
       r = await owner.fetch('/api/directory/programs');
       check('program status flips to inactive alongside its client',
-        r.body.programs.find((p) => p.name === 'Platform').status === 'inactive', r.body.programs);
+        r.body.programs.find((p) => p.name === 'Acme').status === 'inactive', r.body.programs);
 
       // 27b. That same upload's row said $141/hr, so the existing
-      // Acme/Platform assignment should have tracked it automatically —
+      // Platform/Acme assignment should have tracked it automatically —
       // same auto-sync-from-upload reasoning as status.
       r = await owner.fetch('/api/directory/consultants/' + jordanRecord.id + '/assignments');
-      const acmeAssignment = r.body.assignments.find((a) => a.client_name === 'Acme');
+      const platformAssignment = r.body.assignments.find((a) => a.client_name === 'Platform');
       check('billing assignment auto-syncs to the latest upload’s rate',
-        acmeAssignment && Number(acmeAssignment.billing) === 141 && acmeAssignment.source === 'upload', r.body.assignments);
+        platformAssignment && Number(platformAssignment.billing) === 141 && platformAssignment.source === 'upload', r.body.assignments);
 
       // 28. Smart-parser duplicate flagging: a typo'd name close to an
       // existing consultant should NOT create a silent duplicate — it

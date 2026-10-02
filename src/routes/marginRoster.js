@@ -10,6 +10,15 @@
 // reusing it after) and stores the resulting ids alongside the existing
 // text columns. See directoryUpsert.js and db/schema.sql for the
 // client/program field-mapping explanation.
+//
+// Field mapping (see db/schema.sql's Directory comment): for a
+// "Client / Account" cell like "Wipro/TD Bank", r.client already holds the
+// real end-client name ("TD Bank" — the post-slash text, or the whole value
+// when there's no "/"), and r.program holds the specific engagement/program
+// name ("Wipro" — the pre-slash text) *only when r.clientDetail is set*,
+// i.e. only when there actually was a "/". When there's no "/", r.program
+// falls back to the same full string as r.client, so it must not also be
+// saved as a program under that client (it isn't a distinct engagement).
 
 const { normalizeName, upsertConsultant, upsertSubvendor, upsertClient, upsertProgram } = require('./directoryUpsert');
 const { upsertAssignmentBilling } = require('./assignmentUpsert');
@@ -59,18 +68,20 @@ async function saveMarginRoster(conn, { organizationId, importId, data }) {
 
   const consultantStatus = new Map();
   const clientStatus = new Map();
-  const programStatus = new Map(); // "clientKey|detailKey" -> status (text-keyed; client id isn't known yet)
+  const programStatus = new Map(); // "clientKey|programNameKey" -> status (text-keyed; client id isn't known yet)
   const subvendorStatus = new Map();
 
   for (const r of valid) {
     bumpStatus(consultantStatus, normalizeName(r.name), r.status);
 
-    const clientKey = normalizeName(r.program);
+    const clientKey = normalizeName(r.client);
     bumpStatus(clientStatus, clientKey, r.status);
 
-    const programDetailKey = normalizeName(r.clientDetail);
-    if (clientKey && programDetailKey) {
-      bumpStatus(programStatus, clientKey + '|' + programDetailKey, r.status);
+    // Only a real "/" split (r.clientDetail set) names a distinct program;
+    // otherwise r.program is just the client name again.
+    const programNameKey = r.clientDetail ? normalizeName(r.program) : null;
+    if (clientKey && programNameKey) {
+      bumpStatus(programStatus, clientKey + '|' + programNameKey, r.status);
     }
 
     if (r.employmentType === 'Subvendor') {
@@ -81,8 +92,8 @@ async function saveMarginRoster(conn, { organizationId, importId, data }) {
   // Resolve each distinct name once, not once per row — most names repeat
   // across dozens of rows in a real roster.
   const consultantIds = new Map(); // normalized name -> id
-  const clientIds = new Map(); // normalized program value -> client id
-  const programIds = new Map(); // "clientId|detail" -> program id
+  const clientIds = new Map(); // normalized client name -> client id
+  const programIds = new Map(); // "clientId|program name" -> program id
   const subvendorIds = new Map(); // normalized name -> id
 
   for (const r of valid) {
@@ -91,20 +102,21 @@ async function saveMarginRoster(conn, { organizationId, importId, data }) {
       consultantIds.set(consultantKey, await upsertConsultant(conn, organizationId, r.name, consultantStatus.get(consultantKey)));
     }
 
-    // "Program" is the end-client/account name in this data (see
-    // schema.sql's comment on the clients/programs tables).
-    const clientKey = normalizeName(r.program);
+    // r.client is the real end-client name (post-slash text, or the whole
+    // value when there's no "/") — see schema.sql's comment on the
+    // clients/programs tables.
+    const clientKey = normalizeName(r.client);
     if (clientKey && !clientIds.has(clientKey)) {
-      clientIds.set(clientKey, await upsertClient(conn, organizationId, r.program, clientStatus.get(clientKey)));
+      clientIds.set(clientKey, await upsertClient(conn, organizationId, r.client, clientStatus.get(clientKey)));
     }
 
     const clientId = clientKey ? clientIds.get(clientKey) : null;
-    const programDetailKey = normalizeName(r.clientDetail);
-    if (clientId && programDetailKey) {
-      const programKey = clientId + '|' + programDetailKey;
+    const programNameKey = r.clientDetail ? normalizeName(r.program) : null;
+    if (clientId && programNameKey) {
+      const programKey = clientId + '|' + programNameKey;
       if (!programIds.has(programKey)) {
-        const status = programStatus.get(clientKey + '|' + programDetailKey);
-        programIds.set(programKey, await upsertProgram(conn, organizationId, clientId, r.clientDetail, status));
+        const status = programStatus.get(clientKey + '|' + programNameKey);
+        programIds.set(programKey, await upsertProgram(conn, organizationId, clientId, r.program, status));
       }
     }
 
@@ -122,10 +134,10 @@ async function saveMarginRoster(conn, { organizationId, importId, data }) {
   const rows = [];
   for (const r of valid) {
     const consultantKey = normalizeName(r.name);
-    const clientKey = normalizeName(r.program);
+    const clientKey = normalizeName(r.client);
     const clientId = clientKey ? clientIds.get(clientKey) || null : null;
-    const programDetailKey = normalizeName(r.clientDetail);
-    const programId = clientId && programDetailKey ? programIds.get(clientId + '|' + programDetailKey) || null : null;
+    const programNameKey = r.clientDetail ? normalizeName(r.program) : null;
+    const programId = clientId && programNameKey ? programIds.get(clientId + '|' + programNameKey) || null : null;
     const subvendorKey = r.employmentType === 'Subvendor' ? normalizeName(r.subvendorText) : null;
     const consultantId = consultantKey ? consultantIds.get(consultantKey) || null : null;
 

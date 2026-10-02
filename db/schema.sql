@@ -90,11 +90,13 @@ CREATE TABLE IF NOT EXISTS margin_roster_entries (
 -- programs only come from Margin — Ledger has no equivalent concept (its
 -- "client" is just an HCL / Non-HCL tag, not a named account).
 --
--- In Margin's own data, what the dashboard labels "Program" (e.g. "Acme") is
--- actually the end-client/account name, and the text after a "/" in the
--- "Client / Account" column (e.g. "Platform") is the specific engagement
--- under that account. So: `clients` is keyed on the Program value, and
--- `programs` is keyed on that post-slash detail, linked under its client.
+-- In Margin's own data, the "Client / Account" column holds values like
+-- "Wipro/TD Bank": the text after the "/" (e.g. "TD Bank") is the real
+-- end-client, and the dashboard's "Program" value (e.g. "Wipro") is the
+-- specific engagement/program under that client. So: `clients` is keyed on
+-- that post-slash detail, and `programs` is keyed on the Program value,
+-- linked under its client. (When there's no "/", the whole value is both
+-- the client and has no separate program.)
 -- ---------------------------------------------------------------------------
 
 CREATE TABLE IF NOT EXISTS consultants (
