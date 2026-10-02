@@ -61,18 +61,102 @@ function toNullableNumber(value) {
   return Number.isFinite(n) ? n : null;
 }
 
+// ---- Maximum billable hours -------------------------------------------
+// Default hours on a newly generated invoice = (weekdays in the month minus
+// US federal holidays observed on a weekday that month) x 8. Holidays are
+// computed for any year -- no hardcoded list -- using OPM's observed-date
+// rule: a holiday on a Saturday is observed the Friday before, one on a
+// Sunday the Monday after. The 11 federal holidays:
+//   New Year's Day (Jan 1), MLK Day (3rd Mon Jan), Presidents' Day (3rd Mon
+//   Feb), Memorial Day (last Mon May), Juneteenth (Jun 19), Independence Day
+//   (Jul 4), Labor Day (1st Mon Sep), Columbus Day (2nd Mon Oct), Veterans
+//   Day (Nov 11), Thanksgiving (4th Thu Nov), Christmas (Dec 25).
+const HOURS_PER_DAY = 8;
+
+function ymd(y, m, d) {
+  return y + '-' + String(m).padStart(2, '0') + '-' + String(d).padStart(2, '0');
+}
+
+// nth (1-based) given weekday (0=Sun..6=Sat) of month m (1-12); n = -1 = last.
+function nthWeekday(y, m, weekday, n) {
+  if (n === -1) {
+    const last = new Date(Date.UTC(y, m, 0));
+    const back = (last.getUTCDay() - weekday + 7) % 7;
+    return toDateOnly(new Date(Date.UTC(y, m - 1, last.getUTCDate() - back)));
+  }
+  const first = new Date(Date.UTC(y, m - 1, 1));
+  const offset = (weekday - first.getUTCDay() + 7) % 7;
+  return toDateOnly(new Date(Date.UTC(y, m - 1, 1 + offset + (n - 1) * 7)));
+}
+
+function observed(y, m, d) {
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  const dow = dt.getUTCDay();
+  if (dow === 6) dt.setUTCDate(dt.getUTCDate() - 1);
+  else if (dow === 0) dt.setUTCDate(dt.getUTCDate() + 1);
+  return toDateOnly(dt);
+}
+
+// Observed dates (YYYY-MM-DD) of the 11 US federal holidays for year y.
+// Note an observed date can fall in the neighbouring year (e.g. Jan 1 2022,
+// a Saturday, was observed Fri Dec 31 2021).
+function usFederalHolidays(y) {
+  return [
+    { name: "New Year's Day", date: observed(y, 1, 1) },
+    { name: 'Martin Luther King Jr. Day', date: nthWeekday(y, 1, 1, 3) },
+    { name: "Presidents' Day", date: nthWeekday(y, 2, 1, 3) },
+    { name: 'Memorial Day', date: nthWeekday(y, 5, 1, -1) },
+    { name: 'Juneteenth', date: observed(y, 6, 19) },
+    { name: 'Independence Day', date: observed(y, 7, 4) },
+    { name: 'Labor Day', date: nthWeekday(y, 9, 1, 1) },
+    { name: 'Columbus Day', date: nthWeekday(y, 10, 1, 2) },
+    { name: 'Veterans Day', date: observed(y, 11, 11) },
+    { name: 'Thanksgiving Day', date: nthWeekday(y, 11, 4, 4) },
+    { name: 'Christmas Day', date: observed(y, 12, 25) },
+  ];
+}
+
+// periodMonth: 'YYYY-MM-01'. Returns { weekdays, holidays: [...], billableDays, hours }.
+function maxBillableHours(periodMonth) {
+  const y = Number(String(periodMonth).slice(0, 4));
+  const m = Number(String(periodMonth).slice(5, 7));
+  const prefix = ymd(y, m, 1).slice(0, 8);
+  const daysInMonth = new Date(Date.UTC(y, m, 0)).getUTCDate();
+  let weekdays = 0;
+  for (let d = 1; d <= daysInMonth; d++) {
+    const dow = new Date(Date.UTC(y, m - 1, d)).getUTCDay();
+    if (dow !== 0 && dow !== 6) weekdays++;
+  }
+  // Check y-1..y+1 so a cross-year observed date (Dec 31 for a Saturday
+  // New Year's Day) lands in the right month.
+  const holidays = [y - 1, y, y + 1]
+    .flatMap(usFederalHolidays)
+    .filter((h) => h.date.startsWith(prefix));
+  const billableDays = weekdays - holidays.length; // observed dates are always weekdays
+  return { weekdays, holidays, billableDays, hours: billableDays * HOURS_PER_DAY };
+}
+
+function isTruthyFlag(value) {
+  return value === true || value === 1 || ['1', 'true', 'yes', 'on'].includes(String(value || '').toLowerCase());
+}
+
 async function nextInvoiceNumber(conn, organizationId, periodMonth, insertId) {
   const ym = String(periodMonth).slice(0, 7).replace('-', '');
   return 'INV-' + ym + '-' + String(insertId).padStart(5, '0');
 }
 
 // POST /api/invoices/generate
-// body: { periodMonth: 'YYYY-MM' (default: current month), netTerms: 'NET30' (default), issueDate: 'YYYY-MM-DD' (default: today) }
+// body: { periodMonth: 'YYYY-MM' (default: current month), netTerms: 'NET30' (default),
+//         issueDate: 'YYYY-MM-DD' (default: today), includeInactive: false (default) }
 // Creates one invoice per (consultant, client, program) billing pairing that
 // doesn't already have one for this period -- skipping pairings with no
 // billing rate and pairings with neither a client nor a program (nothing to
-// bill). Safe to re-run for the same month: existing invoices are left
-// untouched.
+// bill). Only consultants whose Directory status is Active are invoiced by
+// default; includeInactive: true also invoices Inactive and not-yet-set
+// (NULL) consultants. New invoices start at the month's maximum billable
+// hours (see maxBillableHours) with amount = rate x hours; both stay
+// editable. Safe to re-run for the same month: existing invoices -- and any
+// hours/amount edited on them -- are left untouched.
 router.post('/generate', async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
@@ -86,10 +170,13 @@ router.post('/generate', async (req, res, next) => {
     const issueDate = /^\d{4}-\d{2}-\d{2}$/.test(String(body.issueDate || '')) ? body.issueDate : toDateOnly(new Date());
     const dueDate = addDays(issueDate, netTermsDays(netTerms));
     const organizationId = req.user.organization_id;
+    const includeInactive = isTruthyFlag(body.includeInactive);
+    const billable = maxBillableHours(periodMonth);
+    const defaultHours = billable.hours;
 
     const [assignments] = await conn.query(
       `SELECT a.id AS assignment_id, a.consultant_id, a.client_id, a.program_id, a.billing,
-         c.name AS consultant_name,
+         c.name AS consultant_name, c.status AS consultant_status,
          cl.name AS client_name, cl.email AS client_email, cl.phone AS client_phone, cl.address AS client_address,
          p.name AS program_name, p.email AS program_email, p.phone AS program_phone, p.address AS program_address
        FROM consultant_assignments a
@@ -105,6 +192,14 @@ router.post('/generate', async (req, res, next) => {
 
     await conn.beginTransaction();
     for (const a of assignments) {
+      if (!includeInactive && a.consultant_status !== 'active') {
+        skipped.push({
+          assignmentId: a.assignment_id, consultant: a.consultant_name,
+          reason: a.consultant_status === 'inactive' ? 'consultant is inactive' : 'consultant status not set',
+          inactive: true,
+        });
+        continue;
+      }
       if (!a.client_id && !a.program_id) {
         skipped.push({ assignmentId: a.assignment_id, consultant: a.consultant_name, reason: 'no client or program to bill' });
         continue;
@@ -135,10 +230,11 @@ router.post('/generate', async (req, res, next) => {
            (organization_id, invoice_number, consultant_id, client_id, program_id, assignment_id,
             period_month, rate, hours, amount, bill_to_name, bill_to_email, bill_to_phone, bill_to_address,
             net_terms, issue_date, due_date, payment_status, timesheet_submitted)
-         VALUES (?, '', ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?, ?, ?, ?, 'unpaid', 'no')`,
+         VALUES (?, '', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'unpaid', 'no')`,
         [
           organizationId, a.consultant_id, a.client_id, a.program_id, a.assignment_id,
-          periodMonth, a.billing, billTo.name, billTo.email, billTo.phone, billTo.address,
+          periodMonth, a.billing, defaultHours, Math.round(Number(a.billing) * defaultHours * 100) / 100,
+          billTo.name, billTo.email, billTo.phone, billTo.address,
           netTerms, issueDate, dueDate,
         ]
       );
@@ -152,7 +248,16 @@ router.post('/generate', async (req, res, next) => {
       ? (await conn.query(`SELECT * FROM invoices WHERE id IN (?)`, [created]))[0]
       : [];
 
-    res.status(201).json({ created: createdInvoices, skipped });
+    const skippedInactive = skipped.filter((s) => s.inactive).length;
+    res.status(201).json({
+      created: createdInvoices,
+      skipped,
+      skippedInactive,
+      includeInactive,
+      defaultHours,
+      billableDays: billable.billableDays,
+      holidays: billable.holidays,
+    });
   } catch (err) {
     try { await conn.rollback(); } catch (_) { /* no-op */ }
     next(err);
@@ -161,11 +266,15 @@ router.post('/generate', async (req, res, next) => {
   }
 });
 
-// GET /api/invoices?periodMonth=&paymentStatus=&timesheetSubmitted=&consultantId=
+// GET /api/invoices?periodMonth=&paymentStatus=&timesheetSubmitted=&consultantId=&includeInactive=
+// Only invoices for Active consultants are listed unless includeInactive=1,
+// which also lists Inactive and not-yet-set (NULL) consultants' invoices.
 router.get('/', async (req, res, next) => {
   try {
     const where = ['i.organization_id = ?'];
     const params = [req.user.organization_id];
+
+    if (!isTruthyFlag(req.query.includeInactive)) where.push("c.status = 'active'");
 
     const periodMonth = normalizePeriodMonth(req.query.periodMonth || null);
     if (req.query.periodMonth) {
@@ -189,7 +298,7 @@ router.get('/', async (req, res, next) => {
     }
 
     const [rows] = await pool.query(
-      `SELECT i.*, c.name AS consultant_name, cl.name AS client_name, p.name AS program_name
+      `SELECT i.*, c.name AS consultant_name, c.status AS consultant_status, cl.name AS client_name, p.name AS program_name
        FROM invoices i
        JOIN consultants c ON c.id = i.consultant_id
        LEFT JOIN clients cl ON cl.id = i.client_id
@@ -207,7 +316,7 @@ router.get('/', async (req, res, next) => {
 router.get('/:id', async (req, res, next) => {
   try {
     const [rows] = await pool.query(
-      `SELECT i.*, c.name AS consultant_name, cl.name AS client_name, p.name AS program_name
+      `SELECT i.*, c.name AS consultant_name, c.status AS consultant_status, cl.name AS client_name, p.name AS program_name
        FROM invoices i
        JOIN consultants c ON c.id = i.consultant_id
        LEFT JOIN clients cl ON cl.id = i.client_id
@@ -322,3 +431,5 @@ router.delete('/:id', async (req, res, next) => {
 });
 
 module.exports = router;
+module.exports.maxBillableHours = maxBillableHours;
+module.exports.usFederalHolidays = usFederalHolidays;

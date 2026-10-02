@@ -61,7 +61,7 @@
     border: 1px solid var(--line); border-radius: 5px; padding: 5px 7px; font-size: 12.5px;
     font-family: inherit; color: var(--text); background: var(--paper); outline: none;
   }
-  .fin-num-input { width: 72px; }
+  .fin-num-input { width: 90px; }
   .fin-notes-input { width: 140px; }
   .fin-date-input { width: 128px; }
   .fin-num-input:focus, .fin-notes-input:focus, .fin-date-input:focus, .fin-select-input:focus { border-color: var(--pine); }
@@ -76,6 +76,16 @@
   .fin-status-no { background: #EFEFEC; color: #7A7A72; }
 
   .fin-loading, .fin-empty-state { padding: 40px; text-align: center; color: var(--text-muted); font-size: 13.5px; }
+  .fin-generate-card label.fin-check, .fin-controls label.fin-check {
+    flex-direction: row; align-items: center; gap: 6px; font-size: 12.5px; font-weight: 500; color: var(--text); cursor: pointer;
+    display: flex; align-self: center;
+  }
+  .fin-check input { margin: 0; accent-color: var(--pine); }
+  .fin-sno { color: var(--text-muted); font-size: 11.5px; text-align: right; }
+  .fin-inactive-tag {
+    display: inline-block; margin-left: 6px; font-size: 10px; font-weight: 600; padding: 1px 6px; border-radius: 99px;
+    background: #EFEFEC; color: #7A7A72; vertical-align: middle;
+  }
   .fin-saved-tick { font-size: 11px; color: var(--pine); font-weight: 500; margin-left: 6px; }
 </style>
 </head>
@@ -108,7 +118,8 @@
     periodFilter: currentYearMonth(),
     paymentFilter: 'all',
     timesheetFilter: 'all',
-    generateForm: { periodMonth: currentYearMonth(), netTerms: 'NET30', issueDate: new Date().toISOString().slice(0, 10) },
+    showInactive: false,
+    generateForm: { periodMonth: currentYearMonth(), netTerms: 'NET30', issueDate: new Date().toISOString().slice(0, 10), includeInactive: false },
     generating: false,
     generateResult: null,
     savedId: null,
@@ -120,12 +131,18 @@
     return '<span class="fin-muted">—</span>';
   }
 
-  function renderRow(inv) {
+  function inactiveTag(inv) {
+    if (inv.consultant_status === 'active') return '';
+    return '<span class="fin-inactive-tag">' + (inv.consultant_status === 'inactive' ? 'Inactive' : 'Status not set') + '</span>';
+  }
+
+  function renderRow(inv, idx) {
     var savedTick = state.savedId === inv.id ? '<span class="fin-saved-tick">Saved</span>' : '';
     return (
       '<tr data-invoice-id="' + inv.id + '">' +
+        '<td class="fin-sno">' + (idx + 1) + '</td>' +
         '<td class="fin-invoice-no">' + escapeHtml(inv.invoice_number) + '</td>' +
-        '<td class="fin-consultant">' + escapeHtml(inv.consultant_name) + '</td>' +
+        '<td class="fin-consultant">' + escapeHtml(inv.consultant_name) + inactiveTag(inv) + '</td>' +
         '<td>' + clientProgramCell(inv) + '</td>' +
         '<td>' + (inv.period_month ? String(inv.period_month).slice(0, 7) : '') + '</td>' +
         '<td>' + (inv.rate !== null ? '$' + money(inv.rate) + '/hr' : '<span class="fin-muted">—</span>') + '</td>' +
@@ -155,7 +172,7 @@
     if (!state.invoices.length) return '<div class="fin-empty-state">No invoices for this filter yet. Generate some above, or widen the filters.</div>';
     return (
       '<div class="fin-table-wrap"><table class="fin-table"><thead><tr>' +
-        '<th>Invoice #</th><th>Consultant</th><th>Client / Program</th><th>Period</th><th>Rate</th>' +
+        '<th>S.No.</th><th>Invoice #</th><th>Consultant</th><th>Client / Program</th><th>Period</th><th>Rate</th>' +
         '<th>Hours</th><th>Amount</th><th>Net terms</th><th>Due date</th><th>Payment</th><th>Timesheet</th><th>Notes</th><th></th>' +
       '</tr></thead><tbody>' +
       state.invoices.map(renderRow).join('') +
@@ -166,16 +183,30 @@
   function renderGenerateResult() {
     if (!state.generateResult) return '';
     var r = state.generateResult;
+    var skipped = r.skipped || [];
+    // Inactive skips are summarised as one line rather than listed one by one.
+    var otherSkips = skipped.filter(function (s) { return !s.inactive; });
+    var inactiveCount = r.skippedInactive || 0;
     var skipHtml = '';
-    if (r.skipped && r.skipped.length) {
-      skipHtml = '<ul class="fin-result-skip-list">' + r.skipped.slice(0, 8).map(function (s) {
-        return '<li>' + escapeHtml(s.consultant) + ' — ' + escapeHtml(s.reason) + '</li>';
-      }).join('') + (r.skipped.length > 8 ? '<li>…and ' + (r.skipped.length - 8) + ' more.</li>' : '') + '</ul>';
+    if (otherSkips.length || inactiveCount) {
+      skipHtml = '<ul class="fin-result-skip-list">' +
+        (inactiveCount ? '<li>' + inactiveCount + ' pairing' + (inactiveCount === 1 ? '' : 's') +
+          ' for inactive (or status-not-set) consultants — tick “Include inactive consultants” to invoice them</li>' : '') +
+        otherSkips.slice(0, 8).map(function (s) {
+          return '<li>' + escapeHtml(s.consultant) + ' — ' + escapeHtml(s.reason) + '</li>';
+        }).join('') + (otherSkips.length > 8 ? '<li>…and ' + (otherSkips.length - 8) + ' more.</li>' : '') + '</ul>';
+    }
+    var hoursNote = '';
+    if (r.defaultHours !== undefined && r.created.length) {
+      var hol = (r.holidays || []).map(function (h) { return escapeHtml(h.name); }).join(', ');
+      hoursNote = ' New invoices start at <strong>' + r.defaultHours + ' hrs</strong> (' + r.billableDays + ' working days × 8' +
+        (hol ? ', excluding ' + hol : '') + ') — edit hours or amount as needed.';
     }
     return (
       '<div class="fin-result">' +
         'Generated <strong>' + r.created.length + '</strong> invoice' + (r.created.length === 1 ? '' : 's') +
-        (r.skipped && r.skipped.length ? ', skipped ' + r.skipped.length + '.' : '.') +
+        (skipped.length ? ', skipped ' + skipped.length + '.' : '.') +
+        hoursNote +
         skipHtml +
       '</div>'
     );
@@ -193,7 +224,7 @@
       '<div class="fin-body">' +
         '<a class="fin-back" href="/">← Back to dashboards</a>' +
         '<h1 class="fin-title">Fin-Module.</h1>' +
-        '<p class="fin-copy">One invoice per consultant/client/program billing combination, generated from the rate on file in Directory. Each invoice bills to the Program (or the Client, when that pairing has no program) — fill in hours or a flat amount, track NET terms, payment status, and whether the timesheet’s been submitted. Re-generating a month never duplicates an invoice that already exists.</p>' +
+        '<p class="fin-copy">One invoice per consultant/client/program billing combination, generated from the rate on file in Directory. Each invoice bills to the Program (or the Client, when that pairing has no program) — hours default to the month’s maximum billable hours (weekdays minus US federal holidays, × 8) with amount = rate × hours, and both stay editable. Only Active consultants are invoiced and shown unless you opt in to inactive ones. Track NET terms, payment status, and whether the timesheet’s been submitted. Re-generating a month never duplicates an invoice that already exists.</p>' +
         '<div class="fin-generate-card">' +
           '<label>Month<input type="month" id="gen-period" value="' + escapeHtml(gf.periodMonth) + '"></label>' +
           '<label>Net terms<select id="gen-net-terms">' +
@@ -202,12 +233,14 @@
             }).join('') +
           '</select></label>' +
           '<label>Issue date<input type="date" id="gen-issue-date" value="' + escapeHtml(gf.issueDate) + '"></label>' +
+          '<label class="fin-check"><input type="checkbox" id="gen-include-inactive"' + (gf.includeInactive ? ' checked' : '') + '>Include inactive consultants</label>' +
           '<button type="button" class="fin-btn fin-btn-primary" id="generate-btn"' + (state.generating ? ' disabled' : '') + '>' +
             (state.generating ? 'Generating…' : 'Generate invoices') +
           '</button>' +
         '</div>' +
         renderGenerateResult() +
         '<div class="fin-controls">' +
+          '<label class="fin-check"><input type="checkbox" id="filter-show-inactive"' + (state.showInactive ? ' checked' : '') + '>Show inactive consultants</label>' +
           '<input type="month" id="filter-period" value="' + escapeHtml(state.periodFilter) + '">' +
           '<select id="filter-payment">' +
             '<option value="all"' + (state.paymentFilter === 'all' ? ' selected' : '') + '>All payment statuses</option>' +
@@ -236,6 +269,7 @@
     if (state.periodFilter) params.set('periodMonth', state.periodFilter);
     if (state.paymentFilter !== 'all') params.set('paymentStatus', state.paymentFilter);
     if (state.timesheetFilter !== 'all') params.set('timesheetSubmitted', state.timesheetFilter);
+    if (state.showInactive) params.set('includeInactive', '1');
     fetch('/api/invoices?' + params.toString()).then(function (res) {
       if (!res.ok) throw new Error('load failed');
       return res.json();
@@ -274,23 +308,27 @@
   appEl.addEventListener('click', function (e) {
     var genBtn = e.target.closest('#generate-btn');
     if (genBtn) {
+      state.generateForm = {
+        periodMonth: document.getElementById('gen-period').value,
+        netTerms: document.getElementById('gen-net-terms').value,
+        issueDate: document.getElementById('gen-issue-date').value,
+        includeInactive: document.getElementById('gen-include-inactive').checked,
+      };
       state.generating = true;
       state.generateResult = null;
       render();
       fetch('/api/invoices/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          periodMonth: document.getElementById('gen-period').value,
-          netTerms: document.getElementById('gen-net-terms').value,
-          issueDate: document.getElementById('gen-issue-date').value,
-        }),
+        body: JSON.stringify(state.generateForm),
       }).then(function (res) {
         if (!res.ok) return res.json().then(function (b) { throw new Error(b.error || 'Generation failed'); });
         return res.json();
       }).then(function (body) {
         state.generating = false;
         state.generateResult = body;
+        // Inactive consultants were just invoiced on purpose -- show them.
+        if (state.generateForm.includeInactive) state.showInactive = true;
         loadInvoices();
       }).catch(function (err) {
         state.generating = false;
@@ -336,6 +374,17 @@
     if (filterPayment) { state.paymentFilter = filterPayment.value; loadInvoices(); return; }
     var filterTimesheet = e.target.closest('#filter-timesheet');
     if (filterTimesheet) { state.timesheetFilter = filterTimesheet.value; loadInvoices(); return; }
+    var filterInactive = e.target.closest('#filter-show-inactive');
+    if (filterInactive) { state.showInactive = filterInactive.checked; loadInvoices(); return; }
+    var genInactive = e.target.closest('#gen-include-inactive');
+    if (genInactive) { state.generateForm.includeInactive = genInactive.checked; return; }
+    var genField = e.target.closest('#gen-period, #gen-net-terms, #gen-issue-date');
+    if (genField) {
+      state.generateForm.periodMonth = document.getElementById('gen-period').value;
+      state.generateForm.netTerms = document.getElementById('gen-net-terms').value;
+      state.generateForm.issueDate = document.getElementById('gen-issue-date').value;
+      return;
+    }
 
     var field = e.target.closest('[data-field]');
     if (field) {

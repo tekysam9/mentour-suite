@@ -600,9 +600,11 @@ async function main() {
 
       // Give the typo'd record an invoice before merging: the merge must
       // move it to the surviving record, not cascade-delete it.
-      r = await owner.fetch('/api/invoices/generate', { method: 'POST', body: JSON.stringify({ periodMonth: '2026-09', netTerms: 'NET30', issueDate: '2026-09-01' }) });
+      // (includeInactive: this check is about merge integrity, not status --
+      // the surviving record here is Inactive.)
+      r = await owner.fetch('/api/invoices/generate', { method: 'POST', body: JSON.stringify({ periodMonth: '2026-09', netTerms: 'NET30', issueDate: '2026-09-01', includeInactive: true }) });
       check('invoice generation before merge returns 200/201', r.status === 200 || r.status === 201, r);
-      r = await owner.fetch('/api/invoices?periodMonth=2026-09');
+      r = await owner.fetch('/api/invoices?periodMonth=2026-09&includeInactive=1');
       const invoicesBeforeMerge = (r.body.invoices || []).length;
 
       r = await owner.fetch('/api/directory/duplicates/' + priyaFlag.flag_id + '/merge', {
@@ -628,7 +630,7 @@ async function main() {
         r.body.assignments.length === 1 && r.body.assignments[0].client_name === 'Globex' &&
         Number(r.body.assignments[0].billing) === 151, r.body.assignments);
 
-      r = await owner.fetch('/api/invoices?periodMonth=2026-09');
+      r = await owner.fetch('/api/invoices?periodMonth=2026-09&includeInactive=1');
       check('merge keeps every invoice (moved to the surviving record, none deleted)',
         invoicesBeforeMerge > 0 && (r.body.invoices || []).length === invoicesBeforeMerge &&
         !(r.body.invoices || []).some((i) => i.consultant_id === priyaFlag.record_id), r.body);
@@ -783,18 +785,33 @@ async function main() {
             { name: 'Evan NoProgram', client: 'Acme Holdings', program: 'Acme Holdings', clientDetail: null, billing: 95, status: 'Active' },
             { name: 'Fran NoRate', client: 'Beta Corp', program: 'Orbit', clientDetail: 'Beta Corp', billing: null, status: 'Active' },
             { name: 'Gale NoClient', client: null, program: null, clientDetail: null, billing: 200, status: 'Active' },
+            { name: 'Hal Inactive', client: 'Acme Holdings', program: 'Nova', clientDetail: 'Acme Holdings', billing: 100, status: 'Left' },
+            { name: 'Ivy Unset', client: 'Beta Corp', program: 'Orbit', clientDetail: 'Beta Corp', billing: 80, status: 'Active' },
           ],
         },
       }) });
       check('fin-module roster upload returns 201', r.status === 201, r);
+      // Ivy stands in for a consultant whose status was never set (NULL --
+      // e.g. only ever seen in a Ledger upload).
+      await dbConn.query(
+        `UPDATE consultants c JOIN users u ON u.organization_id = c.organization_id
+         SET c.status = NULL WHERE u.email = ? AND c.name = ?`, ['fin@fintest.test', 'Ivy Unset']);
 
       r = await finOwner.fetch('/api/invoices/generate', { method: 'POST', body: JSON.stringify({ periodMonth: '2026-10', netTerms: 'NET30', issueDate: '2026-10-01' }) });
       check('generate returns 201', r.status === 201, r);
       check('generate creates exactly 2 invoices (Dana and Evan)', r.body.created && r.body.created.length === 2, r.body);
-      check('generate skips exactly 2 (Fran: no rate, Gale: no client/program)', r.body.skipped && r.body.skipped.length === 2, r.body);
-      check('skip reasons are the expected two',
+      check('generate skips exactly 4 (Fran: no rate, Gale: no client/program, Hal: inactive, Ivy: status not set)', r.body.skipped && r.body.skipped.length === 4, r.body);
+      check('skip reasons are the expected four',
         r.body.skipped.some((s) => s.consultant === 'Fran NoRate' && s.reason === 'no billing rate set') &&
-        r.body.skipped.some((s) => s.consultant === 'Gale NoClient' && s.reason === 'no client or program to bill'), r.body.skipped);
+        r.body.skipped.some((s) => s.consultant === 'Gale NoClient' && s.reason === 'no client or program to bill') &&
+        r.body.skipped.some((s) => s.consultant === 'Hal Inactive' && s.reason === 'consultant is inactive' && s.inactive === true) &&
+        r.body.skipped.some((s) => s.consultant === 'Ivy Unset' && s.reason === 'consultant status not set' && s.inactive === true), r.body.skipped);
+      check('active-only generation reports skippedInactive = 2 and invoices no inactive/unset consultant',
+        r.body.skippedInactive === 2 && r.body.includeInactive === false &&
+        !r.body.created.some((i) => r.body.skipped.some((s) => s.inactive && s.assignmentId === i.assignment_id)), r.body);
+      check('generate reports Oct 2026 default as 168h (22 weekdays - Columbus Day = 21 days x 8)',
+        r.body.defaultHours === 168 && r.body.billableDays === 21 &&
+        r.body.holidays.length === 1 && r.body.holidays[0].name === 'Columbus Day' && r.body.holidays[0].date === '2026-10-12', r.body);
 
       // Fetch the two created invoices with names via the list endpoint instead
       // of relying on created-array ordering.
@@ -810,6 +827,17 @@ async function main() {
         /^INV-202610-\d{5}$/.test(evanInv.invoice_number) && danaInv.invoice_number !== evanInv.invoice_number, { danaInv, evanInv });
       check('due date is NET30 out from the Oct 1 issue date', String(danaInv.due_date).slice(0, 10) === '2026-10-31', danaInv);
       check('new invoice defaults to unpaid / timesheet not submitted', danaInv.payment_status === 'unpaid' && danaInv.timesheet_submitted === 'no', danaInv);
+      check('new invoice hours default to max billable hours (168) and amount = rate x hours',
+        Number(danaInv.hours) === 168 && Number(danaInv.amount) === 20160 &&
+        Number(evanInv.hours) === 168 && Number(evanInv.amount) === 15960, { danaInv, evanInv });
+
+      // Edit hours on one invoice and type a flat amount on the other, then
+      // re-generate: neither edit may be overwritten by the defaults.
+      r = await finOwner.fetch('/api/invoices/' + danaInv.id, { method: 'PATCH', body: JSON.stringify({ hours: 100 }) });
+      check('editing the defaulted hours recomputes amount', r.status === 200 && Number(r.body.invoice.hours) === 100 && Number(r.body.invoice.amount) === 12000, r.body);
+      r = await finOwner.fetch('/api/invoices/' + evanInv.id, { method: 'PATCH', body: JSON.stringify({ amount: 999.5 }) });
+      check('typing an amount over the defaulted one overrides it (hours left as-is)',
+        r.status === 200 && Number(r.body.invoice.amount) === 999.5 && Number(r.body.invoice.hours) === 168, r.body);
 
       r = await finOwner.fetch('/api/invoices/generate', { method: 'POST', body: JSON.stringify({ periodMonth: '2026-10' }) });
       check('re-generating the same month is idempotent (creates nothing new)', r.status === 201 && r.body.created.length === 0, r.body);
@@ -817,6 +845,31 @@ async function main() {
         r.body.skipped.some((s) => s.reason === 'already invoiced for this month'), r.body.skipped);
       r = await finOwner.fetch('/api/invoices?periodMonth=2026-10');
       check('invoice count unchanged after re-generating', r.body.invoices.length === 2, r.body);
+      check('re-generating never overwrites edited hours/amounts',
+        r.body.invoices.some((i) => i.id === danaInv.id && Number(i.hours) === 100 && Number(i.amount) === 12000) &&
+        r.body.invoices.some((i) => i.id === evanInv.id && Number(i.hours) === 168 && Number(i.amount) === 999.5), r.body.invoices);
+
+      // Include-inactive option: invoices Hal (Inactive) and Ivy (not set)
+      // too, still at the default hours, without touching Dana/Evan.
+      r = await finOwner.fetch('/api/invoices/generate', { method: 'POST', body: JSON.stringify({ periodMonth: '2026-10', includeInactive: true, issueDate: '2026-10-01' }) });
+      check('includeInactive generation creates exactly the 2 inactive/unset invoices (Hal, Ivy)',
+        r.status === 201 && r.body.created.length === 2 && r.body.skippedInactive === 0 && r.body.includeInactive === true &&
+        r.body.created.every((i) => Number(i.hours) === 168), r.body);
+      check('includeInactive generation still skips no-rate/no-client and already-invoiced pairings',
+        r.body.skipped.filter((s) => s.reason === 'already invoiced for this month').length === 2 &&
+        r.body.skipped.some((s) => s.consultant === 'Fran NoRate') && r.body.skipped.some((s) => s.consultant === 'Gale NoClient'), r.body.skipped);
+      r = await finOwner.fetch('/api/invoices/generate', { method: 'POST', body: JSON.stringify({ periodMonth: '2026-10', includeInactive: true }) });
+      check('re-running includeInactive generation is idempotent too', r.status === 201 && r.body.created.length === 0, r.body);
+
+      r = await finOwner.fetch('/api/invoices?periodMonth=2026-10');
+      check('invoice list shows only Active consultants by default',
+        r.body.invoices.length === 2 && r.body.invoices.every((i) => i.consultant_status === 'active'), r.body.invoices);
+      r = await finOwner.fetch('/api/invoices?periodMonth=2026-10&includeInactive=1');
+      const halInv = r.body.invoices.find((i) => i.consultant_name === 'Hal Inactive');
+      const ivyInv = r.body.invoices.find((i) => i.consultant_name === 'Ivy Unset');
+      check('includeInactive=1 lists inactive and status-not-set consultants’ invoices too',
+        r.body.invoices.length === 4 && halInv && halInv.consultant_status === 'inactive' && ivyInv && ivyInv.consultant_status === null &&
+        Number(halInv.amount) === 16800 && Number(ivyInv.amount) === 13440, r.body.invoices);
 
       r = await finOwner.fetch('/api/invoices/generate', { method: 'POST', body: JSON.stringify({ periodMonth: 'not-a-month' }) });
       check('generate with a bad periodMonth returns 400', r.status === 400, r);
@@ -857,6 +910,20 @@ async function main() {
       check('deleted invoice no longer appears in the list', r.body.invoices.length === 1 && r.body.invoices[0].id === danaInv.id, r.body);
       r = await finOwner.fetch('/api/invoices/' + evanInv.id, { method: 'DELETE' });
       check('deleting an already-deleted invoice returns 404', r.status === 404, r);
+
+      // Max billable hours excludes weekends and observed US federal holidays.
+      r = await finOwner.fetch('/api/invoices/generate', { method: 'POST', body: JSON.stringify({ periodMonth: '2026-09', issueDate: '2026-09-01' }) });
+      const sepDana = (r.body.created || []).find((i) => i.consultant_id === danaInv.consultant_id);
+      check('Sep 2026 default = 22 weekdays - Labor Day = 21 days = 168h, amount = 120 x 168',
+        r.status === 201 && r.body.defaultHours === 168 && r.body.billableDays === 21 &&
+        r.body.holidays.some((h) => h.name === 'Labor Day' && h.date === '2026-09-07') &&
+        sepDana && Number(sepDana.hours) === 168 && Number(sepDana.amount) === 20160, r.body);
+      r = await finOwner.fetch('/api/invoices/generate', { method: 'POST', body: JSON.stringify({ periodMonth: '2026-07', issueDate: '2026-07-01' }) });
+      const julDana = (r.body.created || []).find((i) => i.consultant_id === danaInv.consultant_id);
+      check('Jul 2026 default = 23 weekdays - Independence Day observed Fri Jul 3 = 22 days = 176h',
+        r.status === 201 && r.body.defaultHours === 176 && r.body.billableDays === 22 &&
+        r.body.holidays.length === 1 && r.body.holidays[0].name === 'Independence Day' && r.body.holidays[0].date === '2026-07-03' &&
+        julDana && Number(julDana.hours) === 176 && Number(julDana.amount) === 21120, r.body);
     } finally {
       await dbConn.end();
     }
