@@ -19,6 +19,14 @@
 // i.e. only when there actually was a "/". When there's no "/", r.program
 // falls back to the same full string as r.client, so it must not also be
 // saved as a program under that client (it isn't a distinct engagement).
+//
+// resolveClientProgram() below is the one place that rule lives. It's
+// shared with scripts/backfill-client-program-swap.js, which replays rows
+// already stored in margin_roster_entries — including ones uploaded before
+// public/margin.html started putting the post-slash text in r.client
+// (those rows' `client` still holds the raw "Wipro/TD Bank" string). Going
+// by clientDetail rather than trusting r.client makes both shapes resolve
+// the same way.
 
 const { normalizeName, upsertConsultant, upsertSubvendor, upsertClient, upsertProgram } = require('./directoryUpsert');
 const { upsertAssignmentBilling } = require('./assignmentUpsert');
@@ -44,6 +52,24 @@ function toNullableText(value, maxLen) {
   const s = String(value).trim();
   if (!s) return null;
   return maxLen ? s.slice(0, maxLen) : s;
+}
+
+// Given a record's client / program / clientDetail (as public/margin.html
+// produces them, or as stored in margin_roster_entries), returns:
+//   clientName  - the real end-client: the post-slash text when the
+//                 "Client / Account" value had a "/" with something after
+//                 it, else the whole value.
+//   programName - the pre-slash Program value, only when there was such a
+//                 split (null otherwise: without a "/", r.program is just
+//                 the client name again, not a distinct engagement).
+// For current-format records r.client already equals clientDetail
+// whenever clientDetail is set, so this is the same thing marginRoster has
+// always used; it only differs for legacy-format rows whose client still
+// holds the raw "X/Y" text.
+function resolveClientProgram({ client, program, clientDetail }) {
+  const detail = toNullableText(clientDetail, 255);
+  if (detail) return { clientName: detail, programName: toNullableText(program, 255) };
+  return { clientName: toNullableText(client, 255), programName: null };
 }
 
 async function saveMarginRoster(conn, { organizationId, importId, data }) {
@@ -74,12 +100,13 @@ async function saveMarginRoster(conn, { organizationId, importId, data }) {
   for (const r of valid) {
     bumpStatus(consultantStatus, normalizeName(r.name), r.status);
 
-    const clientKey = normalizeName(r.client);
+    const { clientName, programName } = resolveClientProgram(r);
+    const clientKey = normalizeName(clientName);
     bumpStatus(clientStatus, clientKey, r.status);
 
     // Only a real "/" split (r.clientDetail set) names a distinct program;
     // otherwise r.program is just the client name again.
-    const programNameKey = r.clientDetail ? normalizeName(r.program) : null;
+    const programNameKey = normalizeName(programName);
     if (clientKey && programNameKey) {
       bumpStatus(programStatus, clientKey + '|' + programNameKey, r.status);
     }
@@ -102,21 +129,22 @@ async function saveMarginRoster(conn, { organizationId, importId, data }) {
       consultantIds.set(consultantKey, await upsertConsultant(conn, organizationId, r.name, consultantStatus.get(consultantKey)));
     }
 
-    // r.client is the real end-client name (post-slash text, or the whole
-    // value when there's no "/") — see schema.sql's comment on the
-    // clients/programs tables.
-    const clientKey = normalizeName(r.client);
+    // clientName is the real end-client name (post-slash text, or the whole
+    // value when there's no "/") — see resolveClientProgram above and
+    // schema.sql's comment on the clients/programs tables.
+    const { clientName, programName } = resolveClientProgram(r);
+    const clientKey = normalizeName(clientName);
     if (clientKey && !clientIds.has(clientKey)) {
-      clientIds.set(clientKey, await upsertClient(conn, organizationId, r.client, clientStatus.get(clientKey)));
+      clientIds.set(clientKey, await upsertClient(conn, organizationId, clientName, clientStatus.get(clientKey)));
     }
 
     const clientId = clientKey ? clientIds.get(clientKey) : null;
-    const programNameKey = r.clientDetail ? normalizeName(r.program) : null;
+    const programNameKey = normalizeName(programName);
     if (clientId && programNameKey) {
       const programKey = clientId + '|' + programNameKey;
       if (!programIds.has(programKey)) {
         const status = programStatus.get(clientKey + '|' + programNameKey);
-        programIds.set(programKey, await upsertProgram(conn, organizationId, clientId, r.program, status));
+        programIds.set(programKey, await upsertProgram(conn, organizationId, clientId, programName, status));
       }
     }
 
@@ -134,9 +162,10 @@ async function saveMarginRoster(conn, { organizationId, importId, data }) {
   const rows = [];
   for (const r of valid) {
     const consultantKey = normalizeName(r.name);
-    const clientKey = normalizeName(r.client);
+    const { clientName, programName } = resolveClientProgram(r);
+    const clientKey = normalizeName(clientName);
     const clientId = clientKey ? clientIds.get(clientKey) || null : null;
-    const programNameKey = r.clientDetail ? normalizeName(r.program) : null;
+    const programNameKey = normalizeName(programName);
     const programId = clientId && programNameKey ? programIds.get(clientId + '|' + programNameKey) || null : null;
     const subvendorKey = r.employmentType === 'Subvendor' ? normalizeName(r.subvendorText) : null;
     const consultantId = consultantKey ? consultantIds.get(consultantKey) || null : null;
@@ -156,7 +185,9 @@ async function saveMarginRoster(conn, { organizationId, importId, data }) {
       organizationId,
       toNullableText(r.name, 255),
       consultantId,
-      toNullableText(r.client, 255),
+      // Stored as the resolved client name, so a record from a stale
+      // (pre-fix) copy of margin.html still lands in the current shape.
+      clientName,
       toNullableText(r.program, 255),
       clientId,
       toNullableText(r.clientDetail, 255),
@@ -187,4 +218,4 @@ async function saveMarginRoster(conn, { organizationId, importId, data }) {
   );
 }
 
-module.exports = { saveMarginRoster };
+module.exports = { saveMarginRoster, resolveClientProgram };

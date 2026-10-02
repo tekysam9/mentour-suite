@@ -2,6 +2,7 @@ require('dotenv').config({ path: require('path').join(__dirname, '..', '.env') }
 const { spawn } = require('child_process');
 const path = require('path');
 const mysql = require('mysql2/promise');
+const { backfillOrg, findOrphans } = require('../scripts/backfill-client-program-swap');
 
 const BASE = 'http://localhost:3000';
 let pass = 0, fail = 0;
@@ -532,6 +533,134 @@ async function main() {
       r = await owner.fetch('/api/directory/duplicates?table=consultants');
       check('no open duplicate flags left referencing the merged-away record',
         !r.body.duplicates.some((d) => d.record_id === priyaFlag.record_id || d.matched_id === priyaFlag.record_id), r.body);
+
+      // 30. Re-uploading a name that already exists must not re-run the
+      // smart-parser scan for it. (It used to: mysql2's FOUND_ROWS flag made
+      // an unchanged existing row look like a fresh insert, so uploading
+      // "Jordan Blake" again re-opened the "Jordn Blake" pair someone had
+      // just dismissed, in the reverse direction.)
+      r = await owner.fetch('/api/margin', { method: 'POST', body: JSON.stringify({
+        fileName: 'Roster4.xlsx',
+        data: { kpis: {}, records: [
+          { name: 'Jordan Blake', client: 'Platform', program: 'Acme', clientDetail: 'Platform', cost: 86, billing: 141, margin: 55, status: 'Left', employmentType: 'W2 (direct)', subvendorText: 'W2' },
+          { name: 'Jordn Blake', client: 'Initech', program: 'Initech', cost: 50, billing: 90, margin: 40, status: 'Active', employmentType: 'W2 (direct)', subvendorText: 'W2' },
+        ] },
+      }) });
+      check('re-upload of existing names returns 201', r.status === 201, r);
+      r = await owner.fetch('/api/directory/duplicates?table=consultants');
+      check('re-uploading existing names does not re-open a dismissed duplicate pair',
+        r.status === 200 && !r.body.duplicates.some((d) =>
+          [d.record_name, d.matched_name].includes('Jordan Blake') && [d.record_name, d.matched_name].includes('Jordn Blake')), r.body);
+
+      // 31. A record in the legacy shape (client still holding the raw
+      // "Wipro/TD Bank" text, as a stale pre-fix copy of margin.html would
+      // send it) resolves exactly like a current one and is stored that way.
+      r = await owner.fetch('/api/margin', { method: 'POST', body: JSON.stringify({
+        fileName: 'StaleTab.xlsx',
+        data: { kpis: {}, records: [{
+          name: 'Morgan Stale', client: 'Wipro/TD Bank', program: 'Wipro', clientDetail: 'TD Bank',
+          cost: 70, billing: 100, margin: 30, status: 'Active', employmentType: 'W2 (direct)', subvendorText: 'W2',
+        }] },
+      }) });
+      check('legacy-shaped margin record upload returns 201', r.status === 201, r);
+      const staleImportId = r.body.import.id;
+      const [staleRows] = await dbConn.query(
+        `SELECT m.client, c.name AS client_name, p.name AS program_name FROM margin_roster_entries m
+           LEFT JOIN clients c ON c.id = m.client_id LEFT JOIN programs p ON p.id = m.program_id WHERE m.import_id = ?`,
+        [staleImportId]
+      );
+      check('legacy-shaped record lands as client "TD Bank" / program "Wipro", stored client text normalized',
+        staleRows.length === 1 && staleRows[0].client === 'TD Bank' && staleRows[0].client_name === 'TD Bank' &&
+        staleRows[0].program_name === 'Wipro', staleRows);
+
+      // 32. The one-time Client/Program swap backfill
+      // (scripts/backfill-client-program-swap.js), on an organization whose
+      // data was saved under the old, reversed mapping: one upload from
+      // before margin.html sent the post-slash text as `client` (legacy
+      // row), one after, a stale upload-sourced billing assignment on the
+      // old reversed pairing, and a manual assignment that must survive.
+      r = await makeJar().fetch('/api/auth/signup', { method: 'POST', body: JSON.stringify({ orgName: 'Backfill Co', name: 'Bea Fill', email: 'bea@backfill.test', password: 'backfillpassword1' }) });
+      check('backfill test org signup returns 201', r.status === 201, r);
+      const [[bfUser]] = await dbConn.query('SELECT id, organization_id FROM users WHERE email = ?', ['bea@backfill.test']);
+      const bfOrg = bfUser.organization_id;
+      const q1 = async (sql, params) => (await dbConn.query(sql, params))[0];
+      const caseyId = (await q1('INSERT INTO consultants (organization_id, name, status) VALUES (?, ?, ?)', [bfOrg, 'Casey Legacy', 'active'])).insertId;
+      const oldClientId = (await q1('INSERT INTO clients (organization_id, name, status) VALUES (?, ?, ?)', [bfOrg, 'Wipro', 'active'])).insertId;
+      const oldProgramId = (await q1('INSERT INTO programs (organization_id, client_id, name, status) VALUES (?, ?, ?, ?)', [bfOrg, oldClientId, 'TD Bank', 'active'])).insertId;
+      const legacyImportId = (await q1(
+        "INSERT INTO margin_imports (organization_id, uploaded_by, file_name, imported_at, data) VALUES (?, ?, 'Old.xlsx', '2026-01-01 10:00:00', '{}')",
+        [bfOrg, bfUser.id])).insertId;
+      const newImportId = (await q1(
+        "INSERT INTO margin_imports (organization_id, uploaded_by, file_name, imported_at, data) VALUES (?, ?, 'New.xlsx', '2026-02-01 10:00:00', '{}')",
+        [bfOrg, bfUser.id])).insertId;
+      const legacyRowId = (await q1(
+        `INSERT INTO margin_roster_entries (import_id, organization_id, name, consultant_id, client, program, client_id, client_detail, program_id, billing, status)
+         VALUES (?, ?, 'Casey Legacy', ?, 'Wipro/TD Bank', 'Wipro', ?, 'TD Bank', ?, 100, 'Active')`,
+        [legacyImportId, bfOrg, caseyId, oldClientId, oldProgramId])).insertId;
+      const currentRowId = (await q1(
+        `INSERT INTO margin_roster_entries (import_id, organization_id, name, consultant_id, client, program, client_id, client_detail, program_id, billing, status)
+         VALUES (?, ?, 'Casey Legacy', ?, 'TD Bank', 'Wipro', ?, 'TD Bank', ?, 110, 'Left')`,
+        [newImportId, bfOrg, caseyId, oldClientId, oldProgramId])).insertId;
+      const staleAssignmentId = (await q1(
+        "INSERT INTO consultant_assignments (organization_id, consultant_id, client_id, program_id, billing, source) VALUES (?, ?, ?, ?, 110, 'upload')",
+        [bfOrg, caseyId, oldClientId, oldProgramId])).insertId;
+      const manualAssignmentId2 = (await q1(
+        "INSERT INTO consultant_assignments (organization_id, consultant_id, client_id, program_id, billing, source, updated_at) VALUES (?, ?, ?, NULL, 75, 'manual', '2026-01-15 09:00:00')",
+        [bfOrg, caseyId, oldClientId])).insertId;
+      const [[manualBefore]] = await dbConn.query('SELECT * FROM consultant_assignments WHERE id = ?', [manualAssignmentId2]);
+
+      const bfStats = await backfillOrg(dbConn, bfOrg);
+      check('backfill reports both roster rows repointed and the legacy client text rewritten',
+        bfStats.rosterRows === 2 && bfStats.rosterRepointed === 2 && bfStats.legacyClientText === 1 &&
+        bfStats.assignmentsInserted === 1 && bfStats.assignmentsDeleted === 1, bfStats);
+
+      const bfRows = await q1(
+        `SELECT m.id, m.client, m.client_id, m.program_id, c.name AS client_name, p.name AS program_name, p.client_id AS program_client_id
+           FROM margin_roster_entries m LEFT JOIN clients c ON c.id = m.client_id LEFT JOIN programs p ON p.id = m.program_id
+          WHERE m.organization_id = ? ORDER BY m.id`, [bfOrg]);
+      const legacyAfter = bfRows.find((x) => x.id === legacyRowId);
+      const currentAfter = bfRows.find((x) => x.id === currentRowId);
+      check('legacy-format stored row fixed: client = post-slash text, program = pre-slash Program under it',
+        legacyAfter && legacyAfter.client_name === 'TD Bank' && legacyAfter.program_name === 'Wipro' &&
+        legacyAfter.program_client_id === legacyAfter.client_id && legacyAfter.client === 'TD Bank', legacyAfter);
+      check('legacy and current-format rows resolve to the same client and program',
+        currentAfter && currentAfter.client_id === legacyAfter.client_id && currentAfter.program_id === legacyAfter.program_id, bfRows);
+
+      const [[tdBank]] = await dbConn.query('SELECT status FROM clients WHERE id = ?', [legacyAfter.client_id]);
+      check('backfilled client status follows the latest import (Left -> inactive)', tdBank.status === 'inactive', tdBank);
+
+      const bfAssignments = await q1('SELECT * FROM consultant_assignments WHERE organization_id = ? ORDER BY id', [bfOrg]);
+      const uploadAssignments = bfAssignments.filter((a) => a.source === 'upload');
+      check('stale upload assignment on the old reversed pairing removed, replaced by the corrected one at the latest rate',
+        !bfAssignments.some((a) => a.id === staleAssignmentId) && uploadAssignments.length === 1 &&
+        uploadAssignments[0].client_id === legacyAfter.client_id && uploadAssignments[0].program_id === legacyAfter.program_id &&
+        Number(uploadAssignments[0].billing) === 110, bfAssignments);
+      const manualAfter = bfAssignments.find((a) => a.id === manualAssignmentId2);
+      check('manual assignment left completely untouched by the backfill',
+        manualAfter && JSON.stringify(manualAfter) === JSON.stringify(manualBefore), { manualBefore, manualAfter });
+
+      const bfOrphans = await findOrphans(dbConn, bfOrg);
+      check('orphan report lists the old reversed program, not the client a manual assignment still uses',
+        bfOrphans.orphanPrograms.length === 1 && bfOrphans.orphanPrograms[0].id === oldProgramId &&
+        bfOrphans.orphanClients.length === 0, bfOrphans);
+      const [[stillThere]] = await dbConn.query('SELECT COUNT(*) AS n FROM programs WHERE id = ?', [oldProgramId]);
+      check('backfill never deletes directory records', stillThere.n === 1, stillThere);
+
+      const snapshot = async () => JSON.stringify(await Promise.all([
+        q1('SELECT * FROM clients WHERE organization_id = ? ORDER BY id', [bfOrg]),
+        q1('SELECT * FROM programs WHERE organization_id = ? ORDER BY id', [bfOrg]),
+        q1('SELECT * FROM consultant_assignments WHERE organization_id = ? ORDER BY id', [bfOrg]),
+        q1('SELECT * FROM margin_roster_entries WHERE organization_id = ? ORDER BY id', [bfOrg]),
+        q1('SELECT * FROM directory_duplicate_candidates WHERE organization_id = ? ORDER BY id', [bfOrg]),
+      ]));
+      const before2 = await snapshot();
+      await sleep(1100); // so any stray write would show up as an updated_at change
+      const bfStats2 = await backfillOrg(dbConn, bfOrg);
+      const after2 = await snapshot();
+      check('second backfill run is a no-op (nothing written, every row identical incl. updated_at)',
+        bfStats2.rosterRepointed === 0 && bfStats2.legacyClientText === 0 && bfStats2.clientsCreated === 0 &&
+        bfStats2.programsCreated === 0 && bfStats2.statusChanges === 0 && bfStats2.assignmentsInserted === 0 &&
+        bfStats2.assignmentsUpdated === 0 && bfStats2.assignmentsDeleted === 0 && before2 === after2, bfStats2);
     } finally {
       await dbConn.end();
     }

@@ -142,9 +142,14 @@ npm run backfill-client-program-swap
 ```
 
 It re-reads the original upload data already stored in the database (no
-need to re-upload any files), fixes the Client/Program links, and prints
-anything left over that's safe to clean up by hand on the Directory page.
-Safe to run more than once if you're not sure whether it already ran.
+need to re-upload any files), fixes the Client/Program links — including
+rows from uploads made before the Client column fix, whose stored client
+text still reads like "Wipro/TD Bank" — and rebuilds the upload-sourced
+billing assignments to match (stale ones on the old reversed pairings are
+removed; billing rows added by hand are never touched). It then prints the
+old Client/Program records nothing points at any more, so you can clean them
+up by hand on the Directory page; it never deletes a Directory record
+itself. Safe to run more than once: a second run changes nothing.
 
 ## If you outgrow Cloud/Node.js hosting
 
