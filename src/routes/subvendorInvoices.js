@@ -7,12 +7,14 @@
 //                         Ledger upload's ledger_roster_entries (the "2026 sub
 //                         vendor payments" file). Never copied anywhere, so it
 //                         can't drift from the file; there's nothing to edit.
-//   * kind 'generated' -- months from December 2026 onwards, created by POST
-//                         /generate from the $/hr rate on the Ledger file, or
-//                         (no Ledger rate for the pairing) the Margin file's
-//                         cost rate. Stored in subvendor_invoices.
-// There is intentionally no PATCH/DELETE: these invoices are uneditable.
-// See the subvendor_invoices comment in db/schema.sql.
+//   * kind 'generated' -- months after the payments file's last month, created
+//                         by POST /generate from the $/hr rate on the Ledger
+//                         file, or (no Ledger rate for the pairing) the Margin
+//                         file's cost rate. Stored in subvendor_invoices, and
+//                         editable like client invoices (hours/amount, NET
+//                         terms, due date, paid/unpaid, timesheet, notes).
+// Only the 'paid' rows are read-only: they have no id of their own, so
+// nothing here can change them. See subvendor_invoices in db/schema.sql.
 
 const express = require('express');
 const pool = require('../db');
@@ -22,7 +24,6 @@ const { maxBillableHours } = require('./invoices');
 const router = express.Router();
 router.use(requireAuth);
 
-const GENERATION_START = '2026-12-01';
 const NET_TERMS_RE = /^NET\d{1,3}$/i;
 const MONTHS = { jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12 };
 const MONTH_LABEL_RE = /^\s*(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?[\s\-_']*((?:19|20)\d{2}|\d{2})?\s*$/i;
@@ -52,6 +53,24 @@ function normalizeNetTerms(value) {
   if (value === undefined || value === null || value === '') return 'NET30';
   const s = String(value).trim().toUpperCase();
   return NET_TERMS_RE.test(s) ? s : null;
+}
+function nextMonth(periodMonth) {
+  const y = Number(periodMonth.slice(0, 4));
+  const m = Number(periodMonth.slice(5, 7));
+  return m === 12 ? (y + 1) + '-01-01' : y + '-' + pad2(m + 1) + '-01';
+}
+// The last month present on the payments file ('YYYY-MM-01'), or null.
+function lastPaidMonth(records) {
+  return records.reduce((max, r) => (!max || r.period_month > max ? r.period_month : max), null);
+}
+function monthName(periodMonth) {
+  const names = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  return names[Number(periodMonth.slice(5, 7)) - 1] + ' ' + periodMonth.slice(0, 4);
+}
+function toNullableNumber(value) {
+  if (value === null || value === undefined || value === '') return null;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
 }
 function dateStr(v) {
   if (!v) return null;
@@ -139,7 +158,7 @@ function paidInvoice(rec) {
     consultant_id: rec.consultant_id, consultant_name: rec.consultant_name,
     rate: rec.rate, hours: rec.hours, amount: rec.amount,
     rate_source: 'ledger', net_terms: null, issue_date: null, due_date: null,
-    paid_date: rec.paid_date, status: 'paid',
+    paid_date: rec.paid_date, status: 'paid', payment_status: 'paid', timesheet_submitted: null, notes: null,
   };
 }
 
@@ -181,7 +200,8 @@ router.get('/', async (req, res, next) => {
         rate: Number(g.rate), hours: Number(g.hours), amount: Number(g.amount),
         rate_source: g.rate_source, net_terms: g.net_terms,
         issue_date: dateStr(g.issue_date), due_date: dateStr(g.due_date),
-        paid_date: null, status: 'scheduled',
+        paid_date: null, status: g.payment_status, payment_status: g.payment_status,
+        timesheet_submitted: g.timesheet_submitted, notes: g.notes,
       }))
       .filter((g) => !paidKeys.has(g.subvendor_id + '|' + g.consultant_id + '|' + g.period_month));
 
@@ -202,7 +222,7 @@ router.get('/', async (req, res, next) => {
     res.json({
       invoices,
       subvendors,
-      generationStart: GENERATION_START.slice(0, 7),
+      generationStart: lastPaidMonth(records) ? nextMonth(lastPaidMonth(records)).slice(0, 7) : null,
       ledgerFile: imp ? { file_name: imp.file_name, imported_at: imp.imported_at } : null,
     });
   } catch (err) {
@@ -211,22 +231,20 @@ router.get('/', async (req, res, next) => {
 });
 
 // POST /api/subvendor-invoices/generate
-// body: { periodMonth: 'YYYY-MM' (December 2026 or later), netTerms: 'NET30',
+// body: { periodMonth: 'YYYY-MM' (after the payments file's last month), netTerms: 'NET30',
 //         issueDate: 'YYYY-MM-DD' (default: last day of the month), includeInactive: false }
 // One invoice per (subvendor, consultant) pairing found on the latest Ledger
 // file or, for Subvendor-employment rows, the latest Margin file. Rate =
 // the pairing's most recent Ledger rate, else its Margin cost rate. Hours =
-// the month's maximum billable hours, amount = rate x hours. Only Active
-// consultants unless includeInactive. Idempotent per month.
+// the month's maximum billable hours, amount = rate x hours (both editable
+// afterwards). Only Active consultants unless includeInactive. Idempotent
+// per month.
 router.post('/generate', async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
     const body = req.body || {};
     const periodMonth = normalizePeriodMonth(body.periodMonth);
     if (!periodMonth) return res.status(400).json({ error: 'periodMonth must look like YYYY-MM.' });
-    if (periodMonth < GENERATION_START) {
-      return res.status(400).json({ error: 'Months before December 2026 come from the payments file and can’t be generated.' });
-    }
     const netTerms = normalizeNetTerms(body.netTerms);
     if (!netTerms) return res.status(400).json({ error: 'netTerms must look like NET30.' });
     const issueDate = /^\d{4}-\d{2}-\d{2}$/.test(String(body.issueDate || '')) ? body.issueDate : lastDayOfMonth(periodMonth);
@@ -238,6 +256,13 @@ router.post('/generate', async (req, res, next) => {
     // pairing key -> { subvendor_id, consultant_id, rate, source, ratePeriod }
     const pairs = new Map();
     const { records } = await ledgerMonthlyRecords(conn, organizationId);
+    const lastPaid = lastPaidMonth(records);
+    if (!lastPaid) {
+      return res.status(400).json({ error: 'Upload your sub vendor payments file in Ledger first — invoices are generated for the months after its last month.' });
+    }
+    if (periodMonth <= lastPaid) {
+      return res.status(400).json({ error: 'Invoices can only be generated for months after ' + monthName(lastPaid) + ', the last month on your payments file. Earlier months are shown from the file.' });
+    }
     for (const r of records) {
       if (!r.subvendor_id || !r.consultant_id) continue;
       const key = r.subvendor_id + '|' + r.consultant_id;
@@ -269,9 +294,6 @@ router.post('/generate', async (req, res, next) => {
       const [sRows] = await conn.query('SELECT id, name FROM subvendors WHERE organization_id = ? AND id IN (?)', [organizationId, [...new Set(ids.map((p) => p.subvendor_id))]]);
       sRows.forEach((s) => names.s.set(s.id, s));
     }
-    // A real payment already on the Ledger file for this month needs no invoice.
-    const paidThisMonth = new Set(records.filter((r) => r.period_month === periodMonth && r.subvendor_id && r.consultant_id)
-      .map((r) => r.subvendor_id + '|' + r.consultant_id));
 
     const created = [];
     const skipped = [];
@@ -286,10 +308,6 @@ router.post('/generate', async (req, res, next) => {
       }
       if (p.rate === null) {
         skipped.push({ consultant: label, reason: 'no rate on the Ledger or Margin file' });
-        continue;
-      }
-      if (paidThisMonth.has(p.subvendor_id + '|' + p.consultant_id)) {
-        skipped.push({ consultant: label, reason: 'already paid on the Ledger file for this month' });
         continue;
       }
       const [existing] = await conn.query(
@@ -326,6 +344,89 @@ router.post('/generate', async (req, res, next) => {
     next(err);
   } finally {
     conn.release();
+  }
+});
+
+// PATCH /api/subvendor-invoices/:id -- generated invoices only (file-sourced
+// paid months have no id). Editable: hours, amount, netTerms, dueDate,
+// issueDate, paymentStatus, timesheetSubmitted, notes. Same rules as client
+// invoices: sending hours without amount recomputes amount = rate x hours; an
+// explicit amount always wins.
+router.patch('/:id', async (req, res, next) => {
+  try {
+    const [existingRows] = await pool.query(
+      'SELECT * FROM subvendor_invoices WHERE id = ? AND organization_id = ?',
+      [req.params.id, req.user.organization_id]
+    );
+    if (!existingRows.length) return res.status(404).json({ error: 'Not found.' });
+    const existing = existingRows[0];
+    const body = req.body || {};
+    const has = (k) => Object.prototype.hasOwnProperty.call(body, k);
+    const sets = [];
+    const params = [];
+
+    let hours = existing.hours;
+    if (has('hours')) {
+      hours = toNullableNumber(body.hours);
+      if (body.hours !== null && body.hours !== undefined && body.hours !== '' && hours === null) {
+        return res.status(400).json({ error: 'hours must be a number.' });
+      }
+      sets.push('hours = ?'); params.push(hours);
+    }
+    if (has('amount')) {
+      const amount = toNullableNumber(body.amount);
+      if (body.amount !== null && body.amount !== undefined && body.amount !== '' && amount === null) {
+        return res.status(400).json({ error: 'amount must be a number.' });
+      }
+      sets.push('amount = ?'); params.push(amount);
+    } else if (has('hours')) {
+      sets.push('amount = ?');
+      params.push(hours !== null ? Math.round(Number(existing.rate) * hours * 100) / 100 : null);
+    }
+    if (has('netTerms')) {
+      const netTerms = normalizeNetTerms(body.netTerms);
+      if (!netTerms) return res.status(400).json({ error: 'netTerms must look like NET30.' });
+      sets.push('net_terms = ?'); params.push(netTerms);
+    }
+    for (const [key, col] of [['issueDate', 'issue_date'], ['dueDate', 'due_date']]) {
+      if (has(key)) {
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(String(body[key] || ''))) return res.status(400).json({ error: key + ' must look like YYYY-MM-DD.' });
+        sets.push(col + ' = ?'); params.push(body[key]);
+      }
+    }
+    if (has('paymentStatus')) {
+      if (!['paid', 'unpaid'].includes(body.paymentStatus)) return res.status(400).json({ error: 'paymentStatus must be paid or unpaid.' });
+      sets.push('payment_status = ?'); params.push(body.paymentStatus);
+    }
+    if (has('timesheetSubmitted')) {
+      if (!['yes', 'no'].includes(body.timesheetSubmitted)) return res.status(400).json({ error: 'timesheetSubmitted must be yes or no.' });
+      sets.push('timesheet_submitted = ?'); params.push(body.timesheetSubmitted);
+    }
+    if (has('notes')) {
+      sets.push('notes = ?');
+      params.push(body.notes === null || body.notes === undefined ? null : String(body.notes).slice(0, 1000));
+    }
+    if (!sets.length) return res.json({ invoice: existing });
+
+    params.push(req.params.id, req.user.organization_id);
+    await pool.query(`UPDATE subvendor_invoices SET ${sets.join(', ')} WHERE id = ? AND organization_id = ?`, params);
+    const [rows] = await pool.query('SELECT * FROM subvendor_invoices WHERE id = ?', [req.params.id]);
+    res.json({ invoice: rows[0] });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.delete('/:id', async (req, res, next) => {
+  try {
+    const [result] = await pool.query(
+      'DELETE FROM subvendor_invoices WHERE id = ? AND organization_id = ?',
+      [req.params.id, req.user.organization_id]
+    );
+    if (result.affectedRows === 0) return res.status(404).json({ error: 'Not found.' });
+    res.json({ ok: true });
+  } catch (err) {
+    next(err);
   }
 });
 

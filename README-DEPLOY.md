@@ -163,11 +163,14 @@ backfill.
 ### New: Fin-Module "Subvendor payments" (October 2026)
 
 A second tab inside Fin-Module lists what each subvendor invoices for each
-consultant, month by month. Months already paid are read live from your
-latest sub vendor payments (Ledger) upload and are read-only; December 2026
-onwards can be generated from the Ledger rate (or the Gross Margin cost rate
-when Ledger has none). This adds a `subvendor_invoices` table -- re-run
-`db/schema.sql`; nothing to backfill.
+consultant, month by month. Months already on your latest sub vendor
+payments (Ledger) upload are shown read-only. For every month after the
+file's last month you can generate invoices at the consultant's Ledger rate
+(or the Gross Margin cost rate when Ledger has none), then enter hours,
+NET terms, paid/unpaid, timesheet status and notes -- same as client
+invoices. This adds a `subvendor_invoices` table -- re-run `db/schema.sql`
+(it also upgrades the table if you already ran the earlier version);
+nothing to backfill.
 
 ## If you outgrow Cloud/Node.js hosting
 

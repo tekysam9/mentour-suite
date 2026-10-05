@@ -357,8 +357,12 @@ CREATE TABLE IF NOT EXISTS invoices (
 -- (rate_source 'margin' -- Margin's "billing" is what Mentour charges the
 -- client, not what the subvendor charges Mentour; its "cost" is).
 --
--- Deliberately has no edit/delete API: these are uneditable. All four key
--- columns are NOT NULL, so the unique key is a real DB-level guard here.
+-- Generated invoices are editable like client invoices (hours/amount, NET
+-- terms, due date, paid/unpaid, timesheet submitted, notes) via PATCH
+-- /api/subvendor-invoices/:id; only the months read from the Ledger file
+-- are read-only. The four key columns are NOT NULL, so the unique key is a
+-- real DB-level guard here. Generation is only offered for months after the
+-- payments file's last month.
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS subvendor_invoices (
   id              INT AUTO_INCREMENT PRIMARY KEY,
@@ -368,12 +372,15 @@ CREATE TABLE IF NOT EXISTS subvendor_invoices (
   consultant_id   INT NOT NULL,
   period_month    DATE NOT NULL, -- always the 1st of the month
   rate            DECIMAL(12,2) NOT NULL,
-  hours           DECIMAL(8,2) NOT NULL,
-  amount          DECIMAL(12,2) NOT NULL,
+  hours           DECIMAL(8,2) NULL,
+  amount          DECIMAL(12,2) NULL,
   rate_source     ENUM('ledger', 'margin') NOT NULL,
   net_terms       VARCHAR(16) NOT NULL DEFAULT 'NET30',
   issue_date      DATE NOT NULL,
   due_date        DATE NOT NULL,
+  payment_status      ENUM('unpaid', 'paid') NOT NULL DEFAULT 'unpaid',
+  timesheet_submitted ENUM('yes', 'no') NOT NULL DEFAULT 'no',
+  notes           VARCHAR(1000),
   created_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE,
   FOREIGN KEY (subvendor_id) REFERENCES subvendors(id) ON DELETE CASCADE,
@@ -382,6 +389,14 @@ CREATE TABLE IF NOT EXISTS subvendor_invoices (
   UNIQUE KEY uq_subvendor_invoice_number (organization_id, invoice_number),
   INDEX idx_subvendor_invoice_period (organization_id, period_month)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Upgrade path for a database that already created subvendor_invoices before
+-- it became editable. Safe to re-run.
+ALTER TABLE subvendor_invoices ADD COLUMN IF NOT EXISTS payment_status ENUM('unpaid', 'paid') NOT NULL DEFAULT 'unpaid' AFTER due_date;
+ALTER TABLE subvendor_invoices ADD COLUMN IF NOT EXISTS timesheet_submitted ENUM('yes', 'no') NOT NULL DEFAULT 'no' AFTER payment_status;
+ALTER TABLE subvendor_invoices ADD COLUMN IF NOT EXISTS notes VARCHAR(1000) NULL AFTER timesheet_submitted;
+ALTER TABLE subvendor_invoices MODIFY COLUMN hours DECIMAL(8,2) NULL;
+ALTER TABLE subvendor_invoices MODIFY COLUMN amount DECIMAL(12,2) NULL;
 
 -- Session store table (used by express-mysql-session; it will create/manage
 -- this automatically, but it's listed here for visibility). No action needed.

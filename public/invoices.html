@@ -101,7 +101,6 @@
     padding: 9px 14px; font-size: 12.5px; margin-bottom: 16px; line-height: 1.6;
   }
   .fin-badge-static { cursor: default; }
-  .fin-status-scheduled { background: #E9EEF6; color: #3C5A8C; }
   .fin-src { font-size: 11px; color: var(--text-muted); }
   .fin-num { text-align: right; font-variant-numeric: tabular-nums; }
   .fin-total-row td { font-weight: 600; background: var(--paper); border-top: 1px solid var(--line); }
@@ -145,7 +144,8 @@
     sv: {
       loading: false, loaded: false, invoices: [], subvendors: [], ledgerFile: null,
       periodFilter: '', subvendorFilter: '', kindFilter: 'all',
-      generateForm: { periodMonth: '2026-12', netTerms: 'NET30', issueDate: '', includeInactive: false },
+      generateForm: { periodMonth: '', netTerms: 'NET30', issueDate: '', includeInactive: false },
+      generationStart: null, savedId: null,
       generating: false, generateResult: null,
     },
   };
@@ -286,26 +286,51 @@
     return p[1] + '/' + p[2] + '/' + p[0];
   }
 
+  var NET_OPTIONS = ['NET15', 'NET30', 'NET45', 'NET60', 'NET90'];
+
   function svRow(inv, idx) {
-    var status = inv.kind === 'paid'
-      ? '<span class="fin-status-badge fin-badge-static fin-status-paid">Paid' + (inv.paid_date ? ' ' + escapeHtml(fmtDate(inv.paid_date)) : '') + '</span>'
-      : '<span class="fin-status-badge fin-badge-static fin-status-scheduled">Scheduled</span>';
     var src = inv.kind === 'paid' ? 'Payments file'
       : (inv.rate_source === 'margin' ? 'Generated · Margin cost rate' : 'Generated · Ledger rate');
+    var head =
+      '<td class="fin-sno">' + (idx + 1) + '</td>' +
+      '<td class="fin-invoice-no">' + escapeHtml(inv.invoice_number) + '</td>' +
+      '<td class="fin-consultant">' + escapeHtml(inv.subvendor_name) + '</td>' +
+      '<td>' + escapeHtml(inv.consultant_name) + '</td>' +
+      '<td>' + escapeHtml(monthLabel(inv.period_month)) + '</td>' +
+      '<td class="fin-num">' + (inv.rate !== null && inv.rate !== undefined ? '$' + money(inv.rate) + '/hr' : '<span class="fin-muted">—</span>') + '</td>';
+
+    if (inv.kind === 'paid') {
+      // Already paid on the Ledger file: read-only, no inputs.
+      return (
+        '<tr>' + head +
+          '<td class="fin-num">' + (inv.hours !== null && inv.hours !== undefined ? money(inv.hours) : '<span class="fin-muted">—</span>') + '</td>' +
+          '<td class="fin-num">' + (inv.amount !== null && inv.amount !== undefined ? '$' + money(inv.amount) : '<span class="fin-muted">—</span>') + '</td>' +
+          '<td><span class="fin-muted">—</span></td><td><span class="fin-muted">—</span></td>' +
+          '<td><span class="fin-status-badge fin-badge-static fin-status-paid">Paid' + (inv.paid_date ? ' ' + escapeHtml(fmtDate(inv.paid_date)) : '') + '</span></td>' +
+          '<td><span class="fin-muted">—</span></td><td><span class="fin-muted">—</span></td>' +
+          '<td class="fin-src">' + escapeHtml(src) + '</td><td></td>' +
+        '</tr>'
+      );
+    }
+
+    var savedTick = state.sv.savedId === inv.id ? '<span class="fin-saved-tick">Saved</span>' : '';
+    var netKnown = NET_OPTIONS.indexOf((inv.net_terms || '').toUpperCase()) !== -1;
     return (
-      '<tr>' +
-        '<td class="fin-sno">' + (idx + 1) + '</td>' +
-        '<td class="fin-invoice-no">' + escapeHtml(inv.invoice_number) + '</td>' +
-        '<td class="fin-consultant">' + escapeHtml(inv.subvendor_name) + '</td>' +
-        '<td>' + escapeHtml(inv.consultant_name) + '</td>' +
-        '<td>' + escapeHtml(monthLabel(inv.period_month)) + '</td>' +
-        '<td class="fin-num">' + (inv.rate !== null && inv.rate !== undefined ? '$' + money(inv.rate) + '/hr' : '<span class="fin-muted">—</span>') + '</td>' +
-        '<td class="fin-num">' + (inv.hours !== null && inv.hours !== undefined ? money(inv.hours) : '<span class="fin-muted">—</span>') + '</td>' +
-        '<td class="fin-num">' + (inv.amount !== null && inv.amount !== undefined ? '$' + money(inv.amount) : '<span class="fin-muted">—</span>') + '</td>' +
-        '<td>' + (inv.net_terms ? escapeHtml(inv.net_terms) : '<span class="fin-muted">—</span>') + '</td>' +
-        '<td>' + (inv.due_date ? escapeHtml(fmtDate(inv.due_date)) : '<span class="fin-muted">—</span>') + '</td>' +
-        '<td>' + status + '</td>' +
+      '<tr data-sv-id="' + inv.id + '">' + head +
+        '<td><input class="fin-num-input" type="number" step="0.25" data-svfield="hours" value="' + (inv.hours !== null && inv.hours !== undefined ? inv.hours : '') + '" placeholder="—"></td>' +
+        '<td><input class="fin-num-input" type="number" step="0.01" data-svfield="amount" value="' + (inv.amount !== null && inv.amount !== undefined ? inv.amount : '') + '" placeholder="—"></td>' +
+        '<td><select class="fin-select-input" data-svfield="netTerms">' +
+          NET_OPTIONS.map(function (nt) {
+            return '<option value="' + nt + '"' + ((inv.net_terms || 'NET30').toUpperCase() === nt ? ' selected' : '') + '>' + nt + '</option>';
+          }).join('') +
+          (netKnown ? '' : '<option value="' + escapeHtml(inv.net_terms) + '" selected>' + escapeHtml(inv.net_terms) + '</option>') +
+        '</select></td>' +
+        '<td><input class="fin-date-input" type="date" data-svfield="dueDate" value="' + (inv.due_date ? String(inv.due_date).slice(0, 10) : '') + '"></td>' +
+        '<td><button type="button" class="fin-status-badge fin-status-' + inv.payment_status + '" data-action="sv-toggle-payment">' + (inv.payment_status === 'paid' ? 'Paid' : 'Unpaid') + '</button></td>' +
+        '<td><button type="button" class="fin-status-badge fin-status-' + inv.timesheet_submitted + '" data-action="sv-toggle-timesheet">' + (inv.timesheet_submitted === 'yes' ? 'Submitted' : 'Not yet') + '</button></td>' +
+        '<td><input class="fin-notes-input" type="text" data-svfield="notes" value="' + escapeHtml(inv.notes || '') + '" placeholder="Notes"></td>' +
         '<td class="fin-src">' + escapeHtml(src) + '</td>' +
+        '<td><button type="button" class="fin-btn fin-btn-small fin-btn-danger" data-action="sv-delete">Delete</button>' + savedTick + '</td>' +
       '</tr>'
     );
   }
@@ -322,10 +347,10 @@
     return (
       '<div class="fin-table-wrap"><table class="fin-table"><thead><tr>' +
         '<th>S.No.</th><th>Invoice #</th><th>Subvendor</th><th>Consultant</th><th>Month</th><th>Rate</th>' +
-        '<th>Hours</th><th>Amount</th><th>Net terms</th><th>Due date</th><th>Status</th><th>Source</th>' +
+        '<th>Hours</th><th>Amount</th><th>Net terms</th><th>Due date</th><th>Payment</th><th>Timesheet</th><th>Notes</th><th>Source</th><th></th>' +
       '</tr></thead><tbody>' +
       sv.invoices.map(svRow).join('') +
-      '<tr class="fin-total-row"><td colspan="7">Total (' + sv.invoices.length + ')</td><td class="fin-num">$' + money(total) + '</td><td colspan="4"></td></tr>' +
+      '<tr class="fin-total-row"><td colspan="7">Total (' + sv.invoices.length + ')</td><td class="fin-num">$' + money(total) + '</td><td colspan="7"></td></tr>' +
       '</tbody></table></div>'
     );
   }
@@ -357,10 +382,10 @@
       : 'No Ledger file uploaded yet.';
     return (
       '<h2 class="fin-subtitle">Subvendor payments.</h2>' +
-      '<p class="fin-copy">What each subvendor invoices Mentour for each consultant, month by month. Months already paid are read straight from your sub vendor payments file and can’t be edited. From December 2026 onwards, invoices can be generated automatically at the consultant’s rate on the Ledger file — or, if Ledger has none, the cost rate on the Gross Margin file — for the month’s maximum billable hours. ' + file + '</p>' +
-      '<div class="fin-readonly-note">Read-only: payments already made and generated invoices can’t be changed here. Once a generated month’s real payment appears on the Ledger file, it replaces the generated invoice.</div>' +
+      '<p class="fin-copy">What each subvendor invoices Mentour for each consultant, month by month. Months already paid are read straight from your sub vendor payments file and can’t be edited. For every month after the file’s last month, generate invoices at each consultant’s rate on the Ledger file — or, if Ledger has none, the cost rate on the Gross Margin file — then enter the actual hours (amount recalculates) and track NET terms, payment and timesheet just like client invoices. ' + file + '</p>' +
+      '<div class="fin-readonly-note">Rows marked “Payments file” are read-only. Generated invoices are editable; once a generated month’s real payment appears on the Ledger file, it replaces the generated invoice.</div>' +
       '<div class="fin-generate-card">' +
-        '<label>Month (Dec 2026 or later)<input type="month" id="svgen-period" min="2026-12" value="' + escapeHtml(gf.periodMonth) + '"></label>' +
+        '<label>Month' + (sv.generationStart ? ' (' + escapeHtml(monthLabel(sv.generationStart)) + ' or later)' : '') + '<input type="month" id="svgen-period"' + (sv.generationStart ? ' min="' + escapeHtml(sv.generationStart) + '"' : '') + ' value="' + escapeHtml(gf.periodMonth) + '"></label>' +
         '<label>Net terms<select id="svgen-net-terms">' +
           ['NET15', 'NET30', 'NET45', 'NET60', 'NET90'].map(function (nt) {
             return '<option value="' + nt + '"' + (gf.netTerms === nt ? ' selected' : '') + '>' + nt + '</option>';
@@ -381,9 +406,9 @@
           }).join('') +
         '</select>' +
         '<select id="svfilter-kind">' +
-          '<option value="all"' + (sv.kindFilter === 'all' ? ' selected' : '') + '>Paid and scheduled</option>' +
-          '<option value="paid"' + (sv.kindFilter === 'paid' ? ' selected' : '') + '>Paid only</option>' +
-          '<option value="generated"' + (sv.kindFilter === 'generated' ? ' selected' : '') + '>Scheduled only</option>' +
+          '<option value="all"' + (sv.kindFilter === 'all' ? ' selected' : '') + '>All</option>' +
+          '<option value="paid"' + (sv.kindFilter === 'paid' ? ' selected' : '') + '>From payments file (read-only)</option>' +
+          '<option value="generated"' + (sv.kindFilter === 'generated' ? ' selected' : '') + '>Generated invoices</option>' +
         '</select>' +
       '</div>' +
       svTable()
@@ -430,6 +455,8 @@
       // Keep the full subvendor list when a subvendor filter narrows the rows.
       if (!sv.subvendorFilter || !sv.subvendors.length) sv.subvendors = body.subvendors || [];
       sv.ledgerFile = body.ledgerFile;
+      sv.generationStart = body.generationStart;
+      if (!sv.generateForm.periodMonth && body.generationStart) sv.generateForm.periodMonth = body.generationStart;
       sv.loaded = true;
       sv.loading = false;
       render();
@@ -483,7 +510,54 @@
     });
   }
 
+  function patchSv(id, patch) {
+    return fetch('/api/subvendor-invoices/' + id, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(patch),
+    }).then(function (res) {
+      if (!res.ok) throw new Error('save failed');
+      return res.json();
+    }).then(function (body) {
+      var sv = state.sv;
+      var idx = sv.invoices.findIndex(function (i) { return i.kind === 'generated' && i.id === id; });
+      if (idx !== -1) {
+        var inv = body.invoice;
+        sv.invoices[idx] = Object.assign({}, sv.invoices[idx], {
+          hours: inv.hours === null ? null : Number(inv.hours), amount: inv.amount === null ? null : Number(inv.amount),
+          net_terms: inv.net_terms, due_date: String(inv.due_date).slice(0, 10), issue_date: String(inv.issue_date).slice(0, 10),
+          payment_status: inv.payment_status, status: inv.payment_status,
+          timesheet_submitted: inv.timesheet_submitted, notes: inv.notes,
+        });
+      }
+      sv.savedId = id;
+      render();
+      setTimeout(function () { if (sv.savedId === id) { sv.savedId = null; render(); } }, 1500);
+    }).catch(function () {
+      alert('Could not save that change. Please try again.');
+    });
+  }
+
   appEl.addEventListener('click', function (e) {
+    var svAct = e.target.closest('[data-action="sv-toggle-payment"], [data-action="sv-toggle-timesheet"], [data-action="sv-delete"]');
+    if (svAct) {
+      var svId = Number(svAct.closest('[data-sv-id]').getAttribute('data-sv-id'));
+      var svInv = state.sv.invoices.filter(function (i) { return i.kind === 'generated' && i.id === svId; })[0];
+      if (!svInv) return;
+      var act = svAct.getAttribute('data-action');
+      if (act === 'sv-toggle-payment') patchSv(svId, { paymentStatus: svInv.payment_status === 'paid' ? 'unpaid' : 'paid' });
+      else if (act === 'sv-toggle-timesheet') patchSv(svId, { timesheetSubmitted: svInv.timesheet_submitted === 'yes' ? 'no' : 'yes' });
+      else {
+        if (!confirm('Delete this invoice? This can\'t be undone.')) return;
+        fetch('/api/subvendor-invoices/' + svId, { method: 'DELETE' }).then(function (res) {
+          if (!res.ok) throw new Error('delete failed');
+          state.sv.invoices = state.sv.invoices.filter(function (i) { return !(i.kind === 'generated' && i.id === svId); });
+          render();
+        }).catch(function () { alert('Could not delete that invoice. Please try again.'); });
+      }
+      return;
+    }
+
     var tabBtn = e.target.closest('[data-tab]');
     if (tabBtn) {
       state.tab = tabBtn.getAttribute('data-tab');
@@ -584,6 +658,14 @@
   });
 
   appEl.addEventListener('change', function (e) {
+    var svField = e.target.closest('[data-svfield]');
+    if (svField) {
+      var fid = Number(svField.closest('[data-sv-id]').getAttribute('data-sv-id'));
+      var fpatch = {};
+      fpatch[svField.getAttribute('data-svfield')] = svField.value === '' ? null : svField.value;
+      patchSv(fid, fpatch);
+      return;
+    }
     var svPeriod = e.target.closest('#svfilter-period');
     if (svPeriod) { state.sv.periodFilter = svPeriod.value; loadSubvendor(); return; }
     var svSub = e.target.closest('#svfilter-subvendor');

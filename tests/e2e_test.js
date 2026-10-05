@@ -974,15 +974,20 @@ async function main() {
       const umaMar = r.body.invoices.find((i) => i.consultant_name === 'Uma Unset');
       check('a sheet name with no year ("Mar") takes the year from the file name', !!umaMar && umaMar.period_month === '2026-03-01', umaMar);
       check('response names the Ledger file and lists subvendors for the filter',
-        r.body.ledgerFile && r.body.ledgerFile.file_name === '2026 Sub Vendor Payments.xlsx' && r.body.subvendors.length === 2 && r.body.generationStart === '2026-12', r.body);
+        r.body.ledgerFile && r.body.ledgerFile.file_name === '2026 Sub Vendor Payments.xlsx' && r.body.subvendors.length === 2 && r.body.generationStart === '2026-04', r.body);
+      check('generation opens the month after the file\u2019s last month (Mar 2026 -> Apr 2026)', r.body.generationStart === '2026-04', r.body.generationStart);
 
       r = await svOwner.fetch('/api/subvendor-invoices?periodMonth=2026-02');
       check('period filter narrows to that month', r.body.invoices.length === 1 && r.body.invoices[0].consultant_name === 'Sam Sub', r.body);
       r = await svOwner.fetch('/api/subvendor-invoices?periodMonth=bogus');
       check('bad period filter returns 400', r.status === 400, r);
 
-      r = await svOwner.fetch('/api/subvendor-invoices/generate', { method: 'POST', body: JSON.stringify({ periodMonth: '2026-11' }) });
-      check('generating before December 2026 is refused', r.status === 400, r);
+      r = await svOwner.fetch('/api/subvendor-invoices/generate', { method: 'POST', body: JSON.stringify({ periodMonth: '2026-03' }) });
+      check('generating the file\u2019s last month (already paid) is refused', r.status === 400 && /after Mar 2026/.test(r.body.error), r);
+      r = await svOwner.fetch('/api/subvendor-invoices/generate', { method: 'POST', body: JSON.stringify({ periodMonth: '2026-01' }) });
+      check('generating an earlier, already-paid month is refused', r.status === 400, r);
+      r = await makeJar().fetch('/api/subvendor-invoices/generate', { method: 'POST', body: JSON.stringify({ periodMonth: '2026-12' }) });
+      check('generating without a login returns 401', r.status === 401, r);
       r = await svOwner.fetch('/api/subvendor-invoices/generate', { method: 'POST', body: JSON.stringify({ periodMonth: 'nope' }) });
       check('generating with a bad month returns 400', r.status === 400, r);
       r = await svOwner.fetch('/api/subvendor-invoices/generate', { method: 'POST', body: JSON.stringify({ periodMonth: '2026-12', netTerms: 'SOON' }) });
@@ -999,7 +1004,7 @@ async function main() {
       const samDec = r.body.invoices.find((i) => i.consultant_name === 'Sam Sub');
       const maxDec = r.body.invoices.find((i) => i.consultant_name === 'Max Margin');
       check('Sam is generated at his latest Ledger rate ($55, not Margin’s $45): 55 x 176',
-        !!samDec && samDec.kind === 'generated' && samDec.status === 'scheduled' && samDec.rate === 55 && samDec.hours === 176 && samDec.amount === 9680 && samDec.rate_source === 'ledger', samDec);
+        !!samDec && samDec.kind === 'generated' && samDec.status === 'unpaid' && samDec.rate === 55 && samDec.hours === 176 && samDec.amount === 9680 && samDec.rate_source === 'ledger', samDec);
       check('Max has no Ledger rate, so the Margin cost rate is used: 70 x 176',
         !!maxDec && maxDec.rate === 70 && maxDec.amount === 12320 && maxDec.rate_source === 'margin' && maxDec.subvendor_name === 'Vendor Three', maxDec);
       check('generated invoice defaults: month-end issue date, NET30 due',
@@ -1018,10 +1023,36 @@ async function main() {
       r = await svOwner.fetch('/api/subvendor-invoices?kind=weird');
       check('bad kind filter returns 400', r.status === 400, r);
 
-      r = await svOwner.fetch('/api/subvendor-invoices/' + samDec.id, { method: 'PATCH', body: JSON.stringify({ amount: 1 }) });
-      check('subvendor invoices are uneditable (PATCH not offered)', r.status === 404, r);
-      r = await svOwner.fetch('/api/subvendor-invoices/' + samDec.id, { method: 'DELETE' });
-      check('subvendor invoices can’t be deleted (DELETE not offered)', r.status === 404, r);
+      // Generated invoices are editable like client invoices.
+      r = await svOwner.fetch('/api/subvendor-invoices/' + samDec.id, { method: 'PATCH', body: JSON.stringify({ hours: 100 }) });
+      check('entering hours recalculates amount = rate x hours (55 x 100)', r.status === 200 && Number(r.body.invoice.hours) === 100 && Number(r.body.invoice.amount) === 5500, r.body);
+      r = await svOwner.fetch('/api/subvendor-invoices/' + samDec.id, { method: 'PATCH', body: JSON.stringify({ hours: 90, amount: 5000 }) });
+      check('an explicit amount wins over the hours-derived figure', r.status === 200 && Number(r.body.invoice.hours) === 90 && Number(r.body.invoice.amount) === 5000, r.body);
+      r = await svOwner.fetch('/api/subvendor-invoices/' + samDec.id, { method: 'PATCH', body: JSON.stringify({
+        paymentStatus: 'paid', timesheetSubmitted: 'yes', netTerms: 'NET45', dueDate: '2027-02-14', notes: 'Wired',
+      }) });
+      check('paid / timesheet / NET terms / due date / notes all patch',
+        r.status === 200 && r.body.invoice.payment_status === 'paid' && r.body.invoice.timesheet_submitted === 'yes' &&
+        r.body.invoice.net_terms === 'NET45' && r.body.invoice.notes === 'Wired', r.body);
+      r = await svOwner.fetch('/api/subvendor-invoices?periodMonth=2026-12&kind=generated');
+      const samEdited = r.body.invoices.find((i) => i.consultant_name === 'Sam Sub');
+      check('edits persist and show in the list (status follows payment)',
+        samEdited.status === 'paid' && samEdited.timesheet_submitted === 'yes' && samEdited.amount === 5000 && samEdited.due_date === '2027-02-14' && samEdited.notes === 'Wired', samEdited);
+      r = await svOwner.fetch('/api/subvendor-invoices/' + samDec.id, { method: 'PATCH', body: JSON.stringify({ hours: 'abc' }) });
+      check('patching hours with garbage returns 400', r.status === 400, r);
+      r = await svOwner.fetch('/api/subvendor-invoices/' + samDec.id, { method: 'PATCH', body: JSON.stringify({ paymentStatus: 'overdue' }) });
+      check('patching an invalid paymentStatus returns 400', r.status === 400, r);
+      r = await svOwner.fetch('/api/subvendor-invoices/' + samDec.id, { method: 'PATCH', body: JSON.stringify({ netTerms: 'LATER' }) });
+      check('patching invalid net terms returns 400', r.status === 400, r);
+      r = await otherOrgUser.fetch('/api/subvendor-invoices/' + samDec.id, { method: 'PATCH', body: JSON.stringify({ paymentStatus: 'paid' }) });
+      check('cross-tenant subvendor invoice PATCH returns 404', r.status === 404, r);
+      r = await otherOrgUser.fetch('/api/subvendor-invoices/' + samDec.id, { method: 'DELETE' });
+      check('cross-tenant subvendor invoice DELETE returns 404', r.status === 404, r);
+      r = await svOwner.fetch('/api/subvendor-invoices/999999', { method: 'PATCH', body: JSON.stringify({ notes: 'x' }) });
+      check('patching an unknown subvendor invoice returns 404', r.status === 404, r);
+      // Put Sam's December invoice back to its plain generated values for later checks.
+      r = await svOwner.fetch('/api/subvendor-invoices/' + samDec.id, { method: 'PATCH', body: JSON.stringify({ hours: 176, paymentStatus: 'unpaid' }) });
+      check('hours edit back to the default recalculates again', r.status === 200 && Number(r.body.invoice.amount) === 9680, r.body);
 
       r = await otherOrgUser.fetch('/api/subvendor-invoices');
       check('cross-tenant: another org sees none of these subvendor invoices',
@@ -1038,8 +1069,23 @@ async function main() {
       check('the real December payment replaces the generated invoice (one Sam row, now paid)',
         samRows.length === 1 && samRows[0].kind === 'paid' && samRows[0].amount === 9500, samRows);
       r = await svOwner.fetch('/api/subvendor-invoices/generate', { method: 'POST', body: JSON.stringify({ periodMonth: '2026-12' }) });
-      check('generating skips a pairing already paid on the Ledger file',
-        r.body.skipped.some((s) => s.consultant.startsWith('Sam Sub') && s.reason === 'already paid on the Ledger file for this month'), r.body.skipped);
+      check('December is now on the payments file, so generating it is refused', r.status === 400 && /after Dec 2026/.test(r.body.error), r);
+      r = await svOwner.fetch('/api/subvendor-invoices?kind=paid');
+      check('generation window moved to the month after the new last month', r.body.generationStart === '2027-01', r.body.generationStart);
+
+      // Jan 2027: 21 weekdays - New Year's Day (Fri) - MLK Day = 19 days x 8 = 152h.
+      // Sam is now at his newest Ledger rate ($56, from the Dec payment).
+      r = await svOwner.fetch('/api/subvendor-invoices/generate', { method: 'POST', body: JSON.stringify({ periodMonth: '2027-01' }) });
+      check('generate Jan 2027 creates Sam and Max at 152 hours', r.status === 201 && r.body.created.length === 2 && r.body.defaultHours === 152, r.body);
+      r = await svOwner.fetch('/api/subvendor-invoices?periodMonth=2027-01');
+      const samJan27 = r.body.invoices.find((i) => i.consultant_name === 'Sam Sub');
+      check('Jan 2027 uses Sam\u2019s newest Ledger rate: 56 x 152', !!samJan27 && samJan27.rate === 56 && samJan27.amount === 8512, samJan27);
+      r = await svOwner.fetch('/api/subvendor-invoices/' + samJan27.id, { method: 'DELETE' });
+      check('deleting a generated subvendor invoice returns ok', r.status === 200 && r.body.ok === true, r);
+      r = await svOwner.fetch('/api/subvendor-invoices?periodMonth=2027-01');
+      check('deleted subvendor invoice is gone from the list', r.body.invoices.length === 1 && r.body.invoices[0].consultant_name === 'Max Margin', r.body);
+      r = await svOwner.fetch('/api/subvendor-invoices/' + samJan27.id, { method: 'DELETE' });
+      check('deleting it again returns 404', r.status === 404, r);
     } finally {
       await dbConn.end();
     }
