@@ -87,6 +87,24 @@
     background: #EFEFEC; color: #7A7A72; vertical-align: middle;
   }
   .fin-saved-tick { font-size: 11px; color: var(--pine); font-weight: 500; margin-left: 6px; }
+
+  .fin-subtitle { font-family: Georgia, 'Iowan Old Style', 'Palatino Linotype', serif; font-size: 22px; font-weight: 600; color: var(--ink); margin: 0 0 6px; }
+  .fin-tabs { display: flex; gap: 6px; border-bottom: 1px solid var(--line); margin-bottom: 22px; }
+  .fin-tab {
+    background: none; border: none; font-family: inherit; font-size: 13.5px; font-weight: 600;
+    color: var(--text-muted); padding: 10px 16px; cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -1px;
+  }
+  .fin-tab.active { color: var(--ink); border-bottom-color: var(--pine); }
+  .fin-tab:hover:not(.active) { color: var(--ink); }
+  .fin-readonly-note {
+    background: #F5F1E4; border: 1px solid #E6D9AE; color: #7A6421; border-radius: 8px;
+    padding: 9px 14px; font-size: 12.5px; margin-bottom: 16px; line-height: 1.6;
+  }
+  .fin-badge-static { cursor: default; }
+  .fin-status-scheduled { background: #E9EEF6; color: #3C5A8C; }
+  .fin-src { font-size: 11px; color: var(--text-muted); }
+  .fin-num { text-align: right; font-variant-numeric: tabular-nums; }
+  .fin-total-row td { font-weight: 600; background: var(--paper); border-top: 1px solid var(--line); }
 </style>
 </head>
 <body>
@@ -123,6 +141,13 @@
     generating: false,
     generateResult: null,
     savedId: null,
+    tab: 'client',
+    sv: {
+      loading: false, loaded: false, invoices: [], subvendors: [], ledgerFile: null,
+      periodFilter: '', subvendorFilter: '', kindFilter: 'all',
+      generateForm: { periodMonth: '2026-12', netTerms: 'NET30', issueDate: '', includeInactive: false },
+      generating: false, generateResult: null,
+    },
   };
 
   function clientProgramCell(inv) {
@@ -212,8 +237,160 @@
     );
   }
 
-  function render() {
+  function renderClientTab() {
     var gf = state.generateForm;
+    return (
+      '<p class="fin-copy">One invoice per consultant/client/program billing combination, generated from the rate on file in Directory. Each invoice bills to the Program (or the Client, when that pairing has no program) — hours default to the month’s maximum billable hours (weekdays minus US federal holidays, × 8) with amount = rate × hours, and both stay editable. Only Active consultants are invoiced and shown unless you opt in to inactive ones. Track NET terms, payment status, and whether the timesheet’s been submitted. Re-generating a month never duplicates an invoice that already exists.</p>' +
+      '<div class="fin-generate-card">' +
+        '<label>Month<input type="month" id="gen-period" value="' + escapeHtml(gf.periodMonth) + '"></label>' +
+        '<label>Net terms<select id="gen-net-terms">' +
+          ['NET15', 'NET30', 'NET45', 'NET60', 'NET90'].map(function (nt) {
+            return '<option value="' + nt + '"' + (gf.netTerms === nt ? ' selected' : '') + '>' + nt + '</option>';
+          }).join('') +
+        '</select></label>' +
+        '<label>Issue date<input type="date" id="gen-issue-date" value="' + escapeHtml(gf.issueDate) + '"></label>' +
+        '<label class="fin-check"><input type="checkbox" id="gen-include-inactive"' + (gf.includeInactive ? ' checked' : '') + '>Include inactive consultants</label>' +
+        '<button type="button" class="fin-btn fin-btn-primary" id="generate-btn"' + (state.generating ? ' disabled' : '') + '>' +
+          (state.generating ? 'Generating…' : 'Generate invoices') +
+        '</button>' +
+      '</div>' +
+      renderGenerateResult() +
+      '<div class="fin-controls">' +
+        '<label class="fin-check"><input type="checkbox" id="filter-show-inactive"' + (state.showInactive ? ' checked' : '') + '>Show inactive consultants</label>' +
+        '<input type="month" id="filter-period" value="' + escapeHtml(state.periodFilter) + '">' +
+        '<select id="filter-payment">' +
+          '<option value="all"' + (state.paymentFilter === 'all' ? ' selected' : '') + '>All payment statuses</option>' +
+          '<option value="unpaid"' + (state.paymentFilter === 'unpaid' ? ' selected' : '') + '>Unpaid</option>' +
+          '<option value="paid"' + (state.paymentFilter === 'paid' ? ' selected' : '') + '>Paid</option>' +
+        '</select>' +
+        '<select id="filter-timesheet">' +
+          '<option value="all"' + (state.timesheetFilter === 'all' ? ' selected' : '') + '>Timesheet: all</option>' +
+          '<option value="no"' + (state.timesheetFilter === 'no' ? ' selected' : '') + '>Not submitted</option>' +
+          '<option value="yes"' + (state.timesheetFilter === 'yes' ? ' selected' : '') + '>Submitted</option>' +
+        '</select>' +
+      '</div>' +
+      renderTable()
+    );
+  }
+
+  // ---- Subvendor payments tab (read-only) ----
+  function monthLabel(ym) {
+    if (!ym) return '';
+    var names = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    return names[Number(String(ym).slice(5, 7)) - 1] + ' ' + String(ym).slice(0, 4);
+  }
+
+  function fmtDate(d) {
+    if (!d) return '';
+    var p = String(d).slice(0, 10).split('-');
+    return p[1] + '/' + p[2] + '/' + p[0];
+  }
+
+  function svRow(inv, idx) {
+    var status = inv.kind === 'paid'
+      ? '<span class="fin-status-badge fin-badge-static fin-status-paid">Paid' + (inv.paid_date ? ' ' + escapeHtml(fmtDate(inv.paid_date)) : '') + '</span>'
+      : '<span class="fin-status-badge fin-badge-static fin-status-scheduled">Scheduled</span>';
+    var src = inv.kind === 'paid' ? 'Payments file'
+      : (inv.rate_source === 'margin' ? 'Generated · Margin cost rate' : 'Generated · Ledger rate');
+    return (
+      '<tr>' +
+        '<td class="fin-sno">' + (idx + 1) + '</td>' +
+        '<td class="fin-invoice-no">' + escapeHtml(inv.invoice_number) + '</td>' +
+        '<td class="fin-consultant">' + escapeHtml(inv.subvendor_name) + '</td>' +
+        '<td>' + escapeHtml(inv.consultant_name) + '</td>' +
+        '<td>' + escapeHtml(monthLabel(inv.period_month)) + '</td>' +
+        '<td class="fin-num">' + (inv.rate !== null && inv.rate !== undefined ? '$' + money(inv.rate) + '/hr' : '<span class="fin-muted">—</span>') + '</td>' +
+        '<td class="fin-num">' + (inv.hours !== null && inv.hours !== undefined ? money(inv.hours) : '<span class="fin-muted">—</span>') + '</td>' +
+        '<td class="fin-num">' + (inv.amount !== null && inv.amount !== undefined ? '$' + money(inv.amount) : '<span class="fin-muted">—</span>') + '</td>' +
+        '<td>' + (inv.net_terms ? escapeHtml(inv.net_terms) : '<span class="fin-muted">—</span>') + '</td>' +
+        '<td>' + (inv.due_date ? escapeHtml(fmtDate(inv.due_date)) : '<span class="fin-muted">—</span>') + '</td>' +
+        '<td>' + status + '</td>' +
+        '<td class="fin-src">' + escapeHtml(src) + '</td>' +
+      '</tr>'
+    );
+  }
+
+  function svTable() {
+    var sv = state.sv;
+    if (sv.loading) return '<div class="fin-loading">Loading…</div>';
+    if (!sv.invoices.length) {
+      return '<div class="fin-empty-state">' + (sv.ledgerFile
+        ? 'No subvendor payments match this filter.'
+        : 'No Ledger file uploaded yet — upload your sub vendor payments workbook in Ledger and the paid months will appear here.') + '</div>';
+    }
+    var total = sv.invoices.reduce(function (t, i) { return t + (Number(i.amount) || 0); }, 0);
+    return (
+      '<div class="fin-table-wrap"><table class="fin-table"><thead><tr>' +
+        '<th>S.No.</th><th>Invoice #</th><th>Subvendor</th><th>Consultant</th><th>Month</th><th>Rate</th>' +
+        '<th>Hours</th><th>Amount</th><th>Net terms</th><th>Due date</th><th>Status</th><th>Source</th>' +
+      '</tr></thead><tbody>' +
+      sv.invoices.map(svRow).join('') +
+      '<tr class="fin-total-row"><td colspan="7">Total (' + sv.invoices.length + ')</td><td class="fin-num">$' + money(total) + '</td><td colspan="4"></td></tr>' +
+      '</tbody></table></div>'
+    );
+  }
+
+  function svGenerateResult() {
+    var r = state.sv.generateResult;
+    if (!r) return '';
+    var skipped = r.skipped || [];
+    var other = skipped.filter(function (s) { return !s.inactive; });
+    var inactiveCount = r.skippedInactive || 0;
+    var skipHtml = '';
+    if (other.length || inactiveCount) {
+      skipHtml = '<ul class="fin-result-skip-list">' +
+        (inactiveCount ? '<li>' + inactiveCount + ' pairing' + (inactiveCount === 1 ? '' : 's') +
+          ' for inactive (or status-not-set) consultants — tick “Include inactive consultants” to generate them</li>' : '') +
+        other.slice(0, 8).map(function (s) { return '<li>' + escapeHtml(s.consultant) + ' — ' + escapeHtml(s.reason) + '</li>'; }).join('') +
+        (other.length > 8 ? '<li>…and ' + (other.length - 8) + ' more.</li>' : '') + '</ul>';
+    }
+    return '<div class="fin-result">Generated <strong>' + r.created.length + '</strong> invoice' + (r.created.length === 1 ? '' : 's') +
+      (skipped.length ? ', skipped ' + skipped.length + '.' : '.') +
+      (r.created.length ? ' Each is ' + r.defaultHours + ' hrs (' + r.billableDays + ' working days × 8) at the rate on file.' : '') +
+      skipHtml + '</div>';
+  }
+
+  function renderSubvendorTab() {
+    var sv = state.sv, gf = sv.generateForm;
+    var file = sv.ledgerFile
+      ? 'Paid months come from <strong>' + escapeHtml(sv.ledgerFile.file_name) + '</strong> (uploaded ' + escapeHtml(fmtDate(sv.ledgerFile.imported_at)) + ').'
+      : 'No Ledger file uploaded yet.';
+    return (
+      '<h2 class="fin-subtitle">Subvendor payments.</h2>' +
+      '<p class="fin-copy">What each subvendor invoices Mentour for each consultant, month by month. Months already paid are read straight from your sub vendor payments file and can’t be edited. From December 2026 onwards, invoices can be generated automatically at the consultant’s rate on the Ledger file — or, if Ledger has none, the cost rate on the Gross Margin file — for the month’s maximum billable hours. ' + file + '</p>' +
+      '<div class="fin-readonly-note">Read-only: payments already made and generated invoices can’t be changed here. Once a generated month’s real payment appears on the Ledger file, it replaces the generated invoice.</div>' +
+      '<div class="fin-generate-card">' +
+        '<label>Month (Dec 2026 or later)<input type="month" id="svgen-period" min="2026-12" value="' + escapeHtml(gf.periodMonth) + '"></label>' +
+        '<label>Net terms<select id="svgen-net-terms">' +
+          ['NET15', 'NET30', 'NET45', 'NET60', 'NET90'].map(function (nt) {
+            return '<option value="' + nt + '"' + (gf.netTerms === nt ? ' selected' : '') + '>' + nt + '</option>';
+          }).join('') +
+        '</select></label>' +
+        '<label>Issue date<input type="date" id="svgen-issue-date" value="' + escapeHtml(gf.issueDate) + '"></label>' +
+        '<label class="fin-check"><input type="checkbox" id="svgen-include-inactive"' + (gf.includeInactive ? ' checked' : '') + '>Include inactive consultants</label>' +
+        '<button type="button" class="fin-btn fin-btn-primary" id="svgenerate-btn"' + (sv.generating ? ' disabled' : '') + '>' +
+          (sv.generating ? 'Generating…' : 'Generate invoices') +
+        '</button>' +
+      '</div>' +
+      svGenerateResult() +
+      '<div class="fin-controls">' +
+        '<input type="month" id="svfilter-period" value="' + escapeHtml(sv.periodFilter) + '">' +
+        '<select id="svfilter-subvendor"><option value="">All subvendors</option>' +
+          sv.subvendors.map(function (x) {
+            return '<option value="' + x.id + '"' + (String(sv.subvendorFilter) === String(x.id) ? ' selected' : '') + '>' + escapeHtml(x.name) + '</option>';
+          }).join('') +
+        '</select>' +
+        '<select id="svfilter-kind">' +
+          '<option value="all"' + (sv.kindFilter === 'all' ? ' selected' : '') + '>Paid and scheduled</option>' +
+          '<option value="paid"' + (sv.kindFilter === 'paid' ? ' selected' : '') + '>Paid only</option>' +
+          '<option value="generated"' + (sv.kindFilter === 'generated' ? ' selected' : '') + '>Scheduled only</option>' +
+        '</select>' +
+      '</div>' +
+      svTable()
+    );
+  }
+
+  function render() {
     appEl.innerHTML =
       '<div class="landing-header">' +
         '<div><div class="landing-wordmark">Mentour Suite</div><div class="landing-sub">' + escapeHtml(state.user.organization.name) + '</div></div>' +
@@ -224,41 +401,42 @@
       '<div class="fin-body">' +
         '<a class="fin-back" href="/">← Back to dashboards</a>' +
         '<h1 class="fin-title">Fin-Module.</h1>' +
-        '<p class="fin-copy">One invoice per consultant/client/program billing combination, generated from the rate on file in Directory. Each invoice bills to the Program (or the Client, when that pairing has no program) — hours default to the month’s maximum billable hours (weekdays minus US federal holidays, × 8) with amount = rate × hours, and both stay editable. Only Active consultants are invoiced and shown unless you opt in to inactive ones. Track NET terms, payment status, and whether the timesheet’s been submitted. Re-generating a month never duplicates an invoice that already exists.</p>' +
-        '<div class="fin-generate-card">' +
-          '<label>Month<input type="month" id="gen-period" value="' + escapeHtml(gf.periodMonth) + '"></label>' +
-          '<label>Net terms<select id="gen-net-terms">' +
-            ['NET15', 'NET30', 'NET45', 'NET60', 'NET90'].map(function (nt) {
-              return '<option value="' + nt + '"' + (gf.netTerms === nt ? ' selected' : '') + '>' + nt + '</option>';
-            }).join('') +
-          '</select></label>' +
-          '<label>Issue date<input type="date" id="gen-issue-date" value="' + escapeHtml(gf.issueDate) + '"></label>' +
-          '<label class="fin-check"><input type="checkbox" id="gen-include-inactive"' + (gf.includeInactive ? ' checked' : '') + '>Include inactive consultants</label>' +
-          '<button type="button" class="fin-btn fin-btn-primary" id="generate-btn"' + (state.generating ? ' disabled' : '') + '>' +
-            (state.generating ? 'Generating…' : 'Generate invoices') +
-          '</button>' +
+        '<div class="fin-tabs">' +
+          '<button type="button" class="fin-tab' + (state.tab === 'client' ? ' active' : '') + '" data-tab="client">Client invoices</button>' +
+          '<button type="button" class="fin-tab' + (state.tab === 'subvendor' ? ' active' : '') + '" data-tab="subvendor">Subvendor payments</button>' +
         '</div>' +
-        renderGenerateResult() +
-        '<div class="fin-controls">' +
-          '<label class="fin-check"><input type="checkbox" id="filter-show-inactive"' + (state.showInactive ? ' checked' : '') + '>Show inactive consultants</label>' +
-          '<input type="month" id="filter-period" value="' + escapeHtml(state.periodFilter) + '">' +
-          '<select id="filter-payment">' +
-            '<option value="all"' + (state.paymentFilter === 'all' ? ' selected' : '') + '>All payment statuses</option>' +
-            '<option value="unpaid"' + (state.paymentFilter === 'unpaid' ? ' selected' : '') + '>Unpaid</option>' +
-            '<option value="paid"' + (state.paymentFilter === 'paid' ? ' selected' : '') + '>Paid</option>' +
-          '</select>' +
-          '<select id="filter-timesheet">' +
-            '<option value="all"' + (state.timesheetFilter === 'all' ? ' selected' : '') + '>Timesheet: all</option>' +
-            '<option value="no"' + (state.timesheetFilter === 'no' ? ' selected' : '') + '>Not submitted</option>' +
-            '<option value="yes"' + (state.timesheetFilter === 'yes' ? ' selected' : '') + '>Submitted</option>' +
-          '</select>' +
-        '</div>' +
-        renderTable() +
+        (state.tab === 'subvendor' ? renderSubvendorTab() : renderClientTab()) +
       '</div>';
 
     document.getElementById('logout-btn').addEventListener('click', async function () {
       await fetch('/api/auth/logout', { method: 'POST' });
       window.location.href = '/login.html';
+    });
+  }
+
+  function loadSubvendor() {
+    var sv = state.sv;
+    sv.loading = true;
+    render();
+    var params = new URLSearchParams();
+    if (sv.periodFilter) params.set('periodMonth', sv.periodFilter);
+    if (sv.subvendorFilter) params.set('subvendorId', sv.subvendorFilter);
+    if (sv.kindFilter !== 'all') params.set('kind', sv.kindFilter);
+    fetch('/api/subvendor-invoices?' + params.toString()).then(function (res) {
+      if (!res.ok) throw new Error('load failed');
+      return res.json();
+    }).then(function (body) {
+      sv.invoices = body.invoices || [];
+      // Keep the full subvendor list when a subvendor filter narrows the rows.
+      if (!sv.subvendorFilter || !sv.subvendors.length) sv.subvendors = body.subvendors || [];
+      sv.ledgerFile = body.ledgerFile;
+      sv.loaded = true;
+      sv.loading = false;
+      render();
+    }).catch(function () {
+      sv.invoices = [];
+      sv.loading = false;
+      render();
     });
   }
 
@@ -306,6 +484,44 @@
   }
 
   appEl.addEventListener('click', function (e) {
+    var tabBtn = e.target.closest('[data-tab]');
+    if (tabBtn) {
+      state.tab = tabBtn.getAttribute('data-tab');
+      if (state.tab === 'subvendor' && !state.sv.loaded) loadSubvendor(); else render();
+      return;
+    }
+
+    var svGenBtn = e.target.closest('#svgenerate-btn');
+    if (svGenBtn) {
+      var sv = state.sv;
+      sv.generateForm = {
+        periodMonth: document.getElementById('svgen-period').value,
+        netTerms: document.getElementById('svgen-net-terms').value,
+        issueDate: document.getElementById('svgen-issue-date').value,
+        includeInactive: document.getElementById('svgen-include-inactive').checked,
+      };
+      sv.generating = true;
+      sv.generateResult = null;
+      render();
+      fetch('/api/subvendor-invoices/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(sv.generateForm),
+      }).then(function (res) {
+        if (!res.ok) return res.json().then(function (b) { throw new Error(b.error || 'Generation failed'); });
+        return res.json();
+      }).then(function (body) {
+        sv.generating = false;
+        sv.generateResult = body;
+        loadSubvendor();
+      }).catch(function (err) {
+        sv.generating = false;
+        render();
+        alert(err.message || 'Generation failed.');
+      });
+      return;
+    }
+
     var genBtn = e.target.closest('#generate-btn');
     if (genBtn) {
       state.generateForm = {
@@ -368,6 +584,22 @@
   });
 
   appEl.addEventListener('change', function (e) {
+    var svPeriod = e.target.closest('#svfilter-period');
+    if (svPeriod) { state.sv.periodFilter = svPeriod.value; loadSubvendor(); return; }
+    var svSub = e.target.closest('#svfilter-subvendor');
+    if (svSub) { state.sv.subvendorFilter = svSub.value; loadSubvendor(); return; }
+    var svKind = e.target.closest('#svfilter-kind');
+    if (svKind) { state.sv.kindFilter = svKind.value; loadSubvendor(); return; }
+    var svInactive = e.target.closest('#svgen-include-inactive');
+    if (svInactive) { state.sv.generateForm.includeInactive = svInactive.checked; return; }
+    var svGenField = e.target.closest('#svgen-period, #svgen-net-terms, #svgen-issue-date');
+    if (svGenField) {
+      state.sv.generateForm.periodMonth = document.getElementById('svgen-period').value;
+      state.sv.generateForm.netTerms = document.getElementById('svgen-net-terms').value;
+      state.sv.generateForm.issueDate = document.getElementById('svgen-issue-date').value;
+      return;
+    }
+
     var filterPeriod = e.target.closest('#filter-period');
     if (filterPeriod) { state.periodFilter = filterPeriod.value; loadInvoices(); return; }
     var filterPayment = e.target.closest('#filter-payment');

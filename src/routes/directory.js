@@ -27,10 +27,14 @@ const REFERENCING_COLUMNS = {
     { table: 'ledger_roster_entries', column: 'consultant_id' },
     { table: 'consultant_assignments', column: 'consultant_id' },
     { table: 'invoices', column: 'consultant_id' },
+    // Generated subvendor invoices are regenerable, so a pairing both records
+    // already have is simply left on the loser (and cascades away with it).
+    { table: 'subvendor_invoices', column: 'consultant_id', ignore: true },
   ],
   subvendors: [
     { table: 'margin_roster_entries', column: 'subvendor_id' },
     { table: 'ledger_roster_entries', column: 'subvendor_id' },
+    { table: 'subvendor_invoices', column: 'subvendor_id', ignore: true },
   ],
   clients: [
     { table: 'margin_roster_entries', column: 'client_id' },
@@ -477,7 +481,7 @@ router.post('/duplicates/:id/merge', async (req, res, next) => {
 
     for (const ref of REFERENCING_COLUMNS[tableName] || []) {
       await conn.query(
-        `UPDATE ${ref.table} SET ${ref.column} = ? WHERE ${ref.column} = ? AND organization_id = ?`,
+        `UPDATE ${ref.ignore ? 'IGNORE ' : ''}${ref.table} SET ${ref.column} = ? WHERE ${ref.column} = ? AND organization_id = ?`,
         [keepId, loseId, req.user.organization_id]
       );
     }

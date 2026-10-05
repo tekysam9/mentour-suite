@@ -343,5 +343,45 @@ CREATE TABLE IF NOT EXISTS invoices (
   INDEX idx_invoice_combo (organization_id, consultant_id, client_id, program_id, period_month)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+-- ---------------------------------------------------------------------------
+-- Fin-Module, "Subvendor payments": invoices from subvendors to Mentour for
+-- each consultant they supply, one per (subvendor, consultant, month).
+--
+-- Months already paid (the "2026 sub vendor payments" Ledger file) are NOT
+-- stored here -- they're read straight from ledger_roster_entries for the
+-- latest Ledger import and shown read-only, so they can never drift from
+-- the file. This table only holds invoices *generated* for future months
+-- (December 2026 onwards, see src/routes/subvendorInvoices.js), from the $/hr
+-- rate on the Ledger file (rate_source 'ledger') or, when a pairing has no
+-- Ledger rate, the Margin file's cost rate for that subvendor consultant
+-- (rate_source 'margin' -- Margin's "billing" is what Mentour charges the
+-- client, not what the subvendor charges Mentour; its "cost" is).
+--
+-- Deliberately has no edit/delete API: these are uneditable. All four key
+-- columns are NOT NULL, so the unique key is a real DB-level guard here.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS subvendor_invoices (
+  id              INT AUTO_INCREMENT PRIMARY KEY,
+  organization_id INT NOT NULL,
+  invoice_number  VARCHAR(64) NOT NULL,
+  subvendor_id    INT NOT NULL,
+  consultant_id   INT NOT NULL,
+  period_month    DATE NOT NULL, -- always the 1st of the month
+  rate            DECIMAL(12,2) NOT NULL,
+  hours           DECIMAL(8,2) NOT NULL,
+  amount          DECIMAL(12,2) NOT NULL,
+  rate_source     ENUM('ledger', 'margin') NOT NULL,
+  net_terms       VARCHAR(16) NOT NULL DEFAULT 'NET30',
+  issue_date      DATE NOT NULL,
+  due_date        DATE NOT NULL,
+  created_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE,
+  FOREIGN KEY (subvendor_id) REFERENCES subvendors(id) ON DELETE CASCADE,
+  FOREIGN KEY (consultant_id) REFERENCES consultants(id) ON DELETE CASCADE,
+  UNIQUE KEY uq_subvendor_invoice (organization_id, subvendor_id, consultant_id, period_month),
+  UNIQUE KEY uq_subvendor_invoice_number (organization_id, invoice_number),
+  INDEX idx_subvendor_invoice_period (organization_id, period_month)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 -- Session store table (used by express-mysql-session; it will create/manage
 -- this automatically, but it's listed here for visibility). No action needed.

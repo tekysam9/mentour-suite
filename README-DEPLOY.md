@@ -160,6 +160,15 @@ pairing has no program). This only adds a new `invoices` table — re-run
 `db/schema.sql` the same way as any other update; there's no data to
 backfill.
 
+### New: Fin-Module "Subvendor payments" (October 2026)
+
+A second tab inside Fin-Module lists what each subvendor invoices for each
+consultant, month by month. Months already paid are read live from your
+latest sub vendor payments (Ledger) upload and are read-only; December 2026
+onwards can be generated from the Ledger rate (or the Gross Margin cost rate
+when Ledger has none). This adds a `subvendor_invoices` table -- re-run
+`db/schema.sql`; nothing to backfill.
+
 ## If you outgrow Cloud/Node.js hosting
 
 The "other companies down the line" case is already handled in the data
