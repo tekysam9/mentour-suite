@@ -289,14 +289,15 @@
   var NET_OPTIONS = ['NET15', 'NET30', 'NET45', 'NET60', 'NET90'];
 
   function svRow(inv, idx) {
-    var src = inv.kind === 'paid' ? 'Payments file'
+    var src = inv.kind === 'paid'
+      ? 'Payments file' + (inv.paid_in ? ' · paid in ' + inv.paid_in : '') + (inv.multi_month ? ' · multi-month' : '')
       : (inv.rate_source === 'margin' ? 'Generated · Margin cost rate' : 'Generated · Ledger rate');
     var head =
       '<td class="fin-sno">' + (idx + 1) + '</td>' +
       '<td class="fin-invoice-no">' + escapeHtml(inv.invoice_number) + '</td>' +
       '<td class="fin-consultant">' + escapeHtml(inv.subvendor_name) + '</td>' +
       '<td>' + escapeHtml(inv.consultant_name) + '</td>' +
-      '<td>' + escapeHtml(monthLabel(inv.period_month)) + '</td>' +
+      '<td' + (inv.label ? ' title="' + escapeHtml(inv.label) + '"' : '') + '>' + escapeHtml(monthLabel(inv.period_month)) + '</td>' +
       '<td class="fin-num">' + (inv.rate !== null && inv.rate !== undefined ? '$' + money(inv.rate) + '/hr' : '<span class="fin-muted">—</span>') + '</td>';
 
     if (inv.kind === 'paid') {
@@ -380,9 +381,15 @@
     var file = sv.ledgerFile
       ? 'Paid months come from <strong>' + escapeHtml(sv.ledgerFile.file_name) + '</strong> (uploaded ' + escapeHtml(fmtDate(sv.ledgerFile.imported_at)) + ').'
       : 'No Ledger file uploaded yet.';
+    var unread = (sv.unreadable && sv.unreadable.length)
+      ? '<div class="fin-readonly-note">' + sv.unreadable.length + ' payment row(s) have no month/year in the label and are not listed as invoices: ' +
+        sv.unreadable.slice(0, 8).map(function (u) { return escapeHtml((u.subvendor || '') + (u.label ? '/' + u.label : '') + ' — ' + (u.consultant || '')); }).join('; ') +
+        (sv.unreadable.length > 8 ? '; …' : '') + '</div>'
+      : '';
     return (
       '<h2 class="fin-subtitle">Subvendor payments.</h2>' +
-      '<p class="fin-copy">What each subvendor invoices Mentour for each consultant, month by month. Months already paid are read straight from your sub vendor payments file and can’t be edited. For every month after the file’s last month, generate invoices at each consultant’s rate on the Ledger file — or, if Ledger has none, the cost rate on the Gross Margin file — then enter the actual hours (amount recalculates) and track NET terms, payment and timesheet just like client invoices. ' + file + '</p>' +
+      '<p class="fin-copy">What each subvendor invoices Mentour for each consultant, month by month. Months already paid are read straight from your sub vendor payments file (the month is the hours month in the label plus the Year column; unpaid red rows are left out) and can’t be edited. For every month after a consultant’s last month on the file, generate invoices at each consultant’s rate on the Ledger file — or, if Ledger has none, the cost rate on the Gross Margin file — then enter the actual hours (amount recalculates) and track NET terms, payment and timesheet just like client invoices. ' + file + '</p>' +
+      unread +
       '<div class="fin-readonly-note">Rows marked “Payments file” are read-only. Generated invoices are editable; once a generated month’s real payment appears on the Ledger file, it replaces the generated invoice.</div>' +
       '<div class="fin-generate-card">' +
         '<label>Month' + (sv.generationStart ? ' (' + escapeHtml(monthLabel(sv.generationStart)) + ' or later)' : '') + '<input type="month" id="svgen-period"' + (sv.generationStart ? ' min="' + escapeHtml(sv.generationStart) + '"' : '') + ' value="' + escapeHtml(gf.periodMonth) + '"></label>' +
@@ -456,6 +463,7 @@
       if (!sv.subvendorFilter || !sv.subvendors.length) sv.subvendors = body.subvendors || [];
       sv.ledgerFile = body.ledgerFile;
       sv.generationStart = body.generationStart;
+      sv.unreadable = body.unreadable || [];
       if (!sv.generateForm.periodMonth && body.generationStart) sv.generateForm.periodMonth = body.generationStart;
       sv.loaded = true;
       sv.loading = false;

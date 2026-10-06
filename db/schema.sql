@@ -216,6 +216,10 @@ ALTER TABLE margin_roster_entries ADD CONSTRAINT fk_margin_roster_program FOREIG
 ALTER TABLE margin_roster_entries ADD CONSTRAINT fk_margin_roster_subvendor FOREIGN KEY IF NOT EXISTS (subvendor_id) REFERENCES subvendors(id) ON DELETE SET NULL;
 ALTER TABLE ledger_roster_entries ADD CONSTRAINT fk_ledger_roster_consultant FOREIGN KEY IF NOT EXISTS (consultant_id) REFERENCES consultants(id) ON DELETE SET NULL;
 ALTER TABLE ledger_roster_entries ADD CONSTRAINT fk_ledger_roster_subvendor FOREIGN KEY IF NOT EXISTS (subvendor_id) REFERENCES subvendors(id) ON DELETE SET NULL;
+-- The cleaned payments file has a "Year" column (the year of the hours the
+-- payment covers) and marks unpaid rows with a red Amount cell.
+ALTER TABLE ledger_roster_entries ADD COLUMN IF NOT EXISTS year_text VARCHAR(32) NULL;
+ALTER TABLE ledger_roster_entries ADD COLUMN IF NOT EXISTS unpaid TINYINT(1) NOT NULL DEFAULT 0;
 
 -- ---------------------------------------------------------------------------
 -- Assignments: a consultant's billing rate on a specific client/program.

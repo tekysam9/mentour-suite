@@ -172,6 +172,14 @@ invoices. This adds a `subvendor_invoices` table -- re-run `db/schema.sql`
 (it also upgrades the table if you already ran the earlier version);
 nothing to backfill.
 
+**Update (Year column).** Subvendor payments now read the cleaned payments
+file: the invoice month is the month named in the Subvendor label plus the
+"Year" column (the sheet name is only shown as "paid in"), and rows whose
+Amount cell is red/yellow (unpaid) are left out. Generation opens per
+consultant, from the month after their own last month on the file. Re-run
+`db/schema.sql` (adds `year_text` and `unpaid` to `ledger_roster_entries`),
+then **re-upload the cleaned file in Ledger once** so those columns fill in.
+
 ## If you outgrow Cloud/Node.js hosting
 
 The "other companies down the line" case is already handled in the data

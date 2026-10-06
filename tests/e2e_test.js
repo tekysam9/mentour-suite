@@ -932,20 +932,24 @@ async function main() {
       r = await svOwner.fetch('/api/auth/signup', { method: 'POST', body: JSON.stringify({ orgName: 'Subvendor Test Co', name: 'Sv Owner', email: 'sv@svtest.test', password: 'subvendorpassword1' }) });
       check('subvendor-payments test org signup returns 201', r.status === 201, r);
 
+      // month = the SHEET (when it was paid); period + year = the hours month.
       const svLedger = (fileName, extraSam) => ({
         fileName,
         data: {
           kpis: {},
           consultants: [
             { name: 'Sam Sub', placements: [
-              { subvendor: 'Vendor One', period: 'Jan 2026', name: 'Sam Sub', amount: 8000, rate: 50, hours: 160, month: 'Jan 2026', clientTag: 'HCL', paidDate: '2026-02-05T00:00:00.000Z' },
-              { subvendor: 'Vendor One', period: 'Feb 2026', name: 'Sam Sub', amount: 8800, rate: 55, hours: 160, month: 'Feb 2026', clientTag: 'HCL' },
+              { subvendor: 'Vendor One', period: 'Oct', year: '2025', name: 'Sam Sub', amount: 8000, rate: 50, hours: 160, month: 'January', clientTag: 'HCL', paidDate: '2026-02-05T00:00:00.000Z' },
+              { subvendor: 'Vendor One', period: 'Nov', year: '2025', name: 'Sam Sub', amount: 8800, rate: 55, hours: 160, month: 'February', clientTag: 'HCL' },
+              { subvendor: 'Vendor One', period: 'Nov bal.', year: '2025', name: 'Sam Sub', amount: 500, month: 'March', clientTag: 'HCL' },
+              { subvendor: 'Vendor One', period: 'Jan', year: '2026', name: 'Sam Sub', amount: 99, rate: 61, hours: 2, month: 'March', clientTag: 'HCL', unpaid: true },
             ].concat(extraSam || []) },
             { name: 'Uma Unset', placements: [
-              { subvendor: 'Vendor Two', period: 'Mar', name: 'Uma Unset', amount: 9000, rate: 60, hours: 150, month: 'Mar', clientTag: 'Non-HCL' },
+              { subvendor: 'Vendor Two', period: 'Dec + bal Nov', year: '2025', name: 'Uma Unset', amount: 9000, rate: 60, hours: 150, month: 'March', clientTag: 'Non-HCL' },
+              { subvendor: 'Vendor Two', period: null, year: '2025', name: 'Uma Unset', amount: 3000, month: 'March', clientTag: 'Non-HCL' },
             ] },
             { name: 'Tina Left', placements: [
-              { subvendor: 'Vendor One', period: 'Left', name: 'Tina Left', amount: 100, rate: 40, hours: 2, month: 'Left', clientTag: 'HCL' },
+              { subvendor: 'Vendor One', period: 'Jan', name: 'Tina Left', amount: 100, rate: 40, hours: 2, month: 'Left', clientTag: 'HCL', unpaid: true },
             ] },
           ],
         },
@@ -966,26 +970,34 @@ async function main() {
       check('subvendor margin upload returns 201', r.status === 201, r);
 
       r = await svOwner.fetch('/api/subvendor-invoices');
-      check('paid history = the 3 real months on the Ledger file (Left sheet ignored)',
-        r.status === 200 && r.body.invoices.length === 3 && r.body.invoices.every((i) => i.kind === 'paid' && i.status === 'paid'), r.body);
-      const samJan = r.body.invoices.find((i) => i.consultant_name === 'Sam Sub' && i.period_month === '2026-01-01');
-      check('paid invoice carries the file’s rate, hours, amount and paid date',
-        !!samJan && samJan.subvendor_name === 'Vendor One' && samJan.rate === 50 && samJan.hours === 160 && samJan.amount === 8000 && samJan.paid_date === '2026-02-05', samJan);
-      const umaMar = r.body.invoices.find((i) => i.consultant_name === 'Uma Unset');
-      check('a sheet name with no year ("Mar") takes the year from the file name', !!umaMar && umaMar.period_month === '2026-03-01', umaMar);
+      check('paid history = 4 file rows (hours months; the red-Amount row, the Left sheet and the no-month row are left out)',
+        r.status === 200 && r.body.invoices.length === 4 && r.body.invoices.every((i) => i.kind === 'paid' && i.status === 'paid'), r.body);
+      const samOct = r.body.invoices.find((i) => i.consultant_name === 'Sam Sub' && i.period_month === '2025-10-01');
+      check('invoice month = hours month from the label + Year (not the sheet); sheet shown as paid-in',
+        !!samOct && samOct.subvendor_name === 'Vendor One' && samOct.rate === 50 && samOct.hours === 160 && samOct.amount === 8000 && samOct.paid_date === '2026-02-05' && samOct.paid_in === 'January', samOct);
+      check('two file rows for the same hours month stay as two lines (Nov + Nov bal.)',
+        r.body.invoices.filter((i) => i.consultant_name === 'Sam Sub' && i.period_month === '2025-11-01').length === 2, r.body.invoices);
+      check('the red (unpaid) Amount row is not added', !r.body.invoices.some((i) => i.period_month === '2026-01-01'), r.body.invoices);
+      const umaDec = r.body.invoices.find((i) => i.consultant_name === 'Uma Unset');
+      check('"Dec + bal Nov" with Year 2025 is Dec 2025 and flagged multi-month', !!umaDec && umaDec.period_month === '2025-12-01' && umaDec.multi_month === true && umaDec.paid_in === 'March', umaDec);
+      check('a row with no month in its label is listed as unreadable, not invoiced',
+        r.body.unreadable.length === 1 && r.body.unreadable[0].consultant === 'Uma Unset' && r.body.unreadable[0].amount === 3000, r.body.unreadable);
       check('response names the Ledger file and lists subvendors for the filter',
-        r.body.ledgerFile && r.body.ledgerFile.file_name === '2026 Sub Vendor Payments.xlsx' && r.body.subvendors.length === 2 && r.body.generationStart === '2026-04', r.body);
-      check('generation opens the month after the file\u2019s last month (Mar 2026 -> Apr 2026)', r.body.generationStart === '2026-04', r.body.generationStart);
+        r.body.ledgerFile && r.body.ledgerFile.file_name === '2026 Sub Vendor Payments.xlsx' && r.body.subvendors.length === 2, r.body);
+      check('generation opens the month after the active consultant\u2019s last hours month (Nov 2025 -> Dec 2025)', r.body.generationStart === '2025-12', r.body.generationStart);
 
-      r = await svOwner.fetch('/api/subvendor-invoices?periodMonth=2026-02');
-      check('period filter narrows to that month', r.body.invoices.length === 1 && r.body.invoices[0].consultant_name === 'Sam Sub', r.body);
+      r = await svOwner.fetch('/api/subvendor-invoices?periodMonth=2025-11');
+      check('period filter narrows to that hours month', r.body.invoices.length === 2 && r.body.invoices.every((i) => i.consultant_name === 'Sam Sub'), r.body);
       r = await svOwner.fetch('/api/subvendor-invoices?periodMonth=bogus');
       check('bad period filter returns 400', r.status === 400, r);
 
-      r = await svOwner.fetch('/api/subvendor-invoices/generate', { method: 'POST', body: JSON.stringify({ periodMonth: '2026-03' }) });
-      check('generating the file\u2019s last month (already paid) is refused', r.status === 400 && /after Mar 2026/.test(r.body.error), r);
-      r = await svOwner.fetch('/api/subvendor-invoices/generate', { method: 'POST', body: JSON.stringify({ periodMonth: '2026-01' }) });
-      check('generating an earlier, already-paid month is refused', r.status === 400, r);
+      // Per consultant: Sam's last hours month is Nov 2025, so Nov 2025 is skipped for him.
+      r = await svOwner.fetch('/api/subvendor-invoices/generate', { method: 'POST', body: JSON.stringify({ periodMonth: '2025-11' }) });
+      check('a month already on the file is skipped for that consultant only (Max, not on the file, is generated)',
+        r.status === 201 && r.body.created.length === 1 && r.body.skipped.some((s) => s.consultant.startsWith('Sam Sub') && /through Nov 2025/.test(s.reason)), r.body);
+      r = await svOwner.fetch('/api/subvendor-invoices?kind=generated');
+      r = await svOwner.fetch('/api/subvendor-invoices/' + r.body.invoices[0].id, { method: 'DELETE' });
+      check('(cleanup) the probe invoice is deleted', r.status === 200, r);
       r = await makeJar().fetch('/api/subvendor-invoices/generate', { method: 'POST', body: JSON.stringify({ periodMonth: '2026-12' }) });
       check('generating without a login returns 401', r.status === 401, r);
       r = await svOwner.fetch('/api/subvendor-invoices/generate', { method: 'POST', body: JSON.stringify({ periodMonth: 'nope' }) });
@@ -1019,7 +1031,7 @@ async function main() {
       r = await svOwner.fetch('/api/subvendor-invoices?kind=generated');
       check('kind filter lists only generated invoices (4)', r.body.invoices.length === 4 && r.body.invoices.every((i) => i.kind === 'generated'), r.body);
       r = await svOwner.fetch('/api/subvendor-invoices?kind=paid');
-      check('kind filter lists only paid invoices (3)', r.body.invoices.length === 3, r.body);
+      check('kind filter lists only paid invoices (4)', r.body.invoices.length === 4, r.body);
       r = await svOwner.fetch('/api/subvendor-invoices?kind=weird');
       check('bad kind filter returns 400', r.status === 400, r);
 
@@ -1061,7 +1073,7 @@ async function main() {
       // When the real December payment lands on a newer Ledger file, it
       // replaces Sam's generated invoice, and generating skips him.
       r = await svOwner.fetch('/api/ledger', { method: 'POST', body: JSON.stringify(svLedger('2026 Sub Vendor Payments v2.xlsx', [
-        { subvendor: 'Vendor One', period: 'Dec 2026', name: 'Sam Sub', amount: 9500, rate: 56, hours: 170, month: 'Dec 2026', clientTag: 'HCL' },
+        { subvendor: 'Vendor One', period: 'Dec', year: '2026', name: 'Sam Sub', amount: 9500, rate: 56, hours: 170, month: 'April', clientTag: 'HCL' },
       ])) });
       check('newer ledger upload with a December payment returns 201', r.status === 201, r);
       r = await svOwner.fetch('/api/subvendor-invoices?periodMonth=2026-12');
@@ -1069,7 +1081,8 @@ async function main() {
       check('the real December payment replaces the generated invoice (one Sam row, now paid)',
         samRows.length === 1 && samRows[0].kind === 'paid' && samRows[0].amount === 9500, samRows);
       r = await svOwner.fetch('/api/subvendor-invoices/generate', { method: 'POST', body: JSON.stringify({ periodMonth: '2026-12' }) });
-      check('December is now on the payments file, so generating it is refused', r.status === 400 && /after Dec 2026/.test(r.body.error), r);
+      check('December is now on the payments file for Sam, so he is skipped',
+        r.status === 201 && r.body.skipped.some((s) => s.consultant.startsWith('Sam Sub') && /through Dec 2026/.test(s.reason)), r.body);
       r = await svOwner.fetch('/api/subvendor-invoices?kind=paid');
       check('generation window moved to the month after the new last month', r.body.generationStart === '2027-01', r.body.generationStart);
 

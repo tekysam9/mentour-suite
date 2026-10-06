@@ -2,12 +2,16 @@
 // Mentour, one per (subvendor, consultant, month). Every route is scoped to
 // req.user.organization_id.
 //
+// A paid month is the HOURS month named in the Subvendor label plus the
+// file's Year column (the sheet name is only when it was paid). Rows with a
+// red Amount (unpaid) are ignored.
+//
 // Two sources, merged into one list:
 //   * kind 'paid'      -- months already paid, derived live from the latest
 //                         Ledger upload's ledger_roster_entries (the "2026 sub
 //                         vendor payments" file). Never copied anywhere, so it
 //                         can't drift from the file; there's nothing to edit.
-//   * kind 'generated' -- months after the payments file's last month, created
+//   * kind 'generated' -- months after a consultant's last month on the payments file, created
 //                         by POST /generate from the $/hr rate on the Ledger
 //                         file, or (no Ledger rate for the pairing) the Margin
 //                         file's cost rate. Stored in subvendor_invoices, and
@@ -26,7 +30,6 @@ router.use(requireAuth);
 
 const NET_TERMS_RE = /^NET\d{1,3}$/i;
 const MONTHS = { jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12 };
-const MONTH_LABEL_RE = /^\s*(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?[\s\-_']*((?:19|20)\d{2}|\d{2})?\s*$/i;
 
 function isTruthyFlag(value) {
   return value === true || value === 1 || ['1', 'true', 'yes', 'on'].includes(String(value || '').toLowerCase());
@@ -59,9 +62,14 @@ function nextMonth(periodMonth) {
   const m = Number(periodMonth.slice(5, 7));
   return m === 12 ? (y + 1) + '-01-01' : y + '-' + pad2(m + 1) + '-01';
 }
-// The last month present on the payments file ('YYYY-MM-01'), or null.
-function lastPaidMonth(records) {
-  return records.reduce((max, r) => (!max || r.period_month > max ? r.period_month : max), null);
+// Earliest month generation is open for: the month after the earliest
+// "last hours month" among active consultants' pairings (all pairings when
+// none is active), or null with no usable file rows.
+function generationStartMonth(records) {
+  const active = pairLastMonths(records.filter((r) => r.consultant_status === 'active'));
+  const last = active.size ? active : pairLastMonths(records);
+  const months = [...last.values()];
+  return months.length ? nextMonth(months.reduce((a, b) => (a < b ? a : b))).slice(0, 7) : null;
 }
 function monthName(periodMonth) {
   const names = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -78,16 +86,30 @@ function dateStr(v) {
   return String(v).slice(0, 10);
 }
 
-// A Ledger sheet name ("Jan", "January 2026", "Jan-26") -> 'YYYY-MM-01', or
-// null for anything that isn't a month ("Left", "Sheet1"). A label with no
-// year takes the year in the file name ("2026 Sub Vendor Payments.xlsx"),
-// else the year the file was uploaded.
-function parseMonthLabel(label, fallbackYear) {
-  const m = MONTH_LABEL_RE.exec(String(label || ''));
-  if (!m) return null;
-  let year = fallbackYear;
-  if (m[2]) year = m[2].length === 2 ? 2000 + Number(m[2]) : Number(m[2]);
-  return year + '-' + pad2(MONTHS[m[1].toLowerCase()]) + '-01';
+// The hours month a payment covers, from the text after the "/" in the
+// Subvendor column ("May 2024-2nd invoice", "Oct + bal Sept", "Dec+Feb bal")
+// plus the file's "Year" column. The FIRST month named is the invoice month;
+// when several are named the row is flagged multi_month. The year comes from
+// the Year column ("2025 and 2026" -> the first year), else a year written in
+// the label itself (May 2024, Oct'23). Returns null when there's no month or
+// no year to go with it -- those rows are listed as unreadable, never guessed.
+const MONTH_TOKEN_RE = /\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\b/gi;
+function parseHoursMonth(periodText, yearText) {
+  const text = String(periodText || '');
+  const tokens = [...text.matchAll(MONTH_TOKEN_RE)].map((m) => MONTHS[m[1].toLowerCase()]);
+  if (!tokens.length) return null;
+  let year = null;
+  const y = /\b(20\d{2}|19\d{2})\b/.exec(String(yearText || ''));
+  if (y) year = Number(y[1]);
+  else {
+    const inLabel = /(?:\b|')(20\d{2}|\d{2})\b(?!\s*(?:st|nd|rd|th|hr))/i.exec(text.replace(MONTH_TOKEN_RE, ' '));
+    if (inLabel) year = inLabel[1].length === 2 ? 2000 + Number(inLabel[1]) : Number(inLabel[1]);
+  }
+  if (!year) return null;
+  return {
+    period_month: year + '-' + pad2(tokens[0]) + '-01',
+    multi_month: new Set(tokens).size > 1 || /\+/.test(text),
+  };
 }
 
 async function latestImport(conn, table, organizationId) {
@@ -95,23 +117,20 @@ async function latestImport(conn, table, organizationId) {
     `SELECT id, file_name, imported_at FROM ${table} WHERE organization_id = ? ORDER BY imported_at DESC, id DESC LIMIT 1`,
     [organizationId]
   );
-  if (!rows.length) return null;
-  const imp = rows[0];
-  const fileYear = /(20\d{2})/.exec(imp.file_name || '');
-  imp.year = fileYear ? Number(fileYear[1]) : new Date(imp.imported_at).getFullYear();
-  return imp;
+  return rows.length ? rows[0] : null;
 }
 
-// The latest Ledger upload as one record per (subvendor, consultant, month):
-// amounts and hours summed across that month's lines, rate = the last
-// non-null one in file order.
+// The latest Ledger upload as one record per paid file row. Month = the hours
+// month (label + Year column), NOT the sheet name -- the sheet is only when
+// it was paid ("paid_in"). Rows with a red (unpaid) Amount are ignored, rows
+// with no readable month/year are returned in `unreadable`.
 async function ledgerMonthlyRecords(conn, organizationId) {
   const imp = await latestImport(conn, 'ledger_imports', organizationId);
-  if (!imp) return { imp: null, records: [] };
+  if (!imp) return { imp: null, records: [], unreadable: [] };
 
   const [rows] = await conn.query(
     `SELECT l.id, l.consultant_id, l.subvendor_id, l.name, l.subvendor_text, l.month_label,
-            l.amount, l.rate, l.hours, l.paid_date,
+            l.period_text, l.year_text, l.unpaid, l.amount, l.rate, l.hours, l.paid_date,
             c.name AS consultant_name, c.status AS consultant_status, s.name AS subvendor_name
      FROM ledger_roster_entries l
      LEFT JOIN consultants c ON c.id = l.consultant_id
@@ -121,38 +140,51 @@ async function ledgerMonthlyRecords(conn, organizationId) {
     [imp.id, organizationId]
   );
 
-  const byKey = new Map();
+  const records = [];
+  const unreadable = [];
   for (const r of rows) {
-    const period = parseMonthLabel(r.month_label, imp.year);
-    if (!period) continue;
-    const subKey = r.subvendor_id ? 'id' + r.subvendor_id : 'txt:' + String(r.subvendor_text || '').trim().toLowerCase();
-    const conKey = r.consultant_id ? 'id' + r.consultant_id : 'txt:' + String(r.name || '').trim().toLowerCase();
-    const key = subKey + '|' + conKey + '|' + period;
-    let rec = byKey.get(key);
-    if (!rec) {
-      rec = {
-        key, period_month: period,
-        subvendor_id: r.subvendor_id, subvendor_name: r.subvendor_name || r.subvendor_text || '(unspecified)',
-        consultant_id: r.consultant_id, consultant_name: r.consultant_name || r.name,
-        consultant_status: r.consultant_status,
-        rate: null, hours: null, amount: null, paid_date: null,
-      };
-      byKey.set(key, rec);
+    if (r.unpaid) continue;
+    if (String(r.month_label || '').trim().toLowerCase() === 'left') continue;
+    const parsed = parseHoursMonth(r.period_text, r.year_text);
+    if (!parsed) {
+      unreadable.push({
+        subvendor: r.subvendor_text, consultant: r.name, sheet: r.month_label,
+        label: r.period_text, year: r.year_text, amount: r.amount === null ? null : Number(r.amount),
+      });
+      continue;
     }
-    if (r.amount !== null) rec.amount = (rec.amount || 0) + Number(r.amount);
-    if (r.hours !== null) rec.hours = (rec.hours || 0) + Number(r.hours);
-    if (r.rate !== null) rec.rate = Number(r.rate);
-    const pd = dateStr(r.paid_date);
-    if (pd && (!rec.paid_date || pd > rec.paid_date)) rec.paid_date = pd;
+    records.push({
+      key: 'row' + r.id, row_id: r.id, period_month: parsed.period_month, multi_month: parsed.multi_month,
+      paid_in: r.month_label, label: r.period_text,
+      subvendor_id: r.subvendor_id, subvendor_name: r.subvendor_name || r.subvendor_text || '(unspecified)',
+      consultant_id: r.consultant_id, consultant_name: r.consultant_name || r.name,
+      consultant_status: r.consultant_status,
+      rate: r.rate === null ? null : Number(r.rate),
+      hours: r.hours === null ? null : Number(r.hours),
+      amount: r.amount === null ? null : Number(r.amount),
+      paid_date: dateStr(r.paid_date),
+    });
   }
-  return { imp, records: [...byKey.values()] };
+  return { imp, records, unreadable };
+}
+
+// Per (subvendor, consultant): the last hours month on the file.
+function pairLastMonths(records) {
+  const last = new Map();
+  for (const r of records) {
+    if (!r.subvendor_id || !r.consultant_id) continue;
+    const key = r.subvendor_id + '|' + r.consultant_id;
+    if (!last.get(key) || r.period_month > last.get(key)) last.set(key, r.period_month);
+  }
+  return last;
 }
 
 function paidInvoice(rec) {
   const ym = rec.period_month.slice(0, 7).replace('-', '');
   return {
     kind: 'paid',
-    invoice_number: 'SVP-' + ym + '-' + (rec.subvendor_id || 'x') + '-' + (rec.consultant_id || 'x'),
+    invoice_number: 'SVP-' + ym + '-' + (rec.subvendor_id || 'x') + '-' + (rec.consultant_id || 'x') + '-' + rec.row_id,
+    paid_in: rec.paid_in, multi_month: rec.multi_month, label: rec.label,
     period_month: rec.period_month,
     subvendor_id: rec.subvendor_id, subvendor_name: rec.subvendor_name,
     consultant_id: rec.consultant_id, consultant_name: rec.consultant_name,
@@ -176,7 +208,7 @@ router.get('/', async (req, res, next) => {
     }
     const subvendorId = req.query.subvendorId ? Number(req.query.subvendorId) : null;
 
-    const { imp, records } = await ledgerMonthlyRecords(pool, organizationId);
+    const { imp, records, unreadable } = await ledgerMonthlyRecords(pool, organizationId);
     const paid = records.map(paidInvoice);
     const paidKeys = new Set(records.filter((r) => r.subvendor_id && r.consultant_id)
       .map((r) => r.subvendor_id + '|' + r.consultant_id + '|' + r.period_month));
@@ -222,7 +254,8 @@ router.get('/', async (req, res, next) => {
     res.json({
       invoices,
       subvendors,
-      generationStart: lastPaidMonth(records) ? nextMonth(lastPaidMonth(records)).slice(0, 7) : null,
+      generationStart: generationStartMonth(records),
+      unreadable,
       ledgerFile: imp ? { file_name: imp.file_name, imported_at: imp.imported_at } : null,
     });
   } catch (err) {
@@ -256,13 +289,10 @@ router.post('/generate', async (req, res, next) => {
     // pairing key -> { subvendor_id, consultant_id, rate, source, ratePeriod }
     const pairs = new Map();
     const { records } = await ledgerMonthlyRecords(conn, organizationId);
-    const lastPaid = lastPaidMonth(records);
-    if (!lastPaid) {
-      return res.status(400).json({ error: 'Upload your sub vendor payments file in Ledger first — invoices are generated for the months after its last month.' });
+    if (!records.length) {
+      return res.status(400).json({ error: 'Upload your sub vendor payments file in Ledger first — invoices are generated for the months after each consultant\u2019s last month on it.' });
     }
-    if (periodMonth <= lastPaid) {
-      return res.status(400).json({ error: 'Invoices can only be generated for months after ' + monthName(lastPaid) + ', the last month on your payments file. Earlier months are shown from the file.' });
-    }
+    const lastByPair = pairLastMonths(records);
     for (const r of records) {
       if (!r.subvendor_id || !r.consultant_id) continue;
       const key = r.subvendor_id + '|' + r.consultant_id;
@@ -304,6 +334,11 @@ router.post('/generate', async (req, res, next) => {
       if (!cons) continue;
       if (!includeInactive && cons.status !== 'active') {
         skipped.push({ consultant: label, reason: cons.status === 'inactive' ? 'consultant is inactive' : 'consultant status not set', inactive: true });
+        continue;
+      }
+      const lastMonth = lastByPair.get(p.subvendor_id + '|' + p.consultant_id);
+      if (lastMonth && periodMonth <= lastMonth) {
+        skipped.push({ consultant: label, reason: 'already on the payments file through ' + monthName(lastMonth) });
         continue;
       }
       if (p.rate === null) {
@@ -431,4 +466,4 @@ router.delete('/:id', async (req, res, next) => {
 });
 
 module.exports = router;
-module.exports.parseMonthLabel = parseMonthLabel;
+module.exports.parseHoursMonth = parseHoursMonth;

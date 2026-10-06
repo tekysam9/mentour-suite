@@ -253,13 +253,18 @@
       (row || []).forEach(function (cell, c) {
         var cellText = typeof cell === 'string' ? cell.replace(/\u00A0/g, ' ').trim() : '';
         if (cellText && /\bamount\b/i.test(cellText)) {
+          // Cleaned files carry a "Year" column between the label and the
+          // name; older files go label, name, amount.
+          var yearCol = null;
           var labelCol = c - 2;
+          var maybeYear = typeof row[c - 2] === 'string' ? row[c - 2].trim().toLowerCase() : '';
+          if (maybeYear === 'year') { yearCol = c - 2; labelCol = c - 3; }
           var rawTag = cleanText(row[labelCol]);
           var clientTag = 'Unspecified';
           if (/non[\s-]*hcl/i.test(rawTag)) clientTag = 'Non-HCL';
           else if (/hcl/i.test(rawTag)) clientTag = 'HCL';
           occ.push({
-            row: r, amountCol: c, labelCol: labelCol, nameCol: c - 1, rateCol: c + 1,
+            row: r, amountCol: c, labelCol: labelCol, nameCol: c - 1, yearCol: yearCol, rateCol: c + 1,
             hoursCol: c + 2, verifyCol: c + 3, notesCol: c + 4, clientTag: clientTag,
           });
         }
@@ -268,7 +273,7 @@
     return occ;
   }
 
-  function parseSheet(rows, sheetName) {
+  function parseSheet(rows, sheetName, isUnpaidCell) {
     var occ = findHeaderOccurrences(rows);
     var byCol = {};
     occ.forEach(function (o) { (byCol[o.amountCol] = byCol[o.amountCol] || []).push(o); });
@@ -308,6 +313,10 @@
             if (nt) notes = nt;
           }
 
+          var yearRaw = b.yearCol !== null && b.yearCol !== undefined ? row[b.yearCol] : null;
+          var yearText = (yearRaw === null || yearRaw === undefined) ? null : cleanText(yearRaw) || null;
+          // Red Amount cell = not paid yet (the cell's yellow fill is the marker SheetJS exposes).
+          var unpaid = !!(isUnpaidCell && isUnpaidCell(r, b.amountCol));
           var sp = splitSubvendorPeriod(labelText);
           var subvendor = sp.subvendor, period = sp.period;
 
@@ -322,7 +331,7 @@
           var rec = {
             subvendor: subvendor, period: period, name: nameText, amount: amount, rate: rate,
             hours: hours, verify: verify, notes: notes, paidDate: paidDate, month: sheetName,
-            clientTag: b.clientTag,
+            clientTag: b.clientTag, year: yearText, unpaid: unpaid,
           };
           if (isConsultant) records.push(rec);
           else if (nameText || labelText) others.push(rec);
@@ -409,6 +418,18 @@
     return consultants;
   }
 
+  // Returns a function (rowIndex, colIndex) -> true when that Amount cell has
+  // the unpaid marker. sheet_to_json rows/cols are relative to the sheet's
+  // used range, so shift back to absolute cell addresses.
+  function unpaidCheckerFor(ws) {
+    var range = ws['!ref'] ? XLSX.utils.decode_range(ws['!ref']) : { s: { r: 0, c: 0 } };
+    return function (r, c) {
+      var cell = ws[XLSX.utils.encode_cell({ r: r + range.s.r, c: c + range.s.c })];
+      var fg = cell && cell.s && cell.s.fgColor;
+      return !!(fg && typeof fg.rgb === 'string' && fg.rgb.toUpperCase().slice(-6) === 'FFFF00');
+    };
+  }
+
   function processWorkbook(wb) {
     var candidateSheets = wb.SheetNames.filter(function (n) { return n.trim().toLowerCase() !== 'left'; });
     var monthlyRecords = [];
@@ -422,7 +443,7 @@
     candidateSheets.forEach(function (name) {
       var ws = wb.Sheets[name];
       var rows = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, defval: null });
-      var parsed = parseSheet(rows, name);
+      var parsed = parseSheet(rows, name, unpaidCheckerFor(ws));
       if (parsed.records.length) monthOrder.push(name);
       monthlyRecords = monthlyRecords.concat(parsed.records);
       otherPayments = otherPayments.concat(parsed.others);
@@ -433,7 +454,7 @@
     if (leftSheetName) {
       var ws2 = wb.Sheets[leftSheetName];
       var rows2 = XLSX.utils.sheet_to_json(ws2, { header: 1, raw: true, defval: null });
-      leftRecords = parseSheet(rows2, 'Left').records;
+      leftRecords = parseSheet(rows2, 'Left', unpaidCheckerFor(ws2)).records;
     }
 
     var consultants = buildConsultants(monthlyRecords, leftRecords, monthOrder)
@@ -1054,7 +1075,7 @@
     reader.onload = function (e) {
       try {
         var bytes = new Uint8Array(e.target.result);
-        var wb = XLSX.read(bytes, { type: 'array', cellDates: true });
+        var wb = XLSX.read(bytes, { type: 'array', cellDates: true, cellStyles: true });
         var result = processWorkbook(wb);
         if (result.ok) {
           state.data = result;

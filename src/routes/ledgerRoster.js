@@ -89,13 +89,15 @@ async function saveLedgerRoster(conn, { organizationId, importId, data }) {
     toNullableNumber(p.hours),
     toNullableDate(p.paidDate),
     toNullableText(p.notes, 500),
+    toNullableText(p.year, 32),
+    p.unpaid ? 1 : 0,
   ]);
 
   await conn.query(
     `INSERT INTO ledger_roster_entries
        (import_id, organization_id, consultant_id, subvendor_id, name,
         subvendor_text, client_tag, month_label, period_text, amount, rate,
-        hours, paid_date, notes)
+        hours, paid_date, notes, year_text, unpaid)
      VALUES ?`,
     [rows]
   );
