@@ -104,6 +104,18 @@
   .fin-src { font-size: 11px; color: var(--text-muted); }
   .fin-num { text-align: right; font-variant-numeric: tabular-nums; }
   .fin-total-row td { font-weight: 600; background: var(--paper); border-top: 1px solid var(--line); }
+  .fin-month-row td { background: #F3F1EA; font-weight: 600; color: var(--ink); font-size: 13px; padding-top: 9px; padding-bottom: 9px; }
+  .fin-month-row .fin-src { font-weight: 500; margin-left: 8px; }
+  .fin-subtotal-row td { font-weight: 600; font-size: 12.5px; border-bottom: 2px solid var(--line); }
+  .fin-grand-row td { font-weight: 700; background: #EAF3EE; color: #2E6F52; border-top: 2px solid #2E6F52; }
+  .fin-months { position: relative; }
+  .fin-months-btn { border: 1px solid var(--line); border-radius: 6px; padding: 6px 10px; font: inherit; font-size: 12.5px; background: var(--paper); color: var(--text); cursor: pointer; min-width: 170px; text-align: left; }
+  .fin-months-panel { position: absolute; z-index: 20; top: calc(100% + 4px); left: 0; background: #fff; border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 6px 18px rgba(0,0,0,.08); padding: 8px; min-width: 230px; max-height: 340px; overflow-y: auto; }
+  .fin-months-panel label { display: flex; align-items: center; gap: 8px; padding: 4px 6px; font-size: 12.5px; cursor: pointer; border-radius: 4px; }
+  .fin-months-panel label:hover { background: var(--paper); }
+  .fin-months-panel .fin-months-actions { display: flex; justify-content: space-between; gap: 8px; padding: 2px 6px 6px; border-bottom: 1px solid var(--line); margin-bottom: 4px; }
+  .fin-months-panel .fin-count { margin-left: auto; color: var(--text-muted); font-size: 11px; }
+  .fin-linkbtn { background: none; border: none; padding: 0; color: var(--pine); font: inherit; font-size: 12px; cursor: pointer; text-decoration: underline; }
 </style>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="/import-hours.js"></script>
@@ -134,7 +146,9 @@
     user: null,
     loading: true,
     invoices: [],
-    periodFilter: currentYearMonth(),
+    selectedMonths: [],   // invoice months ('YYYY-MM') to show; empty = all months
+    months: [],           // [{ month, count }] from GET /api/invoices/months
+    monthsOpen: false,
     paymentFilter: 'all',
     timesheetFilter: 'all',
     showInactive: false,
@@ -168,6 +182,10 @@
     return '<span class="fin-inactive-tag">' + (inv.consultant_status === 'inactive' ? 'Inactive' : 'Status not set') + '</span>';
   }
 
+  function invMonthKey(inv) {
+    return inv.period_key || (inv.period_month ? String(inv.period_month).slice(0, 7) : '');
+  }
+
   function renderRow(inv, idx) {
     var savedTick = state.savedId === inv.id ? '<span class="fin-saved-tick">Saved</span>' : '';
     return (
@@ -176,8 +194,8 @@
         '<td class="fin-invoice-no">' + escapeHtml(inv.invoice_number) + '</td>' +
         '<td class="fin-consultant">' + escapeHtml(inv.consultant_name) + inactiveTag(inv) + '</td>' +
         '<td>' + clientProgramCell(inv) + '</td>' +
-        '<td>' + (inv.period_month ? escapeHtml(monthLabel(inv.period_month)) : '') + '</td>' +
-        '<td class="fin-muted">' + (inv.period_month ? escapeHtml(ImportHours.monthKeyLabel(ImportHours.hoursMonthKey(String(inv.period_month).slice(0, 7)))) : '') + '</td>' +
+        '<td>' + (invMonthKey(inv) ? escapeHtml(ImportHours.monthKeyLabel(invMonthKey(inv))) : '') + '</td>' +
+        '<td class="fin-muted">' + (invMonthKey(inv) ? escapeHtml(ImportHours.monthKeyLabel(ImportHours.hoursMonthKey(invMonthKey(inv)))) : '') + '</td>' +
         '<td>' + (inv.rate !== null ? '$' + money(inv.rate) + '/hr' : '<span class="fin-muted">—</span>') + '</td>' +
         '<td><input class="fin-num-input" type="number" step="0.25" data-field="hours" value="' + (inv.hours !== null && inv.hours !== undefined ? inv.hours : '') + '" placeholder="—"></td>' +
         '<td><input class="fin-num-input" type="number" step="0.01" data-field="amount" value="' + (inv.amount !== null && inv.amount !== undefined ? inv.amount : '') + '" placeholder="—"></td>' +
@@ -200,17 +218,82 @@
     );
   }
 
+  function fmtHours(n) {
+    return Number(n).toLocaleString('en-US', { maximumFractionDigits: 2 });
+  }
+
+  // All shown invoices grouped by invoice month (newest first): a month header
+  // row, the invoices (S.No. runs on across the whole list), a subtotal row per
+  // month and a grand total at the bottom. Totals follow the active filters
+  // because they are summed from exactly the rows shown.
   function renderTable() {
     if (state.loading) return '<div class="fin-loading">Loading…</div>';
-    if (!state.invoices.length) return '<div class="fin-empty-state">No invoices for ' + escapeHtml(monthLabel(state.periodFilter)) + ' with these filters. Pick another invoice month, generate some above, or widen the filters.</div>';
+    if (!state.invoices.length) {
+      return '<div class="fin-empty-state">No invoices for ' + (state.selectedMonths.length ? 'the selected month(s)' : 'any month') +
+        ' with these filters. Generate some above, import hours, or widen the filters.</div>';
+    }
+    var COLS = 15;
+    var groups = [];
+    var byKey = {};
+    state.invoices.forEach(function (inv) {
+      var k = invMonthKey(inv);
+      if (!byKey[k]) { byKey[k] = { key: k, rows: [] }; groups.push(byKey[k]); }
+      byKey[k].rows.push(inv);
+    });
+    groups.sort(function (a, b) { return b.key.localeCompare(a.key); });
+    var sno = 0, gHours = 0, gAmount = 0;
+    var sumCells = function (label, hours, amount, cls) {
+      return '<tr class="' + cls + '"><td colspan="7" style="text-align:right">' + label + '</td>' +
+        '<td class="fin-num">' + fmtHours(hours) + ' h</td><td class="fin-num">$' + money(amount) + '</td><td colspan="' + (COLS - 9) + '"></td></tr>';
+    };
+    var body = groups.map(function (g) {
+      var h = 0, a = 0;
+      var rows = g.rows.map(function (inv) {
+        h += Number(inv.hours) || 0; a += Number(inv.amount) || 0;
+        return renderRow(inv, sno++);
+      }).join('');
+      gHours += h; gAmount += a;
+      return '<tr class="fin-month-row"><td colspan="' + COLS + '">' + escapeHtml(ImportHours.monthKeyLabel(g.key)) +
+          '<span class="fin-src">Hours for ' + escapeHtml(ImportHours.monthKeyLabel(ImportHours.hoursMonthKey(g.key))) + ' · ' + g.rows.length + ' invoice' + (g.rows.length === 1 ? '' : 's') + '</span></td></tr>' +
+        rows + sumCells('Subtotal ' + escapeHtml(ImportHours.monthKeyLabel(g.key)), h, a, 'fin-subtotal-row');
+    }).join('');
+    var grand = sumCells('Total — ' + state.invoices.length + ' invoice' + (state.invoices.length === 1 ? '' : 's') + ' across ' + groups.length + ' month' + (groups.length === 1 ? '' : 's'), gHours, gAmount, 'fin-grand-row');
     return (
       '<div class="fin-table-wrap"><table class="fin-table"><thead><tr>' +
         '<th>S.No.</th><th>Invoice #</th><th>Consultant</th><th>Client / Program</th><th>Invoice month</th><th title="Billed one month in arrears: the hours on this invoice are for the month before">Hours for</th><th>Rate</th>' +
         '<th>Hours</th><th>Amount</th><th>Net terms</th><th>Due date</th><th>Payment</th><th>Timesheet</th><th>Notes</th><th></th>' +
-      '</tr></thead><tbody>' +
-      state.invoices.map(renderRow).join('') +
-      '</tbody></table></div>'
+      '</tr></thead><tbody>' + body + '</tbody><tfoot>' + grand + '</tfoot></table></div>'
     );
+  }
+
+  function monthsButtonLabel() {
+    var sel = state.selectedMonths;
+    if (!sel.length) return 'All months';
+    var sorted = sel.slice().sort().reverse();
+    if (sorted.length <= 2) return sorted.map(ImportHours.monthKeyLabel).join(', ');
+    return sorted.length + ' months selected';
+  }
+
+  function renderMonthsPicker() {
+    var sel = state.selectedMonths;
+    var known = {};
+    var opts = state.months.slice();
+    opts.forEach(function (m) { known[m.month] = true; });
+    sel.forEach(function (k) { if (!known[k]) opts.push({ month: k, count: 0 }); }); // a selected month with no invoices left
+    opts.sort(function (a, b) { return b.month.localeCompare(a.month); });
+    return '<div class="fin-months">' +
+      '<button type="button" class="fin-months-btn" data-action="months-toggle" aria-expanded="' + (state.monthsOpen ? 'true' : 'false') + '">Invoice months: <strong>' + escapeHtml(monthsButtonLabel()) + '</strong> ▾</button>' +
+      (state.monthsOpen
+        ? '<div class="fin-months-panel">' +
+            '<div class="fin-months-actions"><button type="button" class="fin-linkbtn" data-action="months-all">All months</button><button type="button" class="fin-linkbtn" data-action="months-clear">Clear</button></div>' +
+            '<label><input type="checkbox" data-month-all' + (sel.length ? '' : ' checked') + '>All months</label>' +
+            (opts.length ? opts.map(function (m) {
+              return '<label><input type="checkbox" data-month="' + escapeHtml(m.month) + '"' + (sel.indexOf(m.month) > -1 ? ' checked' : '') + '>' +
+                escapeHtml(ImportHours.monthKeyLabel(m.month)) + '<span class="fin-count">' + m.count + '</span></label>';
+            }).join('') : '<div class="fin-src" style="padding:4px 6px">No invoices yet.</div>') +
+          '</div>'
+        : '') +
+      '</div>';
   }
 
   function renderGenerateResult() {
@@ -263,12 +346,7 @@
       renderGenerateResult() +
       '<div class="fin-controls">' +
         '<label class="fin-check"><input type="checkbox" id="filter-show-inactive"' + (state.showInactive ? ' checked' : '') + '>Show inactive consultants</label>' +
-        '<label class="fin-check">Invoice month' +
-          '<button type="button" class="fin-btn fin-btn-small" data-action="period-prev" title="Previous month" aria-label="Previous month">‹</button>' +
-          '<input type="month" id="filter-period" required value="' + escapeHtml(state.periodFilter) + '">' +
-          '<button type="button" class="fin-btn fin-btn-small" data-action="period-next" title="Next month" aria-label="Next month">›</button>' +
-        '</label>' +
-        '<span class="fin-src">Hours for ' + escapeHtml(ImportHours.monthKeyLabel(ImportHours.hoursMonthKey(state.periodFilter))) + '</span>' +
+        renderMonthsPicker() +
         '<select id="filter-payment">' +
           '<option value="all"' + (state.paymentFilter === 'all' ? ' selected' : '') + '>All payment statuses</option>' +
           '<option value="unpaid"' + (state.paymentFilter === 'unpaid' ? ' selected' : '') + '>Unpaid</option>' +
@@ -477,7 +555,7 @@
       })
       .then(function (b) {
         imp.busy = false;
-        if (apply) { imp.result = b; imp.preview = null; state.invoices = []; loadInvoices(); }
+        if (apply) { imp.result = b; imp.preview = null; state.invoices = []; loadMonths(); loadInvoices(); }
         else { imp.preview = b; imp.result = null; }
         render();
       })
@@ -614,11 +692,19 @@
     });
   }
 
+  // Invoice months with counts for the month selector (same visibility as the list).
+  function loadMonths() {
+    return fetch('/api/invoices/months' + (state.showInactive ? '?includeInactive=1' : ''))
+      .then(function (res) { return res.ok ? res.json() : { months: [] }; })
+      .catch(function () { return { months: [] }; })
+      .then(function (b) { state.months = b.months || []; render(); });
+  }
+
   function loadInvoices() {
     state.loading = true;
     render();
     var params = new URLSearchParams();
-    if (state.periodFilter) params.set('periodMonth', state.periodFilter);
+    if (state.selectedMonths.length) params.set('months', state.selectedMonths.slice().sort().join(','));
     if (state.paymentFilter !== 'all') params.set('paymentStatus', state.paymentFilter);
     if (state.timesheetFilter !== 'all') params.set('timesheetSubmitted', state.timesheetFilter);
     if (state.showInactive) params.set('includeInactive', '1');
@@ -686,13 +772,15 @@
   }
 
   appEl.addEventListener('click', function (e) {
-    var periodStep = e.target.closest('[data-action="period-prev"], [data-action="period-next"]');
-    if (periodStep) {
-      state.periodFilter = periodStep.getAttribute('data-action') === 'period-prev'
-        ? ImportHours.hoursMonthKey(state.periodFilter) : ImportHours.invoiceMonthKey(state.periodFilter);
+    if (e.target.closest('[data-action="months-toggle"]')) { state.monthsOpen = !state.monthsOpen; render(); return; }
+    if (e.target.closest('[data-action="months-all"], [data-action="months-clear"]')) {
+      // Both show every month again: an empty selection means "All months".
+      state.selectedMonths = [];
+      if (e.target.closest('[data-action="months-all"]')) state.monthsOpen = false;
       loadInvoices();
       return;
     }
+    if (state.monthsOpen && !e.target.closest('.fin-months')) { state.monthsOpen = false; render(); }
     if (e.target.closest('[data-action="imp-apply"]')) {
       if (state.imp.busy) return;
       impCall(true);
@@ -779,7 +867,10 @@
         // Inactive consultants were just invoiced on purpose -- show them.
         if (state.generateForm.includeInactive) state.showInactive = true;
         // Show the invoice month that was just generated.
-        if (/^\d{4}-\d{2}$/.test(state.generateForm.periodMonth || '')) state.periodFilter = state.generateForm.periodMonth;
+        // Keep "All months"; when specific months are picked, add the one just generated.
+        var gm = state.generateForm.periodMonth || '';
+        if (/^\d{4}-\d{2}$/.test(gm) && state.selectedMonths.length && state.selectedMonths.indexOf(gm) === -1) state.selectedMonths.push(gm);
+        loadMonths();
         loadInvoices();
       }).catch(function (err) {
         state.generating = false;
@@ -811,6 +902,7 @@
       fetch('/api/invoices/' + delId, { method: 'DELETE' }).then(function (res) {
         if (!res.ok) throw new Error('delete failed');
         state.invoices = state.invoices.filter(function (i) { return i.id !== delId; });
+        loadMonths();
         render();
       }).catch(function () {
         alert('Could not delete that invoice. Please try again.');
@@ -871,11 +963,16 @@
       return;
     }
 
-    var filterPeriod = e.target.closest('#filter-period');
-    if (filterPeriod) {
-      // One invoice month at a time: a cleared picker keeps the month it had.
-      if (/^\d{4}-\d{2}$/.test(filterPeriod.value)) { state.periodFilter = filterPeriod.value; loadInvoices(); }
-      else filterPeriod.value = state.periodFilter;
+    var monthBox = e.target.closest('[data-month], [data-month-all]');
+    if (monthBox) {
+      if (monthBox.hasAttribute('data-month-all')) state.selectedMonths = [];
+      else {
+        var mk = monthBox.getAttribute('data-month');
+        var at = state.selectedMonths.indexOf(mk);
+        if (monthBox.checked && at === -1) state.selectedMonths.push(mk);
+        if (!monthBox.checked && at > -1) state.selectedMonths.splice(at, 1);
+      }
+      loadInvoices();
       return;
     }
     var filterPayment = e.target.closest('#filter-payment');
@@ -883,7 +980,7 @@
     var filterTimesheet = e.target.closest('#filter-timesheet');
     if (filterTimesheet) { state.timesheetFilter = filterTimesheet.value; loadInvoices(); return; }
     var filterInactive = e.target.closest('#filter-show-inactive');
-    if (filterInactive) { state.showInactive = filterInactive.checked; loadInvoices(); return; }
+    if (filterInactive) { state.showInactive = filterInactive.checked; loadMonths(); loadInvoices(); return; }
     var genInactive = e.target.closest('#gen-include-inactive');
     if (genInactive) { state.generateForm.includeInactive = genInactive.checked; return; }
     var genField = e.target.closest('#gen-period, #gen-net-terms, #gen-issue-date');
@@ -912,13 +1009,9 @@
   }).then(function (data) {
     if (!data) return;
     state.user = data.user;
-    // Month picker starts on the newest invoice month that has invoices (else this month).
-    fetch('/api/invoices/months').then(function (res) { return res.ok ? res.json() : { months: [] }; })
-      .catch(function () { return { months: [] }; })
-      .then(function (b) {
-        if (b.months && b.months.length) state.periodFilter = b.months[0].month;
-        loadInvoices();
-      });
+    // Default view: every invoice month, grouped (the selector narrows it).
+    loadMonths();
+    loadInvoices();
   }).catch(function () {
     window.location.href = '/login.html';
   });

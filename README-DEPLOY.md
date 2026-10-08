@@ -226,6 +226,16 @@ schema change.
   same month twice for one consultant/client is skipped and listed. A second
   "Name" header row below the table (pay batches) ends that sheet's table.
 
+### Update: Client invoices list — all months grouped, totals, multi-month selector
+
+The Client invoices list now shows every invoice month by default, grouped
+newest first: a month header ("Jan 2026 · Hours for Dec 2025 · N invoices"),
+the invoices, a subtotal (hours, amount) per month and a grand total at the
+bottom. "Invoice months" is a checkbox dropdown (with counts, All months,
+Clear) to show only some months. `GET /api/invoices?months=2026-01,2026-02`
+(`periodMonth=` still works) returns `totals` for exactly the invoices listed,
+so totals follow Show inactive / payment / timesheet filters. No schema change.
+
 ### Update: client invoices start at 0 hours; clearing client invoices
 
 Generated client invoices now start at **0 hours / $0** until hours are typed

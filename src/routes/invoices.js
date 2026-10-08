@@ -503,10 +503,31 @@ router.post('/import-hours', async (req, res, next) => {
   }
 });
 
-// GET /api/invoices?periodMonth=&paymentStatus=&timesheetSubmitted=&consultantId=&includeInactive=
+// GET /api/invoices?months=2026-01,2026-02&periodMonth=&paymentStatus=&timesheetSubmitted=&consultantId=&includeInactive=
+// months: comma-separated invoice months (period_month); omitted = all months.
+// periodMonth (one month) is still accepted. The response also carries totals
+// over exactly the invoices returned: { count, hours, amount, byMonth: [{ month, count, hours, amount }] }.
 // Only invoices for Active consultants are listed unless includeInactive=1,
 // which also lists Inactive and not-yet-set (NULL) consultants' invoices and
 // unpaid invoices left over on client/program pairings the consultant has left.
+// Count / hours / amount over a list of invoice rows, overall and per invoice month (newest first).
+function invoiceTotals(rows) {
+  const r2 = (n) => Math.round(n * 100) / 100;
+  const byMonth = new Map();
+  let hours = 0, amount = 0;
+  for (const row of rows) {
+    const k = row.period_key; // DATE_FORMAT(period_month, '%Y-%m') -- no time-zone shifts
+    if (!byMonth.has(k)) byMonth.set(k, { month: k, count: 0, hours: 0, amount: 0 });
+    const m = byMonth.get(k);
+    const h = Number(row.hours) || 0, a = Number(row.amount) || 0;
+    m.count++; m.hours += h; m.amount += a; hours += h; amount += a;
+  }
+  return {
+    count: rows.length, hours: r2(hours), amount: r2(amount),
+    byMonth: [...byMonth.values()].sort((x, y) => y.month.localeCompare(x.month)).map((m) => ({ ...m, hours: r2(m.hours), amount: r2(m.amount) })),
+  };
+}
+
 router.get('/', async (req, res, next) => {
   try {
     const where = ['i.organization_id = ?'];
@@ -526,6 +547,13 @@ router.get('/', async (req, res, next) => {
       where.push('i.period_month = ?');
       params.push(periodMonth);
     }
+    if (req.query.months !== undefined && req.query.months !== '') {
+      const list = String(req.query.months).split(',').map((m) => m.trim()).filter(Boolean);
+      const firsts = list.map((m) => (/^\d{4}-\d{2}$/.test(m) ? normalizePeriodMonth(m) : null));
+      if (!list.length || list.length > 240 || firsts.some((m) => !m)) return res.status(400).json({ error: 'months must look like 2026-01,2026-02.' });
+      where.push('i.period_month IN (' + firsts.map(() => '?').join(',') + ')');
+      params.push(...new Set(firsts));
+    }
     if (req.query.paymentStatus) {
       if (!['paid', 'unpaid'].includes(req.query.paymentStatus)) return res.status(400).json({ error: 'paymentStatus must be paid or unpaid.' });
       where.push('i.payment_status = ?');
@@ -542,7 +570,8 @@ router.get('/', async (req, res, next) => {
     }
 
     const [rows] = await pool.query(
-      `SELECT i.*, c.name AS consultant_name, c.status AS consultant_status, cl.name AS client_name, p.name AS program_name
+      `SELECT i.*, c.name AS consultant_name, c.status AS consultant_status, cl.name AS client_name, p.name AS program_name,
+         DATE_FORMAT(i.period_month, '%Y-%m') AS period_key
        FROM invoices i
        JOIN consultants c ON c.id = i.consultant_id
        LEFT JOIN clients cl ON cl.id = i.client_id
@@ -552,7 +581,7 @@ router.get('/', async (req, res, next) => {
        ORDER BY i.period_month DESC, i.id DESC`,
       params
     );
-    res.json({ invoices: rows });
+    res.json({ invoices: rows, totals: invoiceTotals(rows) });
   } catch (err) {
     next(err);
   }

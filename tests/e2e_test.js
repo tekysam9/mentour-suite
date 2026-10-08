@@ -1139,6 +1139,35 @@ async function main() {
       check('w2 org invoice months are Apr, Mar, Feb, Jan 2026 only (no Dec 2026)',
         r.body.months.map((m) => m.month).join(',') === '2026-04,2026-03,2026-02,2026-01', r.body);
 
+      // 33g. Client invoices list: all months by default (grouped by invoice month with
+      // totals), or a chosen set of months via ?months=; totals follow the filters.
+      r = await w2Owner.fetch('/api/invoices');
+      check('list with no month filter returns every month (11 invoices), each row has period_key',
+        r.status === 200 && r.body.invoices.length === 11 && r.body.invoices.every((i) => /^\d{4}-\d{2}$/.test(i.period_key)), r.body);
+      check('totals over everything: 11 invoices, 1744 h, $103,676.00; per month newest first',
+        r.body.totals.count === 11 && r.body.totals.hours === 1744 && r.body.totals.amount === 103676 &&
+        r.body.totals.byMonth.map((m) => m.month + ':' + m.count + ':' + m.amount).join(',') === '2026-04:2:18744,2026-03:3:27376,2026-02:3:28560,2026-01:3:28996', r.body.totals);
+      r = await w2Owner.fetch('/api/invoices?months=2026-01,2026-03');
+      check('months=2026-01,2026-03 returns only those two months (6 invoices), newest month first',
+        r.status === 200 && r.body.invoices.length === 6 && r.body.invoices.every((i) => ['2026-01', '2026-03'].includes(i.period_key)) &&
+        r.body.invoices[0].period_key === '2026-03', r.body);
+      check('totals recalculated for the chosen months: 6 invoices, 920 h, $56,372.00',
+        r.body.totals.count === 6 && r.body.totals.hours === 920 && r.body.totals.amount === 56372 && r.body.totals.byMonth.length === 2, r.body.totals);
+      const janInv = r.body.invoices.find((i) => i.period_key === '2026-01' && i.consultant_name === 'Dev Sample');
+      await w2Owner.fetch('/api/invoices/' + janInv.id, { method: 'PATCH', body: JSON.stringify({ paymentStatus: 'unpaid' }) });
+      r = await w2Owner.fetch('/api/invoices?months=2026-01,2026-03&paymentStatus=unpaid');
+      check('totals respect the payment filter: 1 unpaid invoice, 120 h, $4,800.00',
+        r.status === 200 && r.body.invoices.length === 1 && r.body.totals.count === 1 && r.body.totals.hours === 120 && r.body.totals.amount === 4800, r.body);
+      r = await w2Owner.fetch('/api/invoices?months=2026-02');
+      check('a single month via months= works (3 invoices)', r.body.invoices.length === 3 && r.body.totals.count === 3, r.body);
+      r = await w2Owner.fetch('/api/invoices?periodMonth=2026-02');
+      check('periodMonth= still works (backward compatible)', r.status === 200 && r.body.invoices.length === 3 && r.body.totals.amount === 28560, r.body);
+      r = await w2Owner.fetch('/api/invoices?months=2026-13');
+      const rBad = await w2Owner.fetch('/api/invoices?months=Jan');
+      check('bad months value returns 400', r.status === 400 && rBad.status === 400, [r, rBad]);
+      r = await otherOrgUser.fetch('/api/invoices?months=2026-01,2026-02');
+      check('months filter stays scoped to the caller’s org', r.status === 200 && !r.body.invoices.some((i) => i.consultant_name === 'Asha Test'), r.body);
+
       // 34. Fin-Module "Subvendor payments": months already paid are read
       // read-only from the latest Ledger upload; December 2026 onwards can be
       // generated from the Ledger rate (else the Margin cost rate). Own org.

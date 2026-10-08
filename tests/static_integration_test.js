@@ -53,8 +53,10 @@ async function main() {
     check('arrears mapping: Dec 2025 hours -> Jan 2026 invoice; Jan 2026 invoice is for Dec 2025 hours; Sep -> Oct',
       IH.invoiceMonthKey('2025-12') === '2026-01' && IH.hoursMonthKey('2026-01') === '2025-12' && IH.invoiceMonthKey('2026-09') === '2026-10' &&
       IH.resolveHourColumns(w2.map(IH.parseHoursHeader), 2026).map((c) => c.invoiceLabel).join(', ') === 'Jan 2026, Feb 2026, Mar 2026, Apr 2026, May 2026, Jun 2026, Jul 2026, Aug 2026, Sep 2026, Oct 2026');
-    check('invoices.html table has Invoice month + Hours for columns and a month picker',
-      invHtml.includes('<th>Invoice month</th>') && invHtml.includes('>Hours for</th>') && invHtml.includes('id="filter-period"') && invHtml.includes('/api/invoices/months'));
+    check('invoices.html table has Invoice month + Hours for columns and a month selector',
+      invHtml.includes('<th>Invoice month</th>') && invHtml.includes('>Hours for</th>') && invHtml.includes('data-action="months-toggle"') && invHtml.includes('/api/invoices/months'));
+    check('invoices.html list: grouped by month with subtotal + grand total rows, multi-month selector sends ?months=',
+      invHtml.includes('fin-month-row') && invHtml.includes('fin-subtotal-row') && invHtml.includes('fin-grand-row') && invHtml.includes("params.set('months'") && invHtml.includes('data-month-all'));
     check('lone Hours/Dec, Year 2026 -> Dec 2026 (not guessed back to 2025); in the future during Oct 2026',
       resolve(['Hours/Dec'], 2026) === 'Dec 2026' && IH.isFutureKey('2026-12', '2026-10') && !IH.isFutureKey('2026-10', '2026-10') && !IH.isFutureKey('2025-12', '2026-10'));
 
