@@ -963,6 +963,13 @@ async function main() {
       r = await leftOwner.fetch('/api/invoices/generate', { method: 'POST', body: JSON.stringify({ periodMonth: '2026-11' }) });
       check('only the active client/program is invoiced; the left one is skipped',
         r.status === 201 && r.body.created.length === 1 && r.body.skipped.some((x) => /left this client/.test(x.reason)), r.body);
+      // An invoice generated for the old pairing before it was marked left no longer lists.
+      r = await leftOwner.fetch('/api/invoices/generate', { method: 'POST', body: JSON.stringify({ periodMonth: '2026-11', includeInactive: true }) });
+      check('includeInactive generation also bills the left pairing', r.status === 201 && r.body.created.length === 1, r.body);
+      r = await leftOwner.fetch('/api/invoices?periodMonth=2026-11');
+      check('list hides the unpaid invoice on the left pairing', r.body.invoices.length === 1 && r.body.invoices[0].client_name === 'State of RI', r.body);
+      r = await leftOwner.fetch('/api/invoices?periodMonth=2026-11&includeInactive=1');
+      check('includeInactive=1 shows it again', r.body.invoices.length === 2, r.body);
       r = await leftOwner.fetch('/api/invoices?periodMonth=2026-11');
       check('the one invoice is State of RI / IRG at $100',
         r.body.invoices.length === 1 && r.body.invoices[0].client_name === 'State of RI' && r.body.invoices[0].program_name === 'IRG' && Number(r.body.invoices[0].rate) === 100, r.body);

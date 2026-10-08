@@ -272,13 +272,20 @@ router.post('/generate', async (req, res, next) => {
 
 // GET /api/invoices?periodMonth=&paymentStatus=&timesheetSubmitted=&consultantId=&includeInactive=
 // Only invoices for Active consultants are listed unless includeInactive=1,
-// which also lists Inactive and not-yet-set (NULL) consultants' invoices.
+// which also lists Inactive and not-yet-set (NULL) consultants' invoices and
+// unpaid invoices left over on client/program pairings the consultant has left.
 router.get('/', async (req, res, next) => {
   try {
     const where = ['i.organization_id = ?'];
     const params = [req.user.organization_id];
 
-    if (!isTruthyFlag(req.query.includeInactive)) where.push("c.status = 'active'");
+    if (!isTruthyFlag(req.query.includeInactive)) {
+      where.push("c.status = 'active'");
+      // Invoices generated before a pairing was marked left: hide the unpaid
+      // ones dated after the consultant left that client/program (all of them
+      // when the file gives no left date). Paid history and months worked stay.
+      where.push("NOT (a.status = 'left' AND i.payment_status = 'unpaid' AND (a.left_date IS NULL OR i.period_month > a.left_date))");
+    }
 
     const periodMonth = normalizePeriodMonth(req.query.periodMonth || null);
     if (req.query.periodMonth) {
@@ -307,6 +314,7 @@ router.get('/', async (req, res, next) => {
        JOIN consultants c ON c.id = i.consultant_id
        LEFT JOIN clients cl ON cl.id = i.client_id
        LEFT JOIN programs p ON p.id = i.program_id
+       LEFT JOIN consultant_assignments a ON a.id = i.assignment_id
        WHERE ${where.join(' AND ')}
        ORDER BY i.period_month DESC, i.id DESC`,
       params
