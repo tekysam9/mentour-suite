@@ -105,6 +105,7 @@
   .fin-num { text-align: right; font-variant-numeric: tabular-nums; }
   .fin-total-row td { font-weight: 600; background: var(--paper); border-top: 1px solid var(--line); }
 </style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 </head>
 <body>
 <div id="app"></div>
@@ -141,6 +142,11 @@
     generateResult: null,
     savedId: null,
     tab: 'client',
+    imp: {
+      fileName: null, rows: [], months: [], year: String(new Date().getFullYear()), yearDetected: false,
+      netTerms: 'NET30', paymentStatus: 'paid', timesheet: 'yes',
+      busy: false, error: null, preview: null, result: null,
+    },
     sv: {
       loading: false, loaded: false, invoices: [], subvendors: [], ledgerFile: null,
       periodFilter: '', subvendorFilter: '', kindFilter: 'all',
@@ -422,6 +428,137 @@
     );
   }
 
+
+  /* ===== Import hours: past/periodic client invoices from an Excel hours sheet ===== */
+  var IMP_MONTHS = { jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12 };
+  var IMP_MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+  // Finds the header row (a Name column plus "Hours/<month>" columns), then
+  // returns one row per consultant: { name, client, hours: { monthNumber: hours } }.
+  function parseHoursWorkbook(wb) {
+    for (var si = 0; si < wb.SheetNames.length; si++) {
+      var grid = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[si]], { header: 1, raw: true, defval: null });
+      for (var hr = 0; hr < Math.min(grid.length, 25); hr++) {
+        var head = grid[hr] || [];
+        var nameCol = -1, clientCol = -1, hourCols = [], years = {};
+        head.forEach(function (cell, c) {
+          var t = typeof cell === 'string' ? cell.replace(/ /g, ' ').trim() : '';
+          if (!t) return;
+          var hm = /^hours?\s*[\/\-–]\s*([A-Za-z]{3,9})\.?\s*(?:'|’|\s)?\s*(\d{4}|\d{2})?$/i.exec(t);
+          if (hm && IMP_MONTHS[hm[1].slice(0, 3).toLowerCase()]) {
+            hourCols.push({ col: c, month: IMP_MONTHS[hm[1].slice(0, 3).toLowerCase()] });
+            if (hm[2]) years[hm[2].length === 2 ? 2000 + Number(hm[2]) : Number(hm[2])] = true;
+          } else if (nameCol < 0 && /^(name|consultant|resource)\b/i.test(t)) nameCol = c;
+          else if (clientCol < 0 && /client|account/i.test(t)) clientCol = c;
+        });
+        if (nameCol < 0 || clientCol < 0 || !hourCols.length) continue;
+        var rows = [];
+        for (var r = hr + 1; r < grid.length; r++) {
+          var row = grid[r] || [];
+          var name = row[nameCol] === null || row[nameCol] === undefined ? '' : String(row[nameCol]).replace(/ /g, ' ').trim();
+          if (!name || /^total/i.test(name)) continue;
+          var hours = {};
+          hourCols.forEach(function (hc) {
+            var v = row[hc.col];
+            var n = typeof v === 'number' ? v : (typeof v === 'string' ? parseFloat(v.replace(/,/g, '')) : NaN);
+            if (isFinite(n) && n > 0) hours[hc.month] = n;
+          });
+          rows.push({ name: name, client: row[clientCol] === null || row[clientCol] === undefined ? '' : String(row[clientCol]).trim(), hours: hours });
+        }
+        var yrs = Object.keys(years);
+        return {
+          sheet: wb.SheetNames[si], rows: rows, months: hourCols.map(function (h) { return h.month; }),
+          year: yrs.length === 1 ? yrs[0] : null,
+        };
+      }
+    }
+    return null;
+  }
+
+  function impMoney(n) { return '$' + Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+
+  function impPostBody(apply) {
+    var imp = state.imp;
+    return JSON.stringify({
+      rows: imp.rows, year: Number(imp.year), netTerms: imp.netTerms, paymentStatus: imp.paymentStatus,
+      timesheetSubmitted: imp.timesheet, apply: apply,
+    });
+  }
+
+  function impCall(apply) {
+    var imp = state.imp;
+    imp.busy = true; imp.error = null; render();
+    return fetch('/api/invoices/import-hours', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: impPostBody(apply) })
+      .then(function (res) {
+        return res.json().catch(function () { return {}; }).then(function (b) {
+          if (!res.ok) throw new Error(b.error || 'The import failed.');
+          return b;
+        });
+      })
+      .then(function (b) {
+        imp.busy = false;
+        if (apply) { imp.result = b; imp.preview = null; state.invoices = []; loadInvoices(); }
+        else { imp.preview = b; imp.result = null; }
+        render();
+      })
+      .catch(function (err) { imp.busy = false; imp.error = err.message; render(); });
+  }
+
+  function impTable(title, headers, rows) {
+    if (!rows.length) return '';
+    return '<h3 class="fin-subtitle" style="font-size:15px;margin:18px 0 6px">' + title + ' (' + rows.length + ')</h3>' +
+      '<div class="fin-table-wrap"><table class="fin-table"><thead><tr>' + headers.map(function (h) { return '<th>' + h + '</th>'; }).join('') +
+      '</tr></thead><tbody>' + rows.join('') + '</tbody></table></div>';
+  }
+
+  function renderImportTab() {
+    var imp = state.imp;
+    var months = imp.months.map(function (m) { return IMP_MONTH_NAMES[m - 1]; }).join(', ');
+    var p = imp.preview || imp.result;
+    var out = '';
+    if (p) {
+      var sm = p.summary;
+      out += '<div class="fin-readonly-note">' + (imp.result
+        ? '<strong>Done — ' + imp.result.created + ' invoice(s) created.</strong> '
+        : 'Preview only — nothing has been created yet. ') +
+        sm.willCreate + ' to create (' + impMoney(sm.totalAmount) + '), ' + sm.skippedExisting + ' already invoiced (left untouched), ' + sm.unmatched + ' not matched.</div>';
+      if (imp.preview && sm.willCreate) {
+        out += '<div class="fin-controls" style="justify-content:flex-start"><button type="button" class="fin-btn fin-btn-primary" data-action="imp-apply"' + (imp.busy ? ' disabled' : '') + '>Create ' + sm.willCreate + ' invoice(s)</button></div>';
+      }
+      if (imp.preview) {
+        out += impTable('Will be created', ['Consultant', 'Client / Program', 'Month', 'Hours', 'Rate', 'Amount'], p.willCreate.map(function (w) {
+          return '<tr><td>' + escapeHtml(w.consultant) + '</td><td>' + escapeHtml(w.program ? w.client + ' / ' + w.program : w.client) + '</td><td>' + escapeHtml(monthLabel(w.periodMonth + '-01')) +
+            '</td><td class="fin-num">' + w.hours + '</td><td class="fin-num">' + impMoney(w.rate) + '</td><td class="fin-num">' + impMoney(w.amount) + '</td></tr>';
+        }));
+      }
+      out += impTable('Already invoiced — left as is', ['Consultant', 'Client / Program', 'Month', 'File hours', 'Invoice hours'], p.skippedExisting.map(function (w) {
+        return '<tr><td>' + escapeHtml(w.consultant) + '</td><td>' + escapeHtml(w.program ? w.client + ' / ' + w.program : w.client) + '</td><td>' + escapeHtml(monthLabel(w.periodMonth + '-01')) +
+          '</td><td class="fin-num">' + w.hours + '</td><td class="fin-num">' + (w.existingHours === null ? '—' : w.existingHours) + '</td></tr>';
+      }));
+      out += impTable('Not matched — not invoiced', ['Row', 'Consultant', 'Client column', 'Month', 'Why'], p.unmatched.map(function (u) {
+        return '<tr><td>' + u.row + '</td><td>' + escapeHtml(u.name) + '</td><td>' + escapeHtml(u.client) + '</td><td>' + (u.month ? IMP_MONTH_NAMES[u.month - 1] : '') + '</td><td>' + escapeHtml(u.reason) + '</td></tr>';
+      }));
+    }
+    return (
+      '<h2 class="fin-subtitle">Import hours.</h2>' +
+      '<p class="fin-copy">Upload an Excel sheet with a <strong>Name</strong> column, a <strong>Client</strong> column (“Program/Client” or just the client) and one <strong>Hours/&lt;month&gt;</strong> column per month (e.g. Hours/Jan). Each consultant’s hours become that month’s invoice at the billing rate already on file for the matching client/program. You’ll see a preview first; months that already have an invoice are never changed. Upload a new file any time to add more months.</p>' +
+      '<div class="fin-generate-card">' +
+        '<label>Hours file<input type="file" id="imp-file" accept=".xlsx,.xls"></label>' +
+        '<label>Year<input type="number" id="imp-year" min="2000" max="2100" value="' + escapeHtml(imp.year) + '" style="width:90px"></label>' +
+        '<label>Net terms<select id="imp-net">' + ['NET15', 'NET30', 'NET45', 'NET60', 'NET90'].map(function (nt) {
+          return '<option value="' + nt + '"' + (imp.netTerms === nt ? ' selected' : '') + '>' + nt + '</option>';
+        }).join('') + '</select></label>' +
+        '<label>Create as<select id="imp-pay"><option value="paid"' + (imp.paymentStatus === 'paid' ? ' selected' : '') + '>Paid</option><option value="unpaid"' + (imp.paymentStatus === 'unpaid' ? ' selected' : '') + '>Unpaid</option></select></label>' +
+        '<label>Timesheet<select id="imp-ts"><option value="yes"' + (imp.timesheet === 'yes' ? ' selected' : '') + '>Submitted</option><option value="no"' + (imp.timesheet === 'no' ? ' selected' : '') + '>Not yet</option></select></label>' +
+      '</div>' +
+      (imp.fileName ? '<p class="fin-copy"><strong>' + escapeHtml(imp.fileName) + '</strong> — ' + imp.rows.length + ' consultant row(s); hours columns found for ' + escapeHtml(months) + '.' +
+        (imp.yearDetected ? ' Year read from the column headings.' : ' The headings have no year, so check the Year box.') + '</p>' : '') +
+      (imp.busy ? '<p class="fin-copy">Working…</p>' : '') +
+      (imp.error ? '<div class="fin-readonly-note" role="alert" style="background:#F6E7E7;border-color:#E3BDBD;color:#8A2D2D">' + escapeHtml(imp.error) + '</div>' : '') +
+      out
+    );
+  }
+
   function render() {
     appEl.innerHTML =
       '<div class="landing-header">' +
@@ -436,8 +573,9 @@
         '<div class="fin-tabs">' +
           '<button type="button" class="fin-tab' + (state.tab === 'client' ? ' active' : '') + '" data-tab="client">Client invoices</button>' +
           '<button type="button" class="fin-tab' + (state.tab === 'subvendor' ? ' active' : '') + '" data-tab="subvendor">Subvendor payments</button>' +
+          '<button type="button" class="fin-tab' + (state.tab === 'import' ? ' active' : '') + '" data-tab="import">Import hours</button>' +
         '</div>' +
-        (state.tab === 'subvendor' ? renderSubvendorTab() : renderClientTab()) +
+        (state.tab === 'subvendor' ? renderSubvendorTab() : state.tab === 'import' ? renderImportTab() : renderClientTab()) +
       '</div>';
 
     document.getElementById('logout-btn').addEventListener('click', async function () {
@@ -547,6 +685,11 @@
   }
 
   appEl.addEventListener('click', function (e) {
+    if (e.target.closest('[data-action="imp-apply"]')) {
+      if (state.imp.busy) return;
+      impCall(true);
+      return;
+    }
     var svAct = e.target.closest('[data-action="sv-toggle-payment"], [data-action="sv-toggle-timesheet"], [data-action="sv-delete"]');
     if (svAct) {
       var svId = Number(svAct.closest('[data-sv-id]').getAttribute('data-sv-id'));
@@ -666,6 +809,36 @@
   });
 
   appEl.addEventListener('change', function (e) {
+    var impFile = e.target.closest('#imp-file');
+    if (impFile) {
+      var f = impFile.files && impFile.files[0];
+      if (!f) return;
+      var imp = state.imp;
+      imp.error = null; imp.preview = null; imp.result = null; imp.busy = true; render();
+      var reader = new FileReader();
+      reader.onload = function (ev) {
+        try {
+          var parsed = parseHoursWorkbook(XLSX.read(new Uint8Array(ev.target.result), { type: 'array' }));
+          if (!parsed) throw new Error('Could not find a header row with a Name column, a Client column and “Hours/<month>” columns.');
+          imp.fileName = f.name; imp.rows = parsed.rows; imp.months = parsed.months;
+          imp.yearDetected = !!parsed.year;
+          if (parsed.year) imp.year = String(parsed.year);
+          imp.busy = false;
+          impCall(false);
+        } catch (err) { imp.busy = false; imp.fileName = null; imp.rows = []; imp.error = err.message; render(); }
+      };
+      reader.onerror = function () { imp.busy = false; imp.error = 'Could not read the file.'; render(); };
+      reader.readAsArrayBuffer(f);
+      return;
+    }
+    var impSet = e.target.closest('#imp-year, #imp-net, #imp-pay, #imp-ts');
+    if (impSet) {
+      var im = state.imp;
+      im.year = document.getElementById('imp-year').value; im.netTerms = document.getElementById('imp-net').value;
+      im.paymentStatus = document.getElementById('imp-pay').value; im.timesheet = document.getElementById('imp-ts').value;
+      if (im.rows.length && !im.busy) impCall(false);
+      return;
+    }
     var svField = e.target.closest('[data-svfield]');
     if (svField) {
       var fid = Number(svField.closest('[data-sv-id]').getAttribute('data-sv-id'));

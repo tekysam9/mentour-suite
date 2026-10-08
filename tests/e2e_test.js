@@ -974,6 +974,52 @@ async function main() {
       check('the one invoice is State of RI / IRG at $100',
         r.body.invoices.length === 1 && r.body.invoices[0].client_name === 'State of RI' && r.body.invoices[0].program_name === 'IRG' && Number(r.body.invoices[0].rate) === 100, r.body);
 
+      // 33d. Import hours: past invoices from an uploaded hours sheet.
+      const hrsOwner = makeJar();
+      r = await hrsOwner.fetch('/api/auth/signup', { method: 'POST', body: JSON.stringify({ orgName: 'Hours Import Co', name: 'Hrs Owner', email: 'hrs@hoursimport.test', password: 'hoursimportpass1' }) });
+      check('hours-import test org signup returns 201', r.status === 201, r);
+      const hrsRec = (name, client, program, billing) => ({ name, client, program, clientDetail: client, cost: 50, billing, margin: 10, status: 'Active', employmentType: 'W2 (direct)', subvendorText: 'W2' });
+      await hrsOwner.fetch('/api/margin', { method: 'POST', body: JSON.stringify({ fileName: 'h.xlsx', data: { kpis: {}, records: [
+        hrsRec('Hana Hours', 'State of RI', 'IRG', 100), hrsRec('Ivo Hours', 'Acme', 'Acme', 80), hrsRec('Jun Hours', 'Beta', 'Rocket', 90), hrsRec('Jun Hours', 'Beta', 'Orbit', 95),
+      ] } }) });
+      const hrsRows = [
+        { name: 'Hana Hours', client: 'IRG/State of RI', hours: { 1: 160, 2: 152 } },
+        { name: 'HANA HOURS', client: 'State of RI', hours: { 3: 168 } },
+        { name: 'Ivo Hours', client: 'Acme', hours: { 1: 100, 2: 0 } },
+        { name: 'Nobody Known', client: 'Acme', hours: { 1: 10 } },
+        { name: 'Jun Hours', client: 'Beta', hours: { 1: 50 } },
+        { name: 'Jun Hours', client: 'Rocket/Beta', hours: { 1: 40 } },
+        { name: 'Ivo Hours', client: 'Wrong Client', hours: { 1: 5 } },
+      ];
+      const hrsBody = (extra) => JSON.stringify(Object.assign({ rows: hrsRows, year: 2026, netTerms: 'NET30', paymentStatus: 'paid', timesheetSubmitted: 'yes' }, extra || {}));
+      r = await hrsOwner.fetch('/api/invoices/import-hours', { method: 'POST', body: hrsBody() });
+      check('preview creates nothing but lists the plan', r.status === 200 && r.body.applied === false && r.body.summary.willCreate === 5, r.body);
+      check('preview: hours x billing rate (160 x 100 = 16000), client-only name matches, zero hours ignored',
+        r.body.willCreate.some((w) => w.consultant === 'Hana Hours' && w.periodMonth === '2026-01' && w.amount === 16000) &&
+        r.body.willCreate.some((w) => w.consultant === 'Hana Hours' && w.periodMonth === '2026-03' && w.hours === 168) &&
+        !r.body.willCreate.some((w) => w.consultant === 'Ivo Hours' && w.periodMonth === '2026-02'), r.body.willCreate);
+      check('unknown consultant, unknown client and ambiguous client are reported, not guessed',
+        r.body.unmatched.some((u) => u.name === 'Nobody Known') && r.body.unmatched.some((u) => u.client === 'Wrong Client') &&
+        r.body.unmatched.some((u) => u.client === 'Beta' && /more than one program/.test(u.reason)), r.body.unmatched);
+      r = await hrsOwner.fetch('/api/invoices?periodMonth=2026-01&includeInactive=1');
+      check('preview wrote no invoices', r.body.invoices.length === 0, r.body);
+      r = await hrsOwner.fetch('/api/invoices/import-hours', { method: 'POST', body: hrsBody({ apply: true }) });
+      check('apply creates the 5 invoices', r.status === 201 && r.body.created === 5, r.body);
+      r = await hrsOwner.fetch('/api/invoices?periodMonth=2026-01');
+      const hanaJan = r.body.invoices.find((i) => i.consultant_name === 'Hana Hours');
+      check('invoice: billed to program IRG, paid, timesheet yes, month-end issue, NET30 due',
+        !!hanaJan && hanaJan.program_name === 'IRG' && hanaJan.payment_status === 'paid' && hanaJan.timesheet_submitted === 'yes' &&
+        String(hanaJan.issue_date).slice(0, 10) === '2026-01-31' && String(hanaJan.due_date).slice(0, 10) === '2026-03-02' && Number(hanaJan.amount) === 16000 && /^INV-202601-\d{5}$/.test(hanaJan.invoice_number), hanaJan);
+      r = await hrsOwner.fetch('/api/invoices/import-hours', { method: 'POST', body: hrsBody({ apply: true }) });
+      check('re-uploading the same file creates nothing (existing months left untouched)',
+        r.status === 201 && r.body.created === 0 && r.body.skippedExisting.length === 5, r.body);
+      r = await hrsOwner.fetch('/api/invoices/import-hours', { method: 'POST', body: JSON.stringify({ rows: hrsRows, year: 'abc' }) });
+      check('bad year returns 400', r.status === 400, r);
+      r = await otherOrgUser.fetch('/api/invoices/import-hours', { method: 'POST', body: hrsBody({ apply: true }) });
+      check('another org cannot match this org’s consultants (nothing created)', r.status === 201 && r.body.created === 0, r.body);
+      r = await makeJar().fetch('/api/invoices/import-hours', { method: 'POST', body: hrsBody() });
+      check('import without a login returns 401', r.status === 401, r);
+
       // 34. Fin-Module "Subvendor payments": months already paid are read
       // read-only from the latest Ledger upload; December 2026 onwards can be
       // generated from the Ledger rate (else the Margin cost rate). Own org.

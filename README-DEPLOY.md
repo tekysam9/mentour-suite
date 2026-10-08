@@ -191,6 +191,18 @@ re-run `db/schema.sql`, then either re-upload the Margin file or run
 `npm run backfill-assignment-status` once to mark the existing pairings.
 Invoices already generated are not touched.
 
+### New: Fin-Module "Import hours" (October 2026)
+
+A third tab in Fin-Module creates client invoices from an Excel hours sheet
+(upload it again whenever there are new months). The sheet needs a Name
+column, a Client column ("Program/Client" or just the client) and one
+`Hours/<month>` column per month (e.g. `Hours/Jan`). Each consultant is matched
+by name and billing pairing by the Client column; the invoice is the hours
+times the billing rate already on file, issued on the last day of the month.
+You get a preview first (to create / already invoiced / not matched); months
+that already have an invoice are never changed, and nothing is guessed. No
+schema change.
+
 ## If you outgrow Cloud/Node.js hosting
 
 The "other companies down the line" case is already handled in the data

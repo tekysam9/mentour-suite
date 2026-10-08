@@ -10,6 +10,7 @@
 const express = require('express');
 const pool = require('../db');
 const { requireAuth } = require('../auth');
+const { normalizeName } = require('./directoryUpsert');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -262,6 +263,189 @@ router.post('/generate', async (req, res, next) => {
       billableDays: billable.billableDays,
       holidays: billable.holidays,
     });
+  } catch (err) {
+    try { await conn.rollback(); } catch (_) { /* no-op */ }
+    next(err);
+  } finally {
+    conn.release();
+  }
+});
+
+
+// POST /api/invoices/import-hours
+// Past (or periodic) invoices from an uploaded hours sheet. The browser reads
+// the workbook and sends one row per consultant:
+//   rows: [{ name, client, hours: { "1": 160, "2": 152, ... } }]   (month number -> hours)
+//   year, netTerms (default NET30), paymentStatus ('paid'|'unpaid'), timesheetSubmitted ('yes'|'no'),
+//   apply: false (default) previews, true creates.
+// Each row is matched to a Directory consultant by name and to one of that
+// consultant's billing pairings by the Client column ("Program/Client" like the
+// Margin file, or just the client). Invoice = pairing's billing rate x the
+// month's hours, issued on the last day of the month. Nothing is guessed: rows
+// that don't match exactly one pairing are reported and skipped, and a month
+// that already has an invoice for that consultant/client/program is never
+// overwritten. The apply step re-derives everything on the server in one
+// transaction, so the preview a person confirmed is not trusted blindly.
+const MAX_IMPORT_ROWS = 5000;
+// Case-insensitive, whitespace-collapsed key (the database collation compares names the same way).
+function nameKey(v) {
+  const n = normalizeName(v);
+  return n ? n.toLowerCase() : null;
+}
+
+router.post('/import-hours', async (req, res, next) => {
+  const conn = await pool.getConnection();
+  try {
+    const body = req.body || {};
+    const rows = Array.isArray(body.rows) ? body.rows : null;
+    if (!rows) return res.status(400).json({ error: 'rows must be a list.' });
+    if (rows.length > MAX_IMPORT_ROWS) return res.status(400).json({ error: 'Too many rows (max ' + MAX_IMPORT_ROWS + ').' });
+    const year = Number(body.year);
+    if (!Number.isInteger(year) || year < 2000 || year > 2100) return res.status(400).json({ error: 'year must look like 2026.' });
+    const netTerms = normalizeNetTerms(body.netTerms);
+    if (!netTerms) return res.status(400).json({ error: 'netTerms must look like NET30.' });
+    const paymentStatus = body.paymentStatus === 'unpaid' ? 'unpaid' : 'paid';
+    const timesheet = body.timesheetSubmitted === 'no' ? 'no' : 'yes';
+    const apply = isTruthyFlag(body.apply);
+    const organizationId = req.user.organization_id;
+
+    const [consultants] = await conn.query('SELECT id, name FROM consultants WHERE organization_id = ?', [organizationId]);
+    const byName = new Map();
+    for (const c of consultants) {
+      const k = nameKey(c.name);
+      byName.set(k, byName.has(k) ? null : c); // null = two consultants share the name -> ambiguous
+    }
+    const [assignments] = await conn.query(
+      `SELECT a.id AS assignment_id, a.consultant_id, a.client_id, a.program_id, a.billing,
+         cl.name AS client_name, cl.email AS client_email, cl.phone AS client_phone, cl.address AS client_address,
+         p.name AS program_name, p.email AS program_email, p.phone AS program_phone, p.address AS program_address
+       FROM consultant_assignments a
+       LEFT JOIN clients cl ON cl.id = a.client_id
+       LEFT JOIN programs p ON p.id = a.program_id
+       WHERE a.organization_id = ?`,
+      [organizationId]
+    );
+    const byConsultant = new Map();
+    for (const a of assignments) {
+      if (!byConsultant.has(a.consultant_id)) byConsultant.set(a.consultant_id, []);
+      byConsultant.get(a.consultant_id).push(a);
+    }
+
+    const unmatched = [];
+    const planned = new Map(); // assignment|month -> plan item
+    const dupKeys = new Set();
+    const noRate = [];
+
+    rows.forEach((r, idx) => {
+      const rowNo = idx + 1;
+      const nameText = String((r && r.name) || '').trim();
+      const clientText = String((r && r.client) || '').trim();
+      if (!nameText) return;
+      const months = [];
+      for (const [m, h] of Object.entries((r && r.hours) || {})) {
+        const month = Number(m);
+        const hours = Number(h);
+        if (Number.isInteger(month) && month >= 1 && month <= 12 && Number.isFinite(hours) && hours > 0) months.push({ month, hours });
+      }
+      if (!months.length) return; // nothing worked, nothing to invoice
+
+      const cons = byName.get(nameKey(nameText));
+      if (!cons) {
+        unmatched.push({ row: rowNo, name: nameText, client: clientText, reason: cons === null ? 'two consultants share this name in Directory' : 'consultant not found in Directory' });
+        return;
+      }
+      if (!clientText) {
+        unmatched.push({ row: rowNo, name: nameText, client: clientText, reason: 'no client on this row' });
+        return;
+      }
+      const mine = byConsultant.get(cons.id) || [];
+      const whole = nameKey(clientText);
+      const slash = clientText.indexOf('/');
+      const progKey = slash > -1 ? nameKey(clientText.slice(0, slash)) : null;
+      const clientKey = slash > -1 ? nameKey(clientText.slice(slash + 1)) : whole;
+      let cands = mine.filter((a) => a.client_name && nameKey(a.client_name) === whole && !a.program_id);
+      if (!cands.length) {
+        cands = mine.filter((a) => a.client_name && nameKey(a.client_name) === clientKey &&
+          (progKey === null || (a.program_name && nameKey(a.program_name) === progKey)));
+      }
+      if (!cands.length) {
+        unmatched.push({ row: rowNo, name: nameText, client: clientText, reason: 'no billing pairing for this consultant on that client/program' });
+        return;
+      }
+      if (cands.length > 1) {
+        unmatched.push({ row: rowNo, name: nameText, client: clientText, reason: 'matches more than one program — put "Program/Client" in the Client column' });
+        return;
+      }
+      const a = cands[0];
+      for (const { month, hours } of months) {
+        const key = a.assignment_id + '|' + month;
+        if (planned.has(key) || dupKeys.has(key)) {
+          planned.delete(key); dupKeys.add(key);
+          unmatched.push({ row: rowNo, name: nameText, client: clientText, month, reason: 'this consultant/client appears on more than one row for the month' });
+          continue;
+        }
+        if (a.billing === null || a.billing === undefined) {
+          noRate.push({ row: rowNo, name: nameText, client: clientText, month, reason: 'no billing rate set' });
+          continue;
+        }
+        planned.set(key, { a, cons, month, hours, rowNo });
+      }
+    });
+
+    const willCreate = [];
+    const skippedExisting = [];
+    for (const item of planned.values()) {
+      const periodMonth = year + '-' + String(item.month).padStart(2, '0') + '-01';
+      const [existing] = await conn.query(
+        `SELECT id, hours FROM invoices
+         WHERE organization_id = ? AND consultant_id = ? AND client_id <=> ? AND program_id <=> ? AND period_month = ?`,
+        [organizationId, item.cons.id, item.a.client_id, item.a.program_id, periodMonth]
+      );
+      const label = { consultant: item.cons.name, client: item.a.client_name, program: item.a.program_name, periodMonth: periodMonth.slice(0, 7), hours: item.hours };
+      if (existing.length) skippedExisting.push({ ...label, invoiceId: existing[0].id, existingHours: existing[0].hours === null ? null : Number(existing[0].hours) });
+      else willCreate.push({ ...label, rate: Number(item.a.billing), amount: Math.round(Number(item.a.billing) * item.hours * 100) / 100, _item: item, _period: periodMonth });
+    }
+    willCreate.sort((x, y) => x.periodMonth.localeCompare(y.periodMonth) || x.consultant.localeCompare(y.consultant));
+
+    const summary = {
+      willCreate: willCreate.length, skippedExisting: skippedExisting.length,
+      unmatched: unmatched.length + noRate.length,
+      totalAmount: Math.round(willCreate.reduce((t, w) => t + w.amount, 0) * 100) / 100,
+    };
+    const clean = (w) => { const { _item, _period, ...rest } = w; return rest; };
+
+    if (!apply) {
+      return res.json({ applied: false, summary, willCreate: willCreate.map(clean), skippedExisting, unmatched: unmatched.concat(noRate) });
+    }
+
+    await conn.beginTransaction();
+    const createdIds = [];
+    for (const w of willCreate) {
+      const { a, cons } = w._item;
+      const issueDate = toDateOnly(new Date(Date.UTC(year, w._item.month, 0)));
+      const dueDate = addDays(issueDate, netTermsDays(netTerms));
+      const billTo = a.program_id
+        ? { name: a.program_name, email: a.program_email, phone: a.program_phone, address: a.program_address }
+        : { name: a.client_name, email: a.client_email, phone: a.client_phone, address: a.client_address };
+      const [result] = await conn.query(
+        `INSERT INTO invoices
+           (organization_id, invoice_number, consultant_id, client_id, program_id, assignment_id,
+            period_month, rate, hours, amount, bill_to_name, bill_to_email, bill_to_phone, bill_to_address,
+            net_terms, issue_date, due_date, payment_status, timesheet_submitted)
+         VALUES (?, '', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          organizationId, cons.id, a.client_id, a.program_id, a.assignment_id,
+          w._period, a.billing, w.hours, w.amount,
+          billTo.name, billTo.email, billTo.phone, billTo.address,
+          netTerms, issueDate, dueDate, paymentStatus, timesheet,
+        ]
+      );
+      const invoiceNumber = await nextInvoiceNumber(conn, organizationId, w._period, result.insertId);
+      await conn.query('UPDATE invoices SET invoice_number = ? WHERE id = ?', [invoiceNumber, result.insertId]);
+      createdIds.push(result.insertId);
+    }
+    await conn.commit();
+    res.status(201).json({ applied: true, summary, created: createdIds.length, skippedExisting, unmatched: unmatched.concat(noRate) });
   } catch (err) {
     try { await conn.rollback(); } catch (_) { /* no-op */ }
     next(err);
