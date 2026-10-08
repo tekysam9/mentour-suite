@@ -154,8 +154,8 @@ async function nextInvoiceNumber(conn, organizationId, periodMonth, insertId) {
 // billing rate and pairings with neither a client nor a program (nothing to
 // bill). Only consultants whose Directory status is Active are invoiced by
 // default; includeInactive: true also invoices Inactive and not-yet-set
-// (NULL) consultants. New invoices start at the month's maximum billable
-// hours (see maxBillableHours) with amount = rate x hours; both stay
+// (NULL) consultants. New invoices start at 0 hours / $0 (hours come from
+// the person or the Import hours file); both stay
 // editable. Safe to re-run for the same month: existing invoices -- and any
 // hours/amount edited on them -- are left untouched.
 router.post('/generate', async (req, res, next) => {
@@ -172,8 +172,9 @@ router.post('/generate', async (req, res, next) => {
     const dueDate = addDays(issueDate, netTermsDays(netTerms));
     const organizationId = req.user.organization_id;
     const includeInactive = isTruthyFlag(body.includeInactive);
-    const billable = maxBillableHours(periodMonth);
-    const defaultHours = billable.hours;
+    // New invoices start at 0 hours / $0 until hours are typed in or imported from
+    // an hours file (Import hours tab) -- no hours are assumed.
+    const defaultHours = 0;
 
     const [assignments] = await conn.query(
       `SELECT a.id AS assignment_id, a.consultant_id, a.client_id, a.program_id, a.billing, a.status AS assignment_status, a.left_date,
@@ -260,8 +261,6 @@ router.post('/generate', async (req, res, next) => {
       skippedInactive,
       includeInactive,
       defaultHours,
-      billableDays: billable.billableDays,
-      holidays: billable.holidays,
     });
   } catch (err) {
     try { await conn.rollback(); } catch (_) { /* no-op */ }
@@ -283,8 +282,8 @@ router.post('/generate', async (req, res, next) => {
 // Margin file, or just the client). Invoice = pairing's billing rate x the
 // month's hours, issued on the last day of the month. Nothing is guessed: rows
 // that don't match exactly one pairing are reported and skipped, and a month
-// that already has an invoice for that consultant/client/program is never
-// overwritten. The apply step re-derives everything on the server in one
+// that already has an invoice with hours for that consultant/client/program is
+// never overwritten (an invoice still at 0 hours is filled in). The apply step re-derives everything on the server in one
 // transaction, so the preview a person confirmed is not trusted blindly.
 const MAX_IMPORT_ROWS = 5000;
 // Case-insensitive, whitespace-collapsed key (the database collation compares names the same way).
@@ -394,28 +393,33 @@ router.post('/import-hours', async (req, res, next) => {
 
     const willCreate = [];
     const skippedExisting = [];
+    const willFill = [];
     for (const item of planned.values()) {
       const periodMonth = year + '-' + String(item.month).padStart(2, '0') + '-01';
       const [existing] = await conn.query(
-        `SELECT id, hours FROM invoices
+        `SELECT id, hours, rate FROM invoices
          WHERE organization_id = ? AND consultant_id = ? AND client_id <=> ? AND program_id <=> ? AND period_month = ?`,
         [organizationId, item.cons.id, item.a.client_id, item.a.program_id, periodMonth]
       );
       const label = { consultant: item.cons.name, client: item.a.client_name, program: item.a.program_name, periodMonth: periodMonth.slice(0, 7), hours: item.hours };
-      if (existing.length) skippedExisting.push({ ...label, invoiceId: existing[0].id, existingHours: existing[0].hours === null ? null : Number(existing[0].hours) });
+      const existingHours = existing.length && existing[0].hours !== null ? Number(existing[0].hours) : null;
+      // An invoice generated with no hours yet (0 / blank) is a placeholder: fill it from the file.
+      // One that already has hours is never changed.
+      if (existing.length && !(existingHours > 0)) willFill.push({ ...label, invoiceId: existing[0].id, rate: Number(existing[0].rate), amount: Math.round(Number(existing[0].rate) * item.hours * 100) / 100 });
+      else if (existing.length) skippedExisting.push({ ...label, invoiceId: existing[0].id, existingHours });
       else willCreate.push({ ...label, rate: Number(item.a.billing), amount: Math.round(Number(item.a.billing) * item.hours * 100) / 100, _item: item, _period: periodMonth });
     }
     willCreate.sort((x, y) => x.periodMonth.localeCompare(y.periodMonth) || x.consultant.localeCompare(y.consultant));
 
     const summary = {
-      willCreate: willCreate.length, skippedExisting: skippedExisting.length,
+      willCreate: willCreate.length, willFill: willFill.length, skippedExisting: skippedExisting.length,
       unmatched: unmatched.length + noRate.length,
-      totalAmount: Math.round(willCreate.reduce((t, w) => t + w.amount, 0) * 100) / 100,
+      totalAmount: Math.round(willCreate.concat(willFill).reduce((t, w) => t + w.amount, 0) * 100) / 100,
     };
     const clean = (w) => { const { _item, _period, ...rest } = w; return rest; };
 
     if (!apply) {
-      return res.json({ applied: false, summary, willCreate: willCreate.map(clean), skippedExisting, unmatched: unmatched.concat(noRate) });
+      return res.json({ applied: false, summary, willCreate: willCreate.map(clean), willFill, skippedExisting, unmatched: unmatched.concat(noRate) });
     }
 
     await conn.beginTransaction();
@@ -444,8 +448,14 @@ router.post('/import-hours', async (req, res, next) => {
       await conn.query('UPDATE invoices SET invoice_number = ? WHERE id = ?', [invoiceNumber, result.insertId]);
       createdIds.push(result.insertId);
     }
+    for (const w of willFill) {
+      await conn.query(
+        'UPDATE invoices SET hours = ?, amount = ? WHERE id = ? AND organization_id = ? AND (hours IS NULL OR hours = 0)',
+        [w.hours, w.amount, w.invoiceId, organizationId]
+      );
+    }
     await conn.commit();
-    res.status(201).json({ applied: true, summary, created: createdIds.length, skippedExisting, unmatched: unmatched.concat(noRate) });
+    res.status(201).json({ applied: true, summary, created: createdIds.length, filled: willFill.length, skippedExisting, unmatched: unmatched.concat(noRate) });
   } catch (err) {
     try { await conn.rollback(); } catch (_) { /* no-op */ }
     next(err);

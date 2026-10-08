@@ -228,10 +228,8 @@
         }).join('') + (otherSkips.length > 8 ? '<li>…and ' + (otherSkips.length - 8) + ' more.</li>' : '') + '</ul>';
     }
     var hoursNote = '';
-    if (r.defaultHours !== undefined && r.created.length) {
-      var hol = (r.holidays || []).map(function (h) { return escapeHtml(h.name); }).join(', ');
-      hoursNote = ' New invoices start at <strong>' + r.defaultHours + ' hrs</strong> (' + r.billableDays + ' working days × 8' +
-        (hol ? ', excluding ' + hol : '') + ') — edit hours or amount as needed.';
+    if (r.created.length) {
+      hoursNote = ' New invoices start at <strong>0 hrs / $0</strong> — type the hours in (amount = rate × hours), or use the Import hours tab.';
     }
     return (
       '<div class="fin-result">' +
@@ -246,7 +244,7 @@
   function renderClientTab() {
     var gf = state.generateForm;
     return (
-      '<p class="fin-copy">One invoice per consultant/client/program billing combination, generated from the rate on file in Directory. Each invoice bills to the Program (or the Client, when that pairing has no program) — hours default to the month’s maximum billable hours (weekdays minus US federal holidays, × 8) with amount = rate × hours, and both stay editable. Only Active consultants are invoiced and shown unless you opt in to inactive ones. Track NET terms, payment status, and whether the timesheet’s been submitted. Re-generating a month never duplicates an invoice that already exists.</p>' +
+      '<p class="fin-copy">One invoice per consultant/client/program billing combination, generated from the rate on file in Directory. Each invoice bills to the Program (or the Client, when that pairing has no program) — hours start at 0 until you type them in or upload them from an hours file (Import hours tab), then amount = rate × hours; both stay editable. Only Active consultants are invoiced and shown unless you opt in to inactive ones. Track NET terms, payment status, and whether the timesheet’s been submitted. Re-generating a month never duplicates an invoice that already exists.</p>' +
       '<div class="fin-generate-card">' +
         '<label>Month<input type="month" id="gen-period" value="' + escapeHtml(gf.periodMonth) + '"></label>' +
         '<label>Net terms<select id="gen-net-terms">' +
@@ -519,11 +517,11 @@
     if (p) {
       var sm = p.summary;
       out += '<div class="fin-readonly-note">' + (imp.result
-        ? '<strong>Done — ' + imp.result.created + ' invoice(s) created.</strong> '
+        ? '<strong>Done — ' + imp.result.created + ' invoice(s) created, ' + (imp.result.filled || 0) + ' filled in.</strong> '
         : 'Preview only — nothing has been created yet. ') +
-        sm.willCreate + ' to create (' + impMoney(sm.totalAmount) + '), ' + sm.skippedExisting + ' already invoiced (left untouched), ' + sm.unmatched + ' not matched.</div>';
-      if (imp.preview && sm.willCreate) {
-        out += '<div class="fin-controls" style="justify-content:flex-start"><button type="button" class="fin-btn fin-btn-primary" data-action="imp-apply"' + (imp.busy ? ' disabled' : '') + '>Create ' + sm.willCreate + ' invoice(s)</button></div>';
+        sm.willCreate + ' to create, ' + sm.willFill + ' existing 0-hour invoice(s) to fill in (' + impMoney(sm.totalAmount) + ' total), ' + sm.skippedExisting + ' already have hours (left untouched), ' + sm.unmatched + ' not matched.</div>';
+      if (imp.preview && (sm.willCreate || sm.willFill)) {
+        out += '<div class="fin-controls" style="justify-content:flex-start"><button type="button" class="fin-btn fin-btn-primary" data-action="imp-apply"' + (imp.busy ? ' disabled' : '') + '>Apply: create ' + sm.willCreate + ', fill in ' + sm.willFill + '</button></div>';
       }
       if (imp.preview) {
         out += impTable('Will be created', ['Consultant', 'Client / Program', 'Month', 'Hours', 'Rate', 'Amount'], p.willCreate.map(function (w) {
@@ -531,7 +529,13 @@
             '</td><td class="fin-num">' + w.hours + '</td><td class="fin-num">' + impMoney(w.rate) + '</td><td class="fin-num">' + impMoney(w.amount) + '</td></tr>';
         }));
       }
-      out += impTable('Already invoiced — left as is', ['Consultant', 'Client / Program', 'Month', 'File hours', 'Invoice hours'], p.skippedExisting.map(function (w) {
+      if (imp.preview) {
+        out += impTable('Existing invoices at 0 hours — will be filled in', ['Consultant', 'Client / Program', 'Month', 'Hours', 'Rate', 'Amount'], p.willFill.map(function (w) {
+          return '<tr><td>' + escapeHtml(w.consultant) + '</td><td>' + escapeHtml(w.program ? w.client + ' / ' + w.program : w.client) + '</td><td>' + escapeHtml(monthLabel(w.periodMonth + '-01')) +
+            '</td><td class="fin-num">' + w.hours + '</td><td class="fin-num">' + impMoney(w.rate) + '</td><td class="fin-num">' + impMoney(w.amount) + '</td></tr>';
+        }));
+      }
+      out += impTable('Already have hours — left as is', ['Consultant', 'Client / Program', 'Month', 'File hours', 'Invoice hours'], p.skippedExisting.map(function (w) {
         return '<tr><td>' + escapeHtml(w.consultant) + '</td><td>' + escapeHtml(w.program ? w.client + ' / ' + w.program : w.client) + '</td><td>' + escapeHtml(monthLabel(w.periodMonth + '-01')) +
           '</td><td class="fin-num">' + w.hours + '</td><td class="fin-num">' + (w.existingHours === null ? '—' : w.existingHours) + '</td></tr>';
       }));
@@ -541,7 +545,7 @@
     }
     return (
       '<h2 class="fin-subtitle">Import hours.</h2>' +
-      '<p class="fin-copy">Upload an Excel sheet with a <strong>Name</strong> column, a <strong>Client</strong> column (“Program/Client” or just the client) and one <strong>Hours/&lt;month&gt;</strong> column per month (e.g. Hours/Jan). Each consultant’s hours become that month’s invoice at the billing rate already on file for the matching client/program. You’ll see a preview first; months that already have an invoice are never changed. Upload a new file any time to add more months.</p>' +
+      '<p class="fin-copy">Upload an Excel sheet with a <strong>Name</strong> column, a <strong>Client</strong> column (“Program/Client” or just the client) and one <strong>Hours/&lt;month&gt;</strong> column per month (e.g. Hours/Jan). Each consultant’s hours become that month’s invoice at the billing rate already on file for the matching client/program. You’ll see a preview first; a month whose invoice already has hours is never changed (an invoice still at 0 hours is filled in). Upload a new file any time to add more months.</p>' +
       '<div class="fin-generate-card">' +
         '<label>Hours file<input type="file" id="imp-file" accept=".xlsx,.xls"></label>' +
         '<label>Year<input type="number" id="imp-year" min="2000" max="2100" value="' + escapeHtml(imp.year) + '" style="width:90px"></label>' +

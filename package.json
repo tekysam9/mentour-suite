@@ -7,7 +7,8 @@
     "start": "node server.js",
     "init-db": "node scripts/init-db.js",
     "backfill-client-program-swap": "node scripts/backfill-client-program-swap.js",
-    "backfill-assignment-status": "node scripts/backfill-assignment-status.js"
+    "backfill-assignment-status": "node scripts/backfill-assignment-status.js",
+    "delete-client-invoices": "node scripts/delete-client-invoices.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",

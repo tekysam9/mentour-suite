@@ -203,6 +203,23 @@ You get a preview first (to create / already invoiced / not matched); months
 that already have an invoice are never changed, and nothing is guessed. No
 schema change.
 
+### Update: client invoices start at 0 hours; clearing client invoices
+
+Generated client invoices now start at **0 hours / $0** until hours are typed
+in or imported (Import hours). An existing invoice still at 0 hours is filled
+in by an import; one that already has hours is never changed.
+
+To remove every client invoice and start over (nothing else is touched):
+
+```
+npm run delete-client-invoices                # dry run, shows counts only
+npm run delete-client-invoices -- --yes       # deletes them
+```
+
+Add `--org <id>` to limit it to one organization, or
+`--include-subvendor-generated` to also clear invoices generated on the
+Subvendor payments tab. This cannot be undone.
+
 ## If you outgrow Cloud/Node.js hosting
 
 The "other companies down the line" case is already handled in the data
