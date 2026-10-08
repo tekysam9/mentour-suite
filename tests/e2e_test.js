@@ -1109,6 +1109,36 @@ async function main() {
       r = await hrsOwner.fetch('/api/invoices/import-hours', { method: 'POST', body: JSON.stringify({ rows: [{ name: 'Ivo Hours', client: 'Acme', hours: { 5: 100 } }] }) });
       check('old payload shape without a year returns 400', r.status === 400, r);
 
+      // 33f. Sam's real W2 Payroll layout: one sheet per month ("December 2025" ...,
+      // "Hours/December 2025"), read sheet by sheet and combined per consultant + client
+      // (synthetic fixture with the same structure). Expect Jan 2026.. invoices, no Dec 2026.
+      const w2Owner = makeJar();
+      r = await w2Owner.fetch('/api/auth/signup', { method: 'POST', body: JSON.stringify({ orgName: 'W2 Sheets Co', name: 'W2 Owner', email: 'w2@w2sheets.test', password: 'w2sheetspass1' }) });
+      check('w2 multi-sheet test org signup returns 201', r.status === 201, r);
+      await w2Owner.fetch('/api/margin', { method: 'POST', body: JSON.stringify({ fileName: 'w2m.xlsx', data: { kpis: {}, records: [
+        hrsRec('Asha Test', 'Acme Health', 'HCL', 66.5), hrsRec('Dev Sample', 'University of Test', 'ROSE', 40), hrsRec('Mo Example', 'State of Test', 'IRG', 74),
+      ] } }) });
+      const w2fx = require('./fixtures/w2-payroll-synthetic.json');
+      const w2res = IH.resolveHoursImport(IH.parseHoursSheets(w2fx.sheets), 2026);
+      r = await w2Owner.fetch('/api/invoices/import-hours', { method: 'POST', body: JSON.stringify({ rows: w2res.rows }) });
+      const w2Months = [...new Set(r.body.willCreate.map((w) => w.periodMonth))].sort();
+      check('multi-sheet preview: invoice months Jan..Apr 2026 (11 invoices), nothing unmatched, no Dec 2026',
+        r.status === 200 && r.body.summary.willCreate === 11 && r.body.unmatched.length === 0 && w2Months.join(',') === '2026-01,2026-02,2026-03,2026-04' &&
+        !JSON.stringify(r.body).includes('2026-12'), r.body);
+      check('multi-sheet preview: Asha Dec 2025 168 h -> Jan 2026 invoice; Jan 2026 160 h -> Feb 2026; Mar 2026 (sheet-name year) 176 h -> Apr 2026',
+        r.body.willCreate.some((w) => w.consultant === 'Asha Test' && w.hoursMonth === '2025-12' && w.periodMonth === '2026-01' && w.hours === 168 && w.amount === 11172) &&
+        r.body.willCreate.some((w) => w.consultant === 'Asha Test' && w.hoursMonth === '2026-01' && w.periodMonth === '2026-02' && w.hours === 160) &&
+        r.body.willCreate.some((w) => w.consultant === 'Asha Test' && w.hoursMonth === '2026-03' && w.periodMonth === '2026-04' && w.hours === 176), r.body.willCreate);
+      r = await w2Owner.fetch('/api/invoices/import-hours', { method: 'POST', body: JSON.stringify({ rows: w2res.rows, apply: true }) });
+      check('multi-sheet apply creates 11 invoices', r.status === 201 && r.body.created === 11, r.body);
+      r = await w2Owner.fetch('/api/invoices?periodMonth=2026-01');
+      check('Jan 2026 invoice month holds the Dec 2025 hours for all 3 consultants, issued 2026-01-01',
+        r.body.invoices.length === 3 && r.body.invoices.every((i) => String(i.issue_date).slice(0, 10) === '2026-01-01') &&
+        r.body.invoices.map((i) => i.consultant_name + ':' + Number(i.hours)).sort().join(',') === 'Asha Test:168,Dev Sample:120,Mo Example:176', r.body);
+      r = await w2Owner.fetch('/api/invoices/months');
+      check('w2 org invoice months are Apr, Mar, Feb, Jan 2026 only (no Dec 2026)',
+        r.body.months.map((m) => m.month).join(',') === '2026-04,2026-03,2026-02,2026-01', r.body);
+
       // 34. Fin-Module "Subvendor payments": months already paid are read
       // read-only from the latest Ledger upload; December 2026 onwards can be
       // generated from the Ledger rate (else the Margin cost rate). Own org.

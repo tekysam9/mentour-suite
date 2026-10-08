@@ -219,6 +219,12 @@ schema change.
 - Client invoices shows one invoice month at a time (month picker, ‹ › to step,
   starts on the newest month with invoices) with an "Hours for" column.
 - No schema change; no `db/schema.sql` re-run needed.
+- Every sheet of the workbook is read (the W2 Payroll file has one sheet per
+  month, "December 2025" … "September 2026", each with one
+  `Hours/<Month YYYY>` column) and hours are combined per consultant + client.
+  A heading without a year takes it from a "<Month> <YYYY>" sheet name. The
+  same month twice for one consultant/client is skipped and listed. A second
+  "Name" header row below the table (pay batches) ends that sheet's table.
 
 ### Update: client invoices start at 0 hours; clearing client invoices
 

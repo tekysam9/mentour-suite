@@ -58,6 +58,43 @@ async function main() {
     check('lone Hours/Dec, Year 2026 -> Dec 2026 (not guessed back to 2025); in the future during Oct 2026',
       resolve(['Hours/Dec'], 2026) === 'Dec 2026' && IH.isFutureKey('2026-12', '2026-10') && !IH.isFutureKey('2026-10', '2026-10') && !IH.isFutureKey('2025-12', '2026-10'));
 
+    // Multi-sheet workbook (Sam's W2 Payroll layout: one sheet per month, "Hours/December 2025").
+    const fx = require('./fixtures/w2-payroll-synthetic.json');
+    const mp = IH.parseHoursSheets(fx.sheets);
+    const mr = IH.resolveHoursImport(mp, 2026, '2026-10');
+    check('multi-sheet: every sheet with an hours table is read; a sheet without one is listed as skipped',
+      mp.sheets.length === 4 && mp.skippedSheets.join() === 'Notes', { sheets: mp.sheets.map((x) => x.name), skipped: mp.skippedSheets });
+    check('multi-sheet columns: Dec 2025 -> Jan 2026, Jan 2026 -> Feb 2026, Feb 2026 -> Mar 2026, Mar 2026 (year from sheet name) -> Apr 2026',
+      mr.columns.map((c) => c.sheet + ':' + c.label + '>' + c.invoiceLabel + ':' + c.source).join('|') ===
+        'December 2025:Dec 2025>Jan 2026:heading|January 2026:Jan 2026>Feb 2026:heading|February 2026:Feb 2026>Mar 2026:heading|March 2026:Mar 2026>Apr 2026:sheet' && mr.allYearsKnown,
+      mr.columns);
+    check('Hours/December 2025 keeps its year (full month name + space + 4-digit year)',
+      JSON.stringify(IH.parseHoursHeader('Hours/December 2025')) === '{"month":12,"year":2025}');
+    const asha = mr.rows.find((r) => r.name === 'Asha Test');
+    check('rows combined per consultant + client across sheets, keyed by hours month (trailing spaces / "ROSE/ X" vs "ROSE/X" merged)',
+      mr.rows.length === 3 && JSON.stringify(asha.hours) === '{"2025-12":168,"2026-01":160,"2026-02":160,"2026-03":176}' &&
+      Object.keys(mr.rows.find((r) => r.name === 'Dev Sample').hours).length === 4, mr.rows);
+    check('pay batch tables below the hours table are not read as hours; no Dec 2026 anywhere',
+      !mr.rows.some((r) => Object.values(r.hours).some((h) => h > 400)) && !JSON.stringify(mr).includes('2026-12') && mr.skipped.length === 0, mr);
+    check('row sources name the sheet and Excel row', /^December 2025 row 2, January 2026 row 2/.test(mr.rowSources[0]), mr.rowSources);
+    // The same hours month twice for one consultant + client (two sheets) is skipped and listed, not guessed.
+    const dupSheets = fx.sheets.slice(0, 2).concat([{ name: 'Dec 2025 corrected', grid: [['Name', 'Hours/Dec 2025', 'Client'], ['Asha Test', 170, 'HCL/Acme Health'], ['Other Person', 10, 'X']] }]);
+    const dr = IH.resolveHoursImport(IH.parseHoursSheets(dupSheets), 2026, '2026-10');
+    const dAsha = dr.rows.find((r) => r.name === 'Asha Test');
+    check('same month on two sheets for one consultant/client: skipped and listed; other months and people kept',
+      !('2025-12' in dAsha.hours) && dAsha.hours['2026-01'] === 160 && dr.rows.find((r) => r.name === 'Other Person').hours['2025-12'] === 10 &&
+      dr.skipped.length === 1 && dr.skipped[0].hoursMonth === '2025-12' && dr.skipped[0].invoiceMonth === '2026-01' && /more than once/.test(dr.skipped[0].reason), dr);
+    // No year in heading or sheet name -> column order + Hours year (within the sheet); future months held back.
+    const ordr = IH.resolveHoursImport(IH.parseHoursSheets([{ name: 'Sheet1', grid: [['Name', 'Client', 'Hours/Dec', 'Hours/Jan', 'Hours/Nov'], ['A B', 'C', 1, 2, 3]] }]), 2026, '2026-10');
+    check('no year anywhere: Dec, Jan, Nov with Hours year 2026 -> Dec 2025, Jan 2026, Nov 2026 (future: held back, listed)',
+      ordr.columns.map((c) => c.label + ':' + c.source + (c.future ? ':future' : '')).join('|') === 'Dec 2025:order|Jan 2026:order|Nov 2026:order:future' &&
+      !ordr.allYearsKnown && JSON.stringify(ordr.rows[0].hours) === '{"2025-12":1,"2026-01":2}' &&
+      ordr.skipped.length === 1 && ordr.skipped[0].reason === 'month is in the future' && ordr.skipped[0].hoursMonth === '2026-11', ordr);
+    check('sheet names: "December 2025", "Dec-25" parse; "Sheet1", "Notes" do not',
+      JSON.stringify(IH.parseSheetName('December 2025')) === '{"month":12,"year":2025}' && IH.parseSheetName('Dec-25').year === 2025 &&
+      IH.parseSheetName('Sheet1') === null && IH.parseSheetName('Notes') === null);
+    check('invoices.html reads every sheet via ImportHours.parseHoursSheets', invHtml.includes('ImportHours.parseHoursSheets(wb.SheetNames.map('));
+
     // "/" should serve index.html (express.static default)
     const rootRes = await fetch(BASE + '/');
     check('GET / -> 200 (serves index.html)', rootRes.status === 200);

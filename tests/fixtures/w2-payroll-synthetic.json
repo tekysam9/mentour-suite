@@ -1,0 +1,528 @@
+{
+ "_comment": "Synthetic W2 Payroll-style workbook for tests (made-up names and numbers). Each sheet is the grid XLSX.utils.sheet_to_json(ws, {header:1, raw:true, defval:null}) returns.",
+ "sheets": [
+  {
+   "name": "December 2025",
+   "grid": [
+    [
+     "Name",
+     "Hours/December 2025",
+     "PAY RATE",
+     "GROSS PAY",
+     "NET PAY",
+     "Comments",
+     "Work State",
+     "Home State",
+     "Bill Rate",
+     "Start Date",
+     "Client"
+    ],
+    [
+     "Asha Test ",
+     168,
+     "$50 per hour",
+     8400,
+     5880,
+     null,
+     "NJ",
+     "NJ",
+     66.5,
+     45000,
+     "HCL/Acme Health"
+    ],
+    [
+     "Dev Sample",
+     120,
+     "$50 per hour",
+     6000,
+     4200,
+     null,
+     "NJ",
+     "NJ",
+     40,
+     45000,
+     "ROSE/ University of Test"
+    ],
+    [
+     "Mo Example ",
+     176,
+     "$50 per hour",
+     8800,
+     6160,
+     null,
+     "NJ",
+     "NJ",
+     72,
+     45000,
+     "State of Test"
+    ],
+    [
+     null,
+     null,
+     null,
+     null,
+     1234.5,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null
+    ],
+    [
+     null,
+     null,
+     "Regular hours - 176",
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null
+    ],
+    [
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null
+    ],
+    [
+     "BATCH 1",
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null
+    ],
+    [
+     "Name",
+     "Pay - Net",
+     null,
+     "BATCH2",
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null
+    ],
+    [
+     "Dev Sample",
+     4328.47,
+     null,
+     "Asha Test ",
+     6795.8,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null
+    ],
+    [
+     "Mo Example ",
+     6366.38,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null
+    ],
+    [
+     null,
+     10694.85,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null
+    ]
+   ]
+  },
+  {
+   "name": "January 2026",
+   "grid": [
+    [
+     "Name",
+     "Hours/January 2026",
+     "PAY RATE",
+     "GROSS PAY",
+     "NET PAY",
+     "Comments",
+     "Work State",
+     "Home State",
+     "Bill Rate",
+     "Start Date",
+     "Client"
+    ],
+    [
+     "Asha Test ",
+     160,
+     "$50 per hour",
+     8000,
+     5600,
+     null,
+     "NJ",
+     "NJ",
+     66.5,
+     45000,
+     "HCL/Acme Health"
+    ],
+    [
+     "Dev Sample",
+     152,
+     "$50 per hour",
+     7600,
+     5320,
+     null,
+     "NJ",
+     "NJ",
+     40,
+     45000,
+     "ROSE/University of Test"
+    ],
+    [
+     "Mo Example",
+     160,
+     "$50 per hour",
+     8000,
+     5600,
+     null,
+     "NJ",
+     "NJ",
+     72,
+     45000,
+     "State of Test"
+    ],
+    [
+     null,
+     null,
+     null,
+     null,
+     1234.5,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null
+    ],
+    [
+     null,
+     null,
+     "Regular hours - 176",
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null
+    ],
+    [
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null
+    ],
+    [
+     "BATCH 1",
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null
+    ],
+    [
+     "Name",
+     "Pay - Net",
+     null,
+     "BATCH2",
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null
+    ],
+    [
+     "Dev Sample",
+     4328.47,
+     null,
+     "Asha Test ",
+     6795.8,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null
+    ],
+    [
+     "Mo Example ",
+     6366.38,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null
+    ],
+    [
+     null,
+     10694.85,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null
+    ]
+   ]
+  },
+  {
+   "name": "February 2026",
+   "grid": [
+    [
+     "Name",
+     "Hours/February 2026",
+     "PAY RATE",
+     "GROSS PAY",
+     "Comments",
+     "Work State",
+     "Home State",
+     "Bill Rate",
+     "Start Date",
+     "Client"
+    ],
+    [
+     "Asha Test ",
+     160,
+     "$50 per hour",
+     8000,
+     null,
+     "NJ",
+     "NJ",
+     66.5,
+     45000,
+     "HCL/Acme Health"
+    ],
+    [
+     "Dev Sample",
+     152,
+     "$50 per hour",
+     7600,
+     null,
+     "NJ",
+     "NJ",
+     40,
+     45000,
+     "ROSE/ University of Test"
+    ],
+    [
+     "Mo Example ",
+     144,
+     "$50 per hour",
+     7200,
+     null,
+     "NJ",
+     "NJ",
+     72,
+     45000,
+     "State of Test"
+    ],
+    [
+     null,
+     null,
+     null,
+     null,
+     1234.5,
+     null,
+     null,
+     null,
+     null,
+     null
+    ],
+    [
+     null,
+     null,
+     "Regular hours - 176",
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null
+    ],
+    [
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null
+    ],
+    [
+     "BATCH 1",
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null
+    ],
+    [
+     "Name",
+     "Pay - Net",
+     null,
+     "BATCH2",
+     null,
+     null,
+     null,
+     null,
+     null,
+     null
+    ],
+    [
+     "Dev Sample",
+     4328.47,
+     null,
+     "Asha Test ",
+     6795.8,
+     null,
+     null,
+     null,
+     null,
+     null
+    ],
+    [
+     "Mo Example ",
+     6366.38,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null
+    ],
+    [
+     null,
+     10694.85,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null
+    ]
+   ]
+  },
+  {
+   "name": "March 2026",
+   "grid": [
+    [
+     "Name",
+     "Hours/March",
+     "PAY RATE",
+     "GROSS PAY",
+     "Comments",
+     "Work State",
+     "Home State",
+     "Bill Rate",
+     "Start Date",
+     "Client"
+    ],
+    [
+     "Asha Test ",
+     176,
+     "$50 per hour",
+     8800,
+     null,
+     "NJ",
+     "NJ",
+     66.5,
+     45000,
+     "HCL/Acme Health"
+    ],
+    [
+     "Dev Sample",
+     176,
+     "$50 per hour",
+     8800,
+     null,
+     "NJ",
+     "NJ",
+     40,
+     45000,
+     "ROSE/ University of Test"
+    ]
+   ]
+  },
+  {
+   "name": "Notes",
+   "grid": [
+    [
+     "Synthetic test fixture - not real payroll data"
+    ],
+    [
+     "Same layout as the W2 Payroll workbook: one sheet per month"
+    ]
+   ]
+  }
+ ]
+}
