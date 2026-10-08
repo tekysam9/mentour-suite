@@ -123,6 +123,7 @@
     user: null,
     activeTab: 'consultants',
     cache: {}, // tabKey -> records array
+    dupeError: null,
     duplicates: {}, // tabKey -> open duplicate-candidate rows
     loading: false,
     editingId: null, // record id currently being edited, or null
@@ -385,6 +386,7 @@
 
     return '<div class="dir-dupe-panel">' +
       '<p class="dir-dupe-title">Possible duplicates (' + candidates.length + ')</p>' +
+      (state.dupeError ? '<p class="dir-dupe-copy" role="alert" style="color:#b00020;font-weight:600">' + escapeHtml(state.dupeError) + '</p>' : '') +
       '<p class="dir-dupe-copy">These names looked close enough to already-listed ' + tab.label.toLowerCase() + ' that they might be the same ' +
         (tab.key === 'consultants' ? 'person' : tab.key === 'subvendors' ? 'vendor' : tab.key === 'clients' ? 'account' : 'program') +
         ', typo’d or formatted differently — nothing was merged automatically. Keep one name to merge the two records (their upload history moves to the one you keep), or mark it not a duplicate to leave both as-is.</p>' +
@@ -626,7 +628,7 @@
       fetch('/api/directory/duplicates/' + flagId + '/merge', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ keep: keep }),
       }).then(function (res) {
-        if (!res.ok) throw new Error('merge failed');
+        if (!res.ok) return res.json().catch(function () { return {}; }).then(function (b) { throw new Error(b.error || 'The merge failed.'); });
         return res.json();
       }).then(function () {
         // The merge changes the underlying records (one disappears, the
@@ -635,9 +637,11 @@
         delete state.cache[tabKey];
         state.duplicates[tabKey] = (state.duplicates[tabKey] || []).filter(function (c) { return c.flag_id !== Number(flagId); });
         state.dupeBusyId = null;
+        state.dupeError = null;
         loadTab(tabKey);
-      }).catch(function () {
+      }).catch(function (err) {
         state.dupeBusyId = null;
+        state.dupeError = err.message;
         render();
       });
       return;
@@ -650,14 +654,16 @@
       state.dupeBusyId = Number(dismissFlagId);
       render();
       fetch('/api/directory/duplicates/' + dismissFlagId + '/dismiss', { method: 'POST' }).then(function (res) {
-        if (!res.ok) throw new Error('dismiss failed');
+        if (!res.ok) return res.json().catch(function () { return {}; }).then(function (b) { throw new Error(b.error || 'Could not dismiss this.'); });
         return res.json();
       }).then(function () {
         state.duplicates[dismissTabKey] = (state.duplicates[dismissTabKey] || []).filter(function (c) { return c.flag_id !== Number(dismissFlagId); });
         state.dupeBusyId = null;
+        state.dupeError = null;
         render();
-      }).catch(function () {
+      }).catch(function (err) {
         state.dupeBusyId = null;
+        state.dupeError = err.message;
         render();
       });
       return;

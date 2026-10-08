@@ -925,6 +925,24 @@ async function main() {
         r.body.holidays.length === 1 && r.body.holidays[0].name === 'Independence Day' && r.body.holidays[0].date === '2026-07-03' &&
         julDana && Number(julDana.hours) === 176 && Number(julDana.amount) === 21120, r.body);
 
+      // 33b. Merging two flagged clients that both have a same-named program
+      // used to fail (programs are unique per client) and the page showed
+      // nothing. The duplicate program folds into the kept one.
+      const dupOwner = makeJar();
+      r = await dupOwner.fetch('/api/auth/signup', { method: 'POST', body: JSON.stringify({ orgName: 'Dup Client Co', name: 'Dup Owner', email: 'dup@dupclient.test', password: 'dupclientpass1' }) });
+      check('client-merge test org signup returns 201', r.status === 201, r);
+      const dupRec = (name, client, program) => ({ name, client, program, clientDetail: client, cost: 50, billing: 90, margin: 40, status: 'Active', employmentType: 'Subvendor', subvendorText: 'V' });
+      await dupOwner.fetch('/api/margin', { method: 'POST', body: JSON.stringify({ fileName: 'd1.xlsx', data: { kpis: {}, records: [dupRec('Ann One', 'Tyler Technologies', 'Prog A')] } }) });
+      await dupOwner.fetch('/api/margin', { method: 'POST', body: JSON.stringify({ fileName: 'd2.xlsx', data: { kpis: {}, records: [dupRec('Ann One', 'Tyler Tchnologies', 'Prog A')] } }) });
+      r = await dupOwner.fetch('/api/directory/duplicates?table=clients');
+      const tylerFlag = r.body.duplicates.find((d) => d.record_name === 'Tyler Tchnologies');
+      check('typo’d client flagged as a duplicate', !!tylerFlag, r.body);
+      r = await dupOwner.fetch('/api/directory/duplicates/' + tylerFlag.flag_id + '/merge', { method: 'POST', body: JSON.stringify({ keep: 'matched' }) });
+      check('merging clients that share a program name succeeds', r.status === 200 && r.body.kept.name === 'Tyler Technologies', r);
+      r = await dupOwner.fetch('/api/directory/programs');
+      check('the shared program is now a single program under the kept client',
+        r.body.programs.filter((pr) => pr.name === 'Prog A').length === 1, r.body);
+
       // 34. Fin-Module "Subvendor payments": months already paid are read
       // read-only from the latest Ledger upload; December 2026 onwards can be
       // generated from the Ledger rate (else the Margin cost rate). Own org.

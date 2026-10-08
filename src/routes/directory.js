@@ -479,6 +479,33 @@ router.post('/duplicates/:id/merge', async (req, res, next) => {
       return res.status(409).json({ error: 'One of these records no longer exists — it may have already been merged.' });
     }
 
+    // Merging two clients: a program with the same name under both is the
+    // same program, so fold the loser's into the kept client's (repointing
+    // everything that references it) before the remaining programs move over;
+    // otherwise (client_id, name) collides and the whole merge is rejected.
+    if (tableName === 'clients') {
+      const [sameNamed] = await conn.query(
+        `SELECT lp.id AS lose_pid, kp.id AS keep_pid
+         FROM programs lp
+         JOIN programs kp ON kp.client_id = ? AND kp.organization_id = lp.organization_id AND kp.name = lp.name
+         WHERE lp.client_id = ? AND lp.organization_id = ?`,
+        [keepId, loseId, req.user.organization_id]
+      );
+      for (const pair of sameNamed) {
+        for (const table of ['margin_roster_entries', 'consultant_assignments', 'invoices']) {
+          await conn.query(
+            `UPDATE ${table} SET program_id = ? WHERE program_id = ? AND organization_id = ?`,
+            [pair.keep_pid, pair.lose_pid, req.user.organization_id]
+          );
+        }
+        await conn.query(
+          `DELETE FROM directory_duplicate_candidates WHERE table_name = 'programs' AND status = 'open' AND (record_id = ? OR matched_record_id = ?)`,
+          [pair.lose_pid, pair.lose_pid]
+        );
+        await conn.query('DELETE FROM programs WHERE id = ? AND organization_id = ?', [pair.lose_pid, req.user.organization_id]);
+      }
+    }
+
     for (const ref of REFERENCING_COLUMNS[tableName] || []) {
       await conn.query(
         `UPDATE ${ref.ignore ? 'IGNORE ' : ''}${ref.table} SET ${ref.column} = ? WHERE ${ref.column} = ? AND organization_id = ?`,
