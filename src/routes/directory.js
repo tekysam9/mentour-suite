@@ -124,13 +124,13 @@ router.get('/consultants', async (req, res, next) => {
     // Client/Program and Billing column without a fetch per row — one
     // extra query here instead of N later.
     const [assignmentRows] = await pool.query(
-      `SELECT a.id, a.consultant_id, a.billing, a.source, a.client_id, a.program_id,
+      `SELECT a.id, a.consultant_id, a.billing, a.source, a.status, a.left_date, a.client_id, a.program_id,
          cl.name AS client_name, p.name AS program_name
        FROM consultant_assignments a
        LEFT JOIN clients cl ON cl.id = a.client_id
        LEFT JOIN programs p ON p.id = a.program_id
        WHERE a.organization_id = ?
-       ORDER BY cl.name, p.name`,
+       ORDER BY a.status, cl.name, p.name`,
       [req.user.organization_id]
     );
     const byConsultant = new Map();
@@ -168,13 +168,13 @@ router.get('/consultants/:id/assignments', async (req, res, next) => {
     if (!consultant) return res.status(404).json({ error: 'Not found.' });
 
     const [rows] = await pool.query(
-      `SELECT a.id, a.billing, a.source, a.client_id, a.program_id,
+      `SELECT a.id, a.billing, a.source, a.status, a.left_date, a.client_id, a.program_id,
          cl.name AS client_name, p.name AS program_name
        FROM consultant_assignments a
        LEFT JOIN clients cl ON cl.id = a.client_id
        LEFT JOIN programs p ON p.id = a.program_id
        WHERE a.organization_id = ? AND a.consultant_id = ?
-       ORDER BY cl.name, p.name`,
+       ORDER BY a.status, cl.name, p.name`,
       [req.user.organization_id, req.params.id]
     );
     res.json({ assignments: rows });
@@ -211,11 +211,11 @@ router.post('/consultants/:id/assignments', async (req, res, next) => {
 
     const assignmentId = await upsertAssignmentBilling(pool, {
       organizationId: req.user.organization_id, consultantId: Number(req.params.id),
-      clientId, programId, billing, source: 'manual',
+      clientId, programId, billing, source: 'manual', status: 'active',
     });
 
     const [rows] = await pool.query(
-      `SELECT a.id, a.billing, a.source, a.client_id, a.program_id,
+      `SELECT a.id, a.billing, a.source, a.status, a.left_date, a.client_id, a.program_id,
          cl.name AS client_name, p.name AS program_name
        FROM consultant_assignments a
        LEFT JOIN clients cl ON cl.id = a.client_id

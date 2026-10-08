@@ -943,6 +943,30 @@ async function main() {
       check('the shared program is now a single program under the kept client',
         r.body.programs.filter((pr) => pr.name === 'Prog A').length === 1, r.body);
 
+      // 33c. A consultant who left a client/program (Left row on the Margin
+      // file) keeps that pairing as history but it is marked left and no
+      // longer invoiced; the project they are still Active on is billed.
+      const leftOwner = makeJar();
+      r = await leftOwner.fetch('/api/auth/signup', { method: 'POST', body: JSON.stringify({ orgName: 'Left Pairing Co', name: 'Left Owner', email: 'lo@leftpair.test', password: 'leftpairpass1' }) });
+      check('left-pairing test org signup returns 201', r.status === 201, r);
+      r = await leftOwner.fetch('/api/margin', { method: 'POST', body: JSON.stringify({ fileName: 'mohan.xlsx', data: { kpis: {}, records: [
+        { name: 'Mohan Test', client: 'State of RI', program: 'IRG', clientDetail: 'State of RI', cost: 60, billing: 100, margin: 40, status: 'Active', employmentType: 'W2 (direct)', subvendorText: 'W2' },
+        { name: 'Mohan Test', client: 'District of Columbia', program: 'CITI', clientDetail: 'District of Columbia', cost: 55, billing: 90, margin: 35, status: 'Left', leftDate: '2023-01-25T00:00:00.000Z', employmentType: 'W2 (direct)', subvendorText: 'W2' },
+      ] } }) });
+      check('margin upload with an Active and a Left pairing returns 201', r.status === 201, r);
+      r = await leftOwner.fetch('/api/directory/consultants');
+      const mohan = r.body.consultants.find((c) => c.name === 'Mohan Test');
+      const mohanRI = mohan.assignments.find((a) => a.client_name === 'State of RI');
+      const mohanDC = mohan.assignments.find((a) => a.client_name === 'District of Columbia');
+      check('Active pairing stays active; Left pairing is marked left with its left date',
+        mohan.assignments.length === 2 && mohanRI.status === 'active' && mohanDC.status === 'left' && String(mohanDC.left_date).slice(0, 10) === '2023-01-25', mohan.assignments);
+      r = await leftOwner.fetch('/api/invoices/generate', { method: 'POST', body: JSON.stringify({ periodMonth: '2026-11' }) });
+      check('only the active client/program is invoiced; the left one is skipped',
+        r.status === 201 && r.body.created.length === 1 && r.body.skipped.some((x) => /left this client/.test(x.reason)), r.body);
+      r = await leftOwner.fetch('/api/invoices?periodMonth=2026-11');
+      check('the one invoice is State of RI / IRG at $100',
+        r.body.invoices.length === 1 && r.body.invoices[0].client_name === 'State of RI' && r.body.invoices[0].program_name === 'IRG' && Number(r.body.invoices[0].rate) === 100, r.body);
+
       // 34. Fin-Module "Subvendor payments": months already paid are read
       // read-only from the latest Ledger upload; December 2026 onwards can be
       // generated from the Ledger rate (else the Margin cost rate). Own org.

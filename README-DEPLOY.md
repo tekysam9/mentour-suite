@@ -180,6 +180,17 @@ consultant, from the month after their own last month on the file. Re-run
 `db/schema.sql` (adds `year_text` and `unpaid` to `ledger_roster_entries`),
 then **re-upload the cleaned file in Ledger once** so those columns fill in.
 
+### Update: left client/program pairings (October 2026)
+
+Each consultant/client/program billing pairing now has a status. A pairing
+that the latest Margin file lists only with Left rows is marked **left** (with
+its left date), shown struck-through in Directory, and skipped when generating
+client invoices (tick "Include inactive consultants" to bill it anyway).
+Directory also shows Client and Program as separate columns. After deploying,
+re-run `db/schema.sql`, then either re-upload the Margin file or run
+`npm run backfill-assignment-status` once to mark the existing pairings.
+Invoices already generated are not touched.
+
 ## If you outgrow Cloud/Node.js hosting
 
 The "other companies down the line" case is already handled in the data

@@ -96,6 +96,8 @@
   }
   .dir-assign-table td { padding: 7px 10px; vertical-align: middle; }
   .dir-assign-table tr:not(:last-child) td { border-bottom: 1px solid var(--line); }
+  .dir-assign-left { color: var(--text-muted); text-decoration: line-through; text-decoration-color: rgba(0,0,0,.25); }
+  .dir-assign-left-row td { opacity: .75; }
   .dir-assign-source { font-size: 10px; color: var(--text-muted); font-style: italic; }
   .dir-assign-add-row select, .dir-assign-add-row input {
     border: 1px solid var(--line); border-radius: 5px; padding: 5px 8px; font-size: 12.5px;
@@ -191,7 +193,7 @@
   // programs gets one (Client) beyond the common Name/Status/Email/Phone/
   // Address/Seen in/actions set.
   function rowColspan(tab) {
-    if (tab.key === 'consultants') return 9;
+    if (tab.key === 'consultants') return 10;
     if (tab.key === 'programs') return 8;
     return 7;
   }
@@ -270,16 +272,16 @@
   // so this never needs its own fetch.
   function assignmentSummaryCells(record) {
     var list = record.assignments || [];
-    if (!list.length) {
-      return { clientProgram: '<span class="dir-empty-cell">—</span>', billing: '<span class="dir-empty-cell">—</span>' };
+    var dash = '<span class="dir-empty-cell">—</span>';
+    if (!list.length) return { client: dash, program: dash, billing: dash };
+    function line(a, html) {
+      return a.status === 'left' ? '<span class="dir-assign-left">' + html + '</span>' : html;
     }
-    var clientProgram = list.map(function (a) {
-      return a.client_name
-        ? (a.program_name ? escapeHtml(a.client_name) + ' / ' + escapeHtml(a.program_name) : escapeHtml(a.client_name))
-        : '<span class="dir-empty-cell">—</span>';
-    }).join('<br>');
-    var billing = list.map(function (a) { return fmtMoney(a.billing); }).join('<br>');
-    return { clientProgram: clientProgram, billing: billing };
+    return {
+      client: list.map(function (a) { return line(a, a.client_name ? escapeHtml(a.client_name) : dash); }).join('<br>'),
+      program: list.map(function (a) { return line(a, a.program_name ? escapeHtml(a.program_name) : dash); }).join('<br>'),
+      billing: list.map(function (a) { return line(a, fmtMoney(a.billing) + (a.status === 'left' ? ' · left' + (a.left_date ? ' ' + escapeHtml(String(a.left_date).slice(0, 10)) : '') : '')); }).join('<br>'),
+    };
   }
 
   function contactCell(record, field) {
@@ -303,7 +305,7 @@
       return '<div class="dir-empty-state">No ' + (state.statusFilter === 'none' ? 'status-not-set' : state.statusFilter) + ' ' + tab.label.toLowerCase() + '.</div>';
     }
     var extraCol = tab.key === 'programs' ? '<th>Client</th>'
-      : tab.key === 'consultants' ? '<th>Client / Program</th><th>Billing</th>' : '';
+      : tab.key === 'consultants' ? '<th>Client</th><th>Program</th><th>Billing</th>' : '';
     var rows = records.map(function (r) {
       var editing = state.editingId === r.id;
       var nameCell = tab.key === 'programs'
@@ -312,7 +314,7 @@
       var billingCols = '';
       if (tab.key === 'consultants') {
         var sums = assignmentSummaryCells(r);
-        billingCols = '<td>' + sums.clientProgram + '</td><td>' + sums.billing + '</td>';
+        billingCols = '<td>' + sums.client + '</td><td>' + sums.program + '</td><td>' + sums.billing + '</td>';
       }
       var actions;
       if (editing) {
@@ -433,9 +435,12 @@
     } else {
       var rows = list.map(function (a) {
         var editing = state.editingAssignmentId === a.id;
-        var label = a.client_name
-          ? (a.program_name ? escapeHtml(a.client_name) + ' / ' + escapeHtml(a.program_name) : escapeHtml(a.client_name))
-          : '<span class="dir-empty-cell">—</span>';
+        var dashCell = '<span class="dir-empty-cell">—</span>';
+        var clientCell = a.client_name ? escapeHtml(a.client_name) : dashCell;
+        var programCell = a.program_name ? escapeHtml(a.program_name) : dashCell;
+        var stateCell = a.status === 'left'
+          ? '<span class="dir-assign-left">Left' + (a.left_date ? ' ' + escapeHtml(String(a.left_date).slice(0, 10)) : '') + ' — not invoiced</span>'
+          : 'Active';
         var billingCell = editing
           ? '<input type="number" step="0.01" class="dir-field-input" data-assign-billing value="' + escapeHtml(a.billing === null ? '' : a.billing) + '" style="width:90px">'
           : fmtMoney(a.billing);
@@ -444,14 +449,16 @@
             '<button class="dir-btn dir-btn-small" data-action="assign-cancel">Cancel</button>'
           : '<button class="dir-btn dir-btn-small" data-action="assign-edit" data-assignment-id="' + a.id + '">Edit</button>' +
             '<button class="dir-btn dir-btn-small" data-action="assign-delete" data-assignment-id="' + a.id + '">Remove</button>';
-        return '<tr>' +
-          '<td>' + label + '</td>' +
+        return '<tr' + (a.status === 'left' ? ' class="dir-assign-left-row"' : '') + '>' +
+          '<td>' + clientCell + '</td>' +
+          '<td>' + programCell + '</td>' +
+          '<td>' + stateCell + '</td>' +
           '<td>' + billingCell + '</td>' +
           '<td><span class="dir-assign-source">' + (a.source === 'upload' ? 'from upload' : 'manual') + '</span></td>' +
           '<td>' + actions + (state.assignmentStatus === 'error' && editing ? ' <span class="dir-btn-save-status" style="color:#9B3B3B">Couldn’t save</span>' : '') + '</td>' +
         '</tr>';
       }).join('');
-      body = '<table class="dir-assign-table"><thead><tr><th>Client / Program</th><th>Billing</th><th></th><th></th></tr></thead><tbody>' + rows + '</tbody></table>' +
+      body = '<table class="dir-assign-table"><thead><tr><th>Client</th><th>Program</th><th>Status</th><th>Billing</th><th></th><th></th></tr></thead><tbody>' + rows + '</tbody></table>' +
         renderAssignAddRow(consultant.id);
     }
     return '<tr class="dir-assign-row"><td colspan="' + rowColspan(tab) + '">' + body + '</td></tr>';

@@ -255,6 +255,13 @@ CREATE TABLE IF NOT EXISTS consultant_assignments (
   INDEX idx_assignment_org_consultant (organization_id, consultant_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+-- A pairing is 'active' while the latest Margin file that names it has an
+-- Active row for it, and 'left' once the file only has Left rows for it
+-- (left_date = the date that row gives, when it gives one). Left pairings
+-- stay as history but are never invoiced.
+ALTER TABLE consultant_assignments ADD COLUMN IF NOT EXISTS status ENUM('active', 'left') NOT NULL DEFAULT 'active';
+ALTER TABLE consultant_assignments ADD COLUMN IF NOT EXISTS left_date DATE NULL;
+
 -- ---------------------------------------------------------------------------
 -- "Smart parser" duplicate detection. An exact name match (case/whitespace
 -- insensitive, see directoryUpsert.js) always resolves to the same record

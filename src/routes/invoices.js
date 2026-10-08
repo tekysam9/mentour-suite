@@ -175,7 +175,7 @@ router.post('/generate', async (req, res, next) => {
     const defaultHours = billable.hours;
 
     const [assignments] = await conn.query(
-      `SELECT a.id AS assignment_id, a.consultant_id, a.client_id, a.program_id, a.billing,
+      `SELECT a.id AS assignment_id, a.consultant_id, a.client_id, a.program_id, a.billing, a.status AS assignment_status, a.left_date,
          c.name AS consultant_name, c.status AS consultant_status,
          cl.name AS client_name, cl.email AS client_email, cl.phone AS client_phone, cl.address AS client_address,
          p.name AS program_name, p.email AS program_email, p.phone AS program_phone, p.address AS program_address
@@ -198,6 +198,10 @@ router.post('/generate', async (req, res, next) => {
           reason: a.consultant_status === 'inactive' ? 'consultant is inactive' : 'consultant status not set',
           inactive: true,
         });
+        continue;
+      }
+      if (a.assignment_status === 'left' && !includeInactive) {
+        skipped.push({ assignmentId: a.assignment_id, consultant: a.consultant_name, reason: 'consultant left this client/program' });
         continue;
       }
       if (!a.client_id && !a.program_id) {

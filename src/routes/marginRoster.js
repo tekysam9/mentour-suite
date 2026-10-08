@@ -160,6 +160,7 @@ async function saveMarginRoster(conn, { organizationId, importId, data }) {
   }
 
   const rows = [];
+  const pairings = new Map(); // consultant|client|program -> status folded across this file's rows
   for (const r of valid) {
     const consultantKey = normalizeName(r.name);
     const { clientName, programName } = resolveClientProgram(r);
@@ -174,10 +175,23 @@ async function saveMarginRoster(conn, { organizationId, importId, data }) {
     // row names — kept in sync with the file every time it's re-uploaded.
     // See assignmentUpsert.js and the consultant_assignments comment in
     // db/schema.sql.
+    // A pairing is 'active' if ANY row for it in this file is Active (the
+    // same rule as the directory statuses above); a pairing the file only
+    // lists as Left is marked left and is no longer invoiced. Rows for the
+    // same pairing are folded into one upsert below.
     if (consultantId) {
-      await upsertAssignmentBilling(conn, {
-        organizationId, consultantId, clientId, programId, billing: toNullableNumber(r.billing), source: 'upload',
-      });
+      const pairKey = consultantId + '|' + clientId + '|' + programId;
+      const isActive = r.status === 'Active';
+      const leftDate = toNullableDate(r.leftDate);
+      const prev = pairings.get(pairKey);
+      if (!prev) {
+        pairings.set(pairKey, { consultantId, clientId, programId, active: isActive, billing: toNullableNumber(r.billing), leftDate });
+      } else {
+        // The Active row's billing wins; among Left rows keep the latest left date.
+        if (isActive || !prev.active) prev.billing = toNullableNumber(r.billing);
+        prev.active = prev.active || isActive;
+        if (leftDate && (!prev.leftDate || leftDate > prev.leftDate)) prev.leftDate = leftDate;
+      }
     }
 
     rows.push([
@@ -205,6 +219,13 @@ async function saveMarginRoster(conn, { organizationId, importId, data }) {
       toNullableText(r.employmentType, 64),
       toNullableText(r.sourceSheet, 255),
     ]);
+  }
+
+  for (const p of pairings.values()) {
+    await upsertAssignmentBilling(conn, {
+      organizationId, consultantId: p.consultantId, clientId: p.clientId, programId: p.programId,
+      billing: p.billing, source: 'upload', status: p.active ? 'active' : 'left', leftDate: p.active ? null : p.leftDate,
+    });
   }
 
   await conn.query(

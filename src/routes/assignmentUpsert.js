@@ -13,9 +13,12 @@
 // why this one field is allowed to change automatically, unlike the
 // directory tables' contact fields.
 
-async function upsertAssignmentBilling(conn, { organizationId, consultantId, clientId, programId, billing, source }) {
+// status: 'active' (default) or 'left'; leftDate only matters for 'left'.
+async function upsertAssignmentBilling(conn, { organizationId, consultantId, clientId, programId, billing, source, status, leftDate }) {
   if (!consultantId) return null;
   const src = source === 'manual' ? 'manual' : 'upload';
+  const st = status === 'left' ? 'left' : 'active';
+  const leftOn = st === 'left' ? (leftDate || null) : null;
 
   const [existing] = await conn.query(
     `SELECT id FROM consultant_assignments
@@ -25,16 +28,16 @@ async function upsertAssignmentBilling(conn, { organizationId, consultantId, cli
   if (existing.length) {
     const id = existing[0].id;
     await conn.query(
-      `UPDATE consultant_assignments SET billing = ?, source = ? WHERE id = ?`,
-      [billing, src, id]
+      `UPDATE consultant_assignments SET billing = ?, source = ?, status = ?, left_date = ? WHERE id = ?`,
+      [billing, src, st, leftOn, id]
     );
     return id;
   }
 
   const [result] = await conn.query(
-    `INSERT INTO consultant_assignments (organization_id, consultant_id, client_id, program_id, billing, source)
-     VALUES (?, ?, ?, ?, ?, ?)`,
-    [organizationId, consultantId, clientId, programId, billing, src]
+    `INSERT INTO consultant_assignments (organization_id, consultant_id, client_id, program_id, billing, source, status, left_date)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    [organizationId, consultantId, clientId, programId, billing, src, st, leftOn]
   );
   return result.insertId;
 }
