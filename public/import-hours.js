@@ -136,7 +136,7 @@
   function findHoursTable(grid) {
     for (var hr = 0; hr < Math.min(grid.length, 25); hr++) {
       var head = grid[hr] || [];
-      var nameCol = -1, clientCol = -1, cols = [];
+      var nameCol = -1, clientCol = -1, billCol = -1, cols = [];
       for (var c = 0; c < head.length; c++) {
         var t = typeof head[c] === 'string' ? cellText(head[c]) : '';
         if (!t) continue;
@@ -144,8 +144,9 @@
         if (hm) cols.push({ col: c, month: hm.month, year: hm.year, heading: t });
         else if (nameCol < 0 && /^(name|consultant|resource)\b/i.test(t)) nameCol = c;
         else if (clientCol < 0 && /client|account/i.test(t)) clientCol = c;
+        else if (billCol < 0 && /^bill(ing)?\s*rate/i.test(t)) billCol = c;
       }
-      if (nameCol >= 0 && clientCol >= 0 && cols.length) return { headerRow: hr, nameCol: nameCol, clientCol: clientCol, cols: cols };
+      if (nameCol >= 0 && clientCol >= 0 && cols.length) return { headerRow: hr, nameCol: nameCol, clientCol: clientCol, billCol: billCol, cols: cols };
     }
     return null;
   }
@@ -176,7 +177,10 @@
           if (isFinite(n) && n > 0) { byCol[hc.col] = n; any = true; }
         });
         if (!any) continue;
-        out.rows.push({ sheetIndex: si, rowNumber: r + 1, name: name, client: cellText(row[t.clientCol]), byCol: byCol });
+        var br = t.billCol >= 0 ? row[t.billCol] : null;
+        var billRate = typeof br === 'number' ? br : (typeof br === 'string' ? parseFloat(br.replace(/[$,]/g, '')) : NaN);
+        out.rows.push({ sheetIndex: si, rowNumber: r + 1, name: name, client: cellText(row[t.clientCol]), byCol: byCol,
+          billRate: isFinite(billRate) && billRate > 0 ? billRate : null });
       }
     });
     return out;
@@ -194,6 +198,8 @@
   //   allYearsKnown: true when no column needed the Hours year box,
   //   rows: [{ name, client, hours: { 'YYYY-MM': hours } }]   -> the import payload (future months left out),
   //   rowSources: ['December 2025 row 2, January 2026 row 2', ...]   (same order as rows),
+  //   rowBillRates: [66.5, null, ...]   (the sheet's Bill Rate column, latest sheet wins; only used
+  //                 to pre-fill "Add as new pairing" -- invoices always use the Directory rate),
   //   skipped: [{ row, name, client, hoursMonth, invoiceMonth, reason }]   (held back in the browser)
   // }
   function resolveHoursImport(parsed, hoursYear, nowKey) {
@@ -225,7 +231,8 @@
     parsed.rows.forEach(function (r) {
       var pk = personKey(r.name, r.client);
       var p = byPerson[pk];
-      if (!p) { p = byPerson[pk] = { name: r.name, client: r.client, entries: {}, sources: [] }; people.push(p); }
+      if (!p) { p = byPerson[pk] = { name: r.name, client: r.client, entries: {}, sources: [], billRate: null }; people.push(p); }
+      if (r.billRate !== null && r.billRate !== undefined) p.billRate = r.billRate; // the latest sheet's Bill Rate
       p.sources.push(parsed.sheets[r.sheetIndex].name + ' row ' + r.rowNumber);
       Object.keys(r.byCol).forEach(function (c) {
         var col = colIndex[r.sheetIndex + '|' + c];
@@ -234,7 +241,7 @@
       });
     });
 
-    var rows = [], rowSources = [], skipped = [];
+    var rows = [], rowSources = [], rowBillRates = [], skipped = [];
     people.forEach(function (p, idx) {
       var hours = {};
       Object.keys(p.entries).sort().forEach(function (key) {
@@ -251,8 +258,9 @@
       });
       rows.push({ name: p.name, client: p.client, hours: hours });
       rowSources.push(p.sources.join(', '));
+      rowBillRates.push(p.billRate);
     });
-    return { columns: columns, allYearsKnown: allYearsKnown, rows: rows, rowSources: rowSources, skipped: skipped };
+    return { columns: columns, allYearsKnown: allYearsKnown, rows: rows, rowSources: rowSources, rowBillRates: rowBillRates, skipped: skipped };
   }
 
   return {

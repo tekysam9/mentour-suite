@@ -115,6 +115,14 @@
   .fin-months-panel label:hover { background: var(--paper); }
   .fin-months-panel .fin-months-actions { display: flex; justify-content: space-between; gap: 8px; padding: 2px 6px 6px; border-bottom: 1px solid var(--line); margin-bottom: 4px; }
   .fin-months-panel .fin-count { margin-left: auto; color: var(--text-muted); font-size: 11px; }
+  .fin-fix { display: flex; flex-direction: column; gap: 6px; min-width: 300px; max-width: 420px; white-space: normal; }
+  .fin-wrap-cell { white-space: normal !important; max-width: 260px; }
+  .fin-fix-line select { max-width: 280px; }
+  .fin-fix-line { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 12.5px; }
+  .fin-fix-line select, .fin-fix-line input { border: 1px solid var(--line); border-radius: 5px; padding: 4px 6px; font: inherit; font-size: 12.5px; background: var(--paper); }
+  .fin-fix-line input { width: 80px; }
+  .fin-fix-note { font-size: 11px; color: var(--text-muted); }
+  .fin-ok-note { background: #EAF3EE; border: 1px solid #BFDCCB; color: #2E6F52; border-radius: 8px; padding: 9px 14px; font-size: 12.5px; margin-bottom: 12px; }
   .fin-linkbtn { background: none; border: none; padding: 0; color: var(--pine); font: inherit; font-size: 12px; cursor: pointer; text-decoration: underline; }
 </style>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
@@ -159,6 +167,7 @@
     tab: 'client',
     imp: {
       fileName: null, parsed: null, year: String(new Date().getFullYear()),
+      fix: {}, fixBusy: false, notice: null, aliases: [], aliasesLoaded: false,
       netTerms: 'NET30', paymentStatus: 'paid', timesheet: 'yes',
       busy: false, error: null, preview: null, result: null,
     },
@@ -569,8 +578,91 @@
       '</tr></thead><tbody>' + rows.join('') + '</tbody></table></div>';
   }
 
+  // "Dec 2025 – Aug 2026 (9 months, 1,416 h)" for one payload row.
+  function impRowHoursSummary(resolved, row) {
+    var r = resolved && resolved.rows[row - 1];
+    if (!r) return '';
+    var keys = Object.keys(r.hours).sort();
+    if (!keys.length) return '';
+    var total = keys.reduce(function (t, k) { return t + r.hours[k]; }, 0);
+    var span = keys.length === 1 ? ImportHours.monthKeyLabel(keys[0]) : ImportHours.monthKeyLabel(keys[0]) + ' – ' + ImportHours.monthKeyLabel(keys[keys.length - 1]);
+    return span + ' (' + keys.length + ' month' + (keys.length === 1 ? '' : 's') + ', ' + fmtHours(total) + ' h)';
+  }
+
+  function impPairingLabel(pr) {
+    return (pr.client || '—') + (pr.program ? ' / ' + pr.program : '') + (pr.billing !== null && pr.billing !== undefined ? ' ($' + money(pr.billing) + '/hr)' : ' (no rate)') + (pr.status === 'left' ? ' — left' : '');
+  }
+
+  // Merge into one of the consultant's pairings, or add the text as a new pairing.
+  function impFixCell(u, resolved) {
+    var imp = state.imp;
+    var f = imp.fix[u.row] || {};
+    var dis = imp.fixBusy ? ' disabled' : '';
+    var merge = u.pairings.length
+      ? '<div class="fin-fix-line">Same as <select data-fix-merge="' + u.row + '">' + u.pairings.map(function (pr) {
+          return '<option value="' + pr.assignmentId + '">' + escapeHtml(impPairingLabel(pr)) + '</option>';
+        }).join('') + '</select><button type="button" class="fin-btn fin-btn-small fin-btn-primary" data-action="imp-merge" data-row="' + u.row + '"' + dis + '>Merge</button></div>' +
+        '<div class="fin-fix-note">Saves “' + escapeHtml(u.client) + '” as another name for that client/program, so this and future imports match it.</div>'
+      : '<div class="fin-fix-note">' + escapeHtml(u.consultantName) + ' has no pairings in Directory yet.</div>';
+    var newLabel = 'Client <strong>' + escapeHtml(u.parsedClient || '—') + '</strong>' + (u.parsedProgram ? ', Program <strong>' + escapeHtml(u.parsedProgram) + '</strong>' : ' (no program)');
+    var billPrefill = f.billing !== undefined ? f.billing : (resolved && resolved.rowBillRates[u.row - 1] !== null && resolved.rowBillRates[u.row - 1] !== undefined ? resolved.rowBillRates[u.row - 1] : '');
+    var add = f.addOpen
+      ? '<div class="fin-fix-line">New pairing: ' + newLabel + '</div>' +
+        '<div class="fin-fix-line">Billing $/hr <input type="number" step="0.01" min="0" data-fix-billing="' + u.row + '" value="' + escapeHtml(billPrefill) + '">' +
+          '<button type="button" class="fin-btn fin-btn-small fin-btn-primary" data-action="imp-add" data-row="' + u.row + '"' + dis + '>Add pairing</button>' +
+          '<button type="button" class="fin-linkbtn" data-action="imp-add-cancel" data-row="' + u.row + '">Cancel</button></div>'
+      : '<div class="fin-fix-line">or <button type="button" class="fin-linkbtn" data-action="imp-add-open" data-row="' + u.row + '">Add as a new pairing (' + newLabel.replace(/<[^>]+>/g, '') + ')</button></div>';
+    return '<div class="fin-fix">' + merge + add + '</div>';
+  }
+
+  function impAliasesSection() {
+    var list = state.imp.aliases || [];
+    if (!list.length) return '';
+    return impTable('Saved client name matches', ['Client column text', 'Matches', ''], list.map(function (a) {
+      return '<tr><td>' + escapeHtml(a.alias_text) + '</td><td>' + escapeHtml(a.client_name + (a.program_name ? ' / ' + a.program_name : '')) + '</td>' +
+        '<td><button type="button" class="fin-btn fin-btn-small fin-btn-danger" data-action="imp-alias-remove" data-alias-id="' + a.id + '">Remove</button></td></tr>';
+    }));
+  }
+
+  function impLoadAliases() {
+    return fetch('/api/directory/client-aliases').then(function (res) { return res.ok ? res.json() : { aliases: [] }; })
+      .catch(function () { return { aliases: [] }; })
+      .then(function (b) {
+        var next = b.aliases || [];
+        var changed = JSON.stringify(next) !== JSON.stringify(state.imp.aliases || []);
+        state.imp.aliases = next; state.imp.aliasesLoaded = true;
+        // Re-render only when something changed, so an open file picker isn't reset.
+        if (changed) render();
+      });
+  }
+
+  function impPost(url, body, method) {
+    return fetch(url, { method: method || 'POST', headers: { 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined })
+      .then(function (res) {
+        return res.json().catch(function () { return {}; }).then(function (b) {
+          if (!res.ok) throw new Error(b.error || 'That didn’t work. Please try again.');
+          return b;
+        });
+      });
+  }
+
+  // After a merge/add: refresh the saved matches and re-run the preview, so the
+  // row moves into "Will be created" (nothing is created until Apply).
+  function impAfterFix(notice) {
+    var imp = state.imp;
+    imp.fixBusy = false; imp.notice = notice; imp.error = null;
+    impLoadAliases();
+    impCall(false);
+  }
+
+  function impFindUnmatched(row) {
+    var p = state.imp.preview;
+    return p ? p.unmatched.filter(function (u) { return u.fixable && u.row === row; })[0] : null;
+  }
+
   function renderImportTab() {
     var imp = state.imp;
+    if (!imp.aliasesLoaded) { imp.aliasesLoaded = true; setTimeout(impLoadAliases, 0); }
     var resolved = impResolved();
     var colsHtml = resolved ? '<ul class="fin-copy" style="margin:4px 0 8px 18px">' + resolved.columns.map(function (c) {
       return '<li>' + escapeHtml(c.sheet) + ': “' + escapeHtml(c.heading) + '” → hours for <strong>' + escapeHtml(c.label) + '</strong> → <strong>' + escapeHtml(c.invoiceLabel) + '</strong> invoice' +
@@ -609,7 +701,15 @@
         return '<tr><td>' + escapeHtml(w.consultant) + '</td><td>' + escapeHtml(w.program ? w.client + ' / ' + w.program : w.client) + '</td><td>' + escapeHtml(monthLabel(w.periodMonth + '-01')) + '</td><td>' + escapeHtml(ImportHours.monthKeyLabel(w.hoursMonth || ImportHours.hoursMonthKey(w.periodMonth))) +
           '</td><td class="fin-num">' + w.hours + '</td><td class="fin-num">' + (w.existingHours === null ? '—' : w.existingHours) + '</td></tr>';
       }));
-      out += impTable('Not matched or skipped — not invoiced', ['Sheet / row', 'Consultant', 'Client column', 'Invoice month', 'Hours for', 'Why'], p.unmatched.concat(impSkipped).map(function (u) {
+      var fixable = p.unmatched.filter(function (u) { return u.fixable; });
+      var otherUnmatched = p.unmatched.filter(function (u) { return !u.fixable; });
+      if (fixable.length) {
+        out += impTable('Client / program not recognised — merge or add to include these hours', ['Sheet / row', 'Consultant', 'Client column', 'Hours in file', imp.preview ? 'Fix' : ''], fixable.map(function (u) {
+          return '<tr><td class="fin-wrap-cell">' + rowLabel(u) + '</td><td>' + escapeHtml(u.name) + '</td><td class="fin-wrap-cell"><strong>' + escapeHtml(u.client) + '</strong><div class="fin-fix-note">' + escapeHtml(u.reason) + '</div></td>' +
+            '<td class="fin-wrap-cell">' + escapeHtml(impRowHoursSummary(resolved, u.row)) + '</td><td>' + (imp.preview ? impFixCell(u, resolved) : '') + '</td></tr>';
+        }));
+      }
+      out += impTable('Not matched or skipped — not invoiced', ['Sheet / row', 'Consultant', 'Client column', 'Invoice month', 'Hours for', 'Why'], otherUnmatched.concat(impSkipped).map(function (u) {
         return '<tr><td>' + rowLabel(u) + '</td><td>' + escapeHtml(u.name) + '</td><td>' + escapeHtml(u.client) + '</td><td>' + (u.invoiceMonth ? escapeHtml(ImportHours.monthKeyLabel(u.invoiceMonth)) : '') + '</td><td>' + (u.hoursMonth ? escapeHtml(ImportHours.monthKeyLabel(u.hoursMonth)) : (u.month ? IMP_MONTH_NAMES[u.month - 1] : '')) + '</td><td>' + escapeHtml(u.reason) + '</td></tr>';
       }));
     }
@@ -634,7 +734,9 @@
         ' Hours for a month after the current month are never invoiced.</p>' : '') +
       (imp.busy ? '<p class="fin-copy">Working…</p>' : '') +
       (imp.error ? '<div class="fin-readonly-note" role="alert" style="background:#F6E7E7;border-color:#E3BDBD;color:#8A2D2D">' + escapeHtml(imp.error) + '</div>' : '') +
-      out
+      (imp.notice ? '<div class="fin-ok-note" role="status">' + escapeHtml(imp.notice) + '</div>' : '') +
+      out +
+      impAliasesSection()
     );
   }
 
@@ -783,8 +885,54 @@
     if (state.monthsOpen && !e.target.closest('.fin-months')) { state.monthsOpen = false; render(); }
     if (e.target.closest('[data-action="imp-apply"]')) {
       if (state.imp.busy) return;
+      state.imp.notice = null;
       impCall(true);
       return;
+    }
+    var impFixBtn = e.target.closest('[data-action="imp-merge"], [data-action="imp-add"], [data-action="imp-add-open"], [data-action="imp-add-cancel"], [data-action="imp-alias-remove"]');
+    if (impFixBtn) {
+      var im2 = state.imp;
+      var fixAct = impFixBtn.getAttribute('data-action');
+      if (fixAct === 'imp-alias-remove') {
+        if (!confirm('Remove this saved match? Future imports of that text won’t match it any more (existing invoices stay).')) return;
+        impPost('/api/directory/client-aliases/' + impFixBtn.getAttribute('data-alias-id'), null, 'DELETE')
+          .then(function () { impAfterFix('Saved match removed.'); })
+          .catch(function (err) { im2.error = err.message; render(); });
+        return;
+      }
+      var fixRow = Number(impFixBtn.getAttribute('data-row'));
+      var u = impFindUnmatched(fixRow);
+      if (!u || im2.fixBusy) return;
+      im2.fix[fixRow] = im2.fix[fixRow] || {};
+      if (fixAct === 'imp-add-open') { im2.fix[fixRow].addOpen = true; render(); return; }
+      if (fixAct === 'imp-add-cancel') { im2.fix[fixRow].addOpen = false; render(); return; }
+      if (fixAct === 'imp-merge') {
+        var sel = appEl.querySelector('[data-fix-merge="' + fixRow + '"]');
+        var aid = sel ? Number(sel.value) : 0;
+        var pr = u.pairings.filter(function (x) { return x.assignmentId === aid; })[0];
+        if (!pr) return;
+        im2.fixBusy = true; render();
+        impPost('/api/directory/client-aliases', { aliasText: u.client, assignmentId: aid })
+          .then(function () { impAfterFix('“' + u.client + '” now matches ' + pr.client + (pr.program ? ' / ' + pr.program : '') + ' — for this and future imports. Check the preview, then Apply.'); })
+          .catch(function (err) { im2.fixBusy = false; im2.error = err.message; render(); });
+        return;
+      }
+      if (fixAct === 'imp-add') {
+        var bIn = appEl.querySelector('[data-fix-billing="' + fixRow + '"]');
+        var bVal = bIn ? bIn.value.trim() : '';
+        im2.fix[fixRow].billing = bVal;
+        if (bVal === '' || !isFinite(Number(bVal)) || Number(bVal) < 0) { im2.error = 'Enter the billing rate ($/hr) for the new pairing — invoices are billed at that rate.'; render(); return; }
+        im2.fixBusy = true; render();
+        impPost('/api/directory/consultants/' + u.consultantId + '/assignments/from-text', { clientText: u.client, billing: Number(bVal) })
+          .then(function (b) {
+            var a = b.assignment || {};
+            im2.fix[fixRow].addOpen = false;
+            impAfterFix((b.existed ? 'Pairing already existed: ' : 'Added pairing: ') + u.consultantName + ' on ' + (a.client_name || '') + (a.program_name ? ' / ' + a.program_name : '') +
+              (a.billing !== null && a.billing !== undefined ? ' at $' + money(a.billing) + '/hr' : '') + '. Check the preview, then Apply.');
+          })
+          .catch(function (err) { im2.fixBusy = false; im2.error = err.message; render(); });
+        return;
+      }
     }
     var svAct = e.target.closest('[data-action="sv-toggle-payment"], [data-action="sv-toggle-timesheet"], [data-action="sv-delete"]');
     if (svAct) {
@@ -916,7 +1064,7 @@
       var f = impFile.files && impFile.files[0];
       if (!f) return;
       var imp = state.imp;
-      imp.error = null; imp.preview = null; imp.result = null; imp.busy = true; render();
+      imp.error = null; imp.notice = null; imp.fix = {}; imp.preview = null; imp.result = null; imp.busy = true; render();
       var reader = new FileReader();
       reader.onload = function (ev) {
         try {

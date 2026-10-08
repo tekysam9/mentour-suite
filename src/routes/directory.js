@@ -14,6 +14,8 @@ const pool = require('../db');
 const { requireAuth } = require('../auth');
 const { TABLES: DIRECTORY_TABLES } = require('./directoryDedup');
 const { upsertAssignmentBilling } = require('./assignmentUpsert');
+const { findOrCreateDirectoryRecord } = require('./directoryUpsert');
+const { aliasKey, splitClientText, isMissingTable, SCHEMA_NEEDED_MESSAGE } = require('./clientAliases');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -41,13 +43,26 @@ const REFERENCING_COLUMNS = {
     { table: 'programs', column: 'client_id' },
     { table: 'consultant_assignments', column: 'client_id' },
     { table: 'invoices', column: 'client_id' },
+    // Saved client-name matches follow the surviving record (optional: the
+    // table only exists once db/schema.sql has been re-run).
+    { table: 'client_text_aliases', column: 'client_id', optional: true },
   ],
   programs: [
     { table: 'margin_roster_entries', column: 'program_id' },
     { table: 'consultant_assignments', column: 'program_id' },
     { table: 'invoices', column: 'program_id' },
+    { table: 'client_text_aliases', column: 'program_id', optional: true },
   ],
 };
+
+// UPDATE that tolerates an optional table not existing yet.
+async function updateReferences(conn, table, sql, params, optional) {
+  try {
+    await conn.query(sql, params);
+  } catch (err) {
+    if (!(optional && isMissingTable(err))) throw err;
+  }
+}
 
 // After reassigning ids in a merge, two consultant_assignments rows can end
 // up representing the exact same (consultant, client, program) pairing
@@ -257,6 +272,137 @@ router.delete('/assignments/:id', async (req, res, next) => {
     if (result.affectedRows === 0) return res.status(404).json({ error: 'Not found.' });
     res.json({ ok: true });
   } catch (err) {
+    next(err);
+  }
+});
+
+// Adds a billing pairing from an hours file's Client column text (Fin-Module >
+// Import hours, "Add as new pairing"). The text is split like the Margin
+// file's "Client / Account" (Program/Client; no "/" = client only), the
+// client and program are found by exact name or created (the same
+// find-or-create the uploads use, including the near-duplicate flagging), and
+// the pairing is added as a manual one. An existing pairing is returned as is
+// (its billing is only filled in when it has none).
+// body: { clientText, billing }
+router.post('/consultants/:id/assignments/from-text', async (req, res, next) => {
+  const conn = await pool.getConnection();
+  try {
+    const organizationId = req.user.organization_id;
+    const consultant = await findConsultant(req.params.id, organizationId);
+    if (!consultant) return res.status(404).json({ error: 'Not found.' });
+    const body = req.body || {};
+    const { clientName, programName } = splitClientText(body.clientText);
+    if (!clientName) return res.status(400).json({ error: 'clientText must name a client (e.g. "Program/Client" or "Client").' });
+    const billing = body.billing === null || body.billing === undefined || body.billing === '' ? null : Number(body.billing);
+    if (billing !== null && (!Number.isFinite(billing) || billing < 0)) return res.status(400).json({ error: 'Billing must be a number.' });
+
+    await conn.beginTransaction();
+    const client = await findOrCreateDirectoryRecord(conn, 'clients', { organizationId, name: clientName, status: 'active' });
+    const program = programName
+      ? await findOrCreateDirectoryRecord(conn, 'programs', { organizationId, clientId: client.id, name: programName, status: 'active' })
+      : null;
+    const [existing] = await conn.query(
+      `SELECT id, billing FROM consultant_assignments
+       WHERE organization_id = ? AND consultant_id = ? AND client_id <=> ? AND program_id <=> ?`,
+      [organizationId, consultant.id, client.id, program ? program.id : null]
+    );
+    let assignmentId, existed = false;
+    if (existing.length) {
+      existed = true;
+      assignmentId = existing[0].id;
+      if (existing[0].billing === null && billing !== null) {
+        await conn.query('UPDATE consultant_assignments SET billing = ? WHERE id = ?', [billing, assignmentId]);
+      }
+    } else {
+      assignmentId = await upsertAssignmentBilling(conn, {
+        organizationId, consultantId: consultant.id, clientId: client.id, programId: program ? program.id : null,
+        billing, source: 'manual', status: 'active',
+      });
+    }
+    await conn.commit();
+    const [rows] = await pool.query(
+      `SELECT a.id, a.billing, a.source, a.status, a.left_date, a.client_id, a.program_id,
+         cl.name AS client_name, p.name AS program_name
+       FROM consultant_assignments a
+       LEFT JOIN clients cl ON cl.id = a.client_id
+       LEFT JOIN programs p ON p.id = a.program_id
+       WHERE a.id = ?`,
+      [assignmentId]
+    );
+    res.status(existed ? 200 : 201).json({ assignment: rows[0], existed, clientCreated: client.created, programCreated: !!(program && program.created) });
+  } catch (err) {
+    try { await conn.rollback(); } catch (_) { /* no-op */ }
+    next(err);
+  } finally {
+    conn.release();
+  }
+});
+
+// --- Client name matches (alternate Client-column text -> client/program) ---
+// See clientAliases.js. Created from Fin-Module > Import hours ("Same as").
+
+router.get('/client-aliases', async (req, res, next) => {
+  try {
+    const [rows] = await pool.query(
+      `SELECT x.id, x.alias_text, x.client_id, x.program_id, x.created_at, cl.name AS client_name, p.name AS program_name
+       FROM client_text_aliases x
+       JOIN clients cl ON cl.id = x.client_id
+       LEFT JOIN programs p ON p.id = x.program_id
+       WHERE x.organization_id = ?
+       ORDER BY x.alias_text`,
+      [req.user.organization_id]
+    );
+    res.json({ aliases: rows });
+  } catch (err) {
+    if (isMissingTable(err)) return res.json({ aliases: [], schemaNeeded: true });
+    next(err);
+  }
+});
+
+// body: { aliasText, assignmentId } -- "aliasText means the client/program of this pairing".
+router.post('/client-aliases', async (req, res, next) => {
+  try {
+    const organizationId = req.user.organization_id;
+    const body = req.body || {};
+    const key = aliasKey(body.aliasText);
+    if (!key) return res.status(400).json({ error: 'aliasText is required.' });
+    const [aRows] = await pool.query(
+      'SELECT id, client_id, program_id FROM consultant_assignments WHERE id = ? AND organization_id = ?',
+      [Number(body.assignmentId) || 0, organizationId]
+    );
+    if (!aRows.length) return res.status(404).json({ error: 'That pairing no longer exists.' });
+    if (!aRows[0].client_id) return res.status(400).json({ error: 'That pairing has no client to match to.' });
+    const text = String(body.aliasText).replace(/\s+/g, ' ').trim().slice(0, 255);
+    try {
+      await pool.query(
+        `INSERT INTO client_text_aliases (organization_id, alias_key, alias_text, client_id, program_id)
+         VALUES (?, ?, ?, ?, ?)
+         ON DUPLICATE KEY UPDATE alias_text = VALUES(alias_text), client_id = VALUES(client_id), program_id = VALUES(program_id)`,
+        [organizationId, key, text, aRows[0].client_id, aRows[0].program_id]
+      );
+    } catch (err) {
+      if (isMissingTable(err)) return res.status(409).json({ error: SCHEMA_NEEDED_MESSAGE, schemaNeeded: true });
+      throw err;
+    }
+    const [rows] = await pool.query(
+      `SELECT x.id, x.alias_text, x.client_id, x.program_id, cl.name AS client_name, p.name AS program_name
+       FROM client_text_aliases x JOIN clients cl ON cl.id = x.client_id LEFT JOIN programs p ON p.id = x.program_id
+       WHERE x.organization_id = ? AND x.alias_key = ?`,
+      [organizationId, key]
+    );
+    res.status(201).json({ alias: rows[0] });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.delete('/client-aliases/:id', async (req, res, next) => {
+  try {
+    const [result] = await pool.query('DELETE FROM client_text_aliases WHERE id = ? AND organization_id = ?', [req.params.id, req.user.organization_id]);
+    if (result.affectedRows === 0) return res.status(404).json({ error: 'Not found.' });
+    res.json({ ok: true });
+  } catch (err) {
+    if (isMissingTable(err)) return res.status(404).json({ error: 'Not found.' });
     next(err);
   }
 });
@@ -492,11 +638,10 @@ router.post('/duplicates/:id/merge', async (req, res, next) => {
         [keepId, loseId, req.user.organization_id]
       );
       for (const pair of sameNamed) {
-        for (const table of ['margin_roster_entries', 'consultant_assignments', 'invoices']) {
-          await conn.query(
+        for (const table of ['margin_roster_entries', 'consultant_assignments', 'invoices', 'client_text_aliases']) {
+          await updateReferences(conn, table,
             `UPDATE ${table} SET program_id = ? WHERE program_id = ? AND organization_id = ?`,
-            [pair.keep_pid, pair.lose_pid, req.user.organization_id]
-          );
+            [pair.keep_pid, pair.lose_pid, req.user.organization_id], table === 'client_text_aliases');
         }
         await conn.query(
           `DELETE FROM directory_duplicate_candidates WHERE table_name = 'programs' AND status = 'open' AND (record_id = ? OR matched_record_id = ?)`,
@@ -507,10 +652,9 @@ router.post('/duplicates/:id/merge', async (req, res, next) => {
     }
 
     for (const ref of REFERENCING_COLUMNS[tableName] || []) {
-      await conn.query(
+      await updateReferences(conn, ref.table,
         `UPDATE ${ref.ignore ? 'IGNORE ' : ''}${ref.table} SET ${ref.column} = ? WHERE ${ref.column} = ? AND organization_id = ?`,
-        [keepId, loseId, req.user.organization_id]
-      );
+        [keepId, loseId, req.user.organization_id], ref.optional);
     }
     if (REFERENCING_COLUMNS[tableName] && REFERENCING_COLUMNS[tableName].some((ref) => ref.table === 'consultant_assignments')) {
       await dedupeAssignments(conn, req.user.organization_id);

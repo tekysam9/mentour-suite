@@ -11,6 +11,7 @@ const express = require('express');
 const pool = require('../db');
 const { requireAuth } = require('../auth');
 const { normalizeName } = require('./directoryUpsert');
+const { aliasKey, splitClientText, loadAliasMap } = require('./clientAliases');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -342,7 +343,7 @@ router.post('/import-hours', async (req, res, next) => {
       byName.set(k, byName.has(k) ? null : c); // null = two consultants share the name -> ambiguous
     }
     const [assignments] = await conn.query(
-      `SELECT a.id AS assignment_id, a.consultant_id, a.client_id, a.program_id, a.billing,
+      `SELECT a.id AS assignment_id, a.consultant_id, a.client_id, a.program_id, a.billing, a.status AS assignment_status,
          cl.name AS client_name, cl.email AS client_email, cl.phone AS client_phone, cl.address AS client_address,
          p.name AS program_name, p.email AS program_email, p.phone AS program_phone, p.address AS program_address
        FROM consultant_assignments a
@@ -356,6 +357,21 @@ router.post('/import-hours', async (req, res, next) => {
       if (!byConsultant.has(a.consultant_id)) byConsultant.set(a.consultant_id, []);
       byConsultant.get(a.consultant_id).push(a);
     }
+    // Client-column texts a person has already said mean a given client/program.
+    const aliases = await loadAliasMap(conn, organizationId);
+    // For a client/program miss: who the consultant is, their current pairings
+    // (to merge the text into) and how the text would split (to add it as new).
+    const pairingFix = (cons, mine, clientText) => {
+      const sp = splitClientText(clientText);
+      return {
+        fixable: true, consultantId: cons.id, consultantName: cons.name,
+        parsedClient: sp.clientName, parsedProgram: sp.programName,
+        pairings: mine.map((a) => ({
+          assignmentId: a.assignment_id, client: a.client_name, program: a.program_name,
+          billing: a.billing === null || a.billing === undefined ? null : Number(a.billing), status: a.assignment_status,
+        })),
+      };
+    };
 
     const unmatched = [];
     const planned = new Map(); // assignment|invoice YYYY-MM -> plan item
@@ -400,17 +416,22 @@ router.post('/import-hours', async (req, res, next) => {
       const slash = clientText.indexOf('/');
       const progKey = slash > -1 ? nameKey(clientText.slice(0, slash)) : null;
       const clientKey = slash > -1 ? nameKey(clientText.slice(slash + 1)) : whole;
-      let cands = mine.filter((a) => a.client_name && nameKey(a.client_name) === whole && !a.program_id);
+      let cands = [];
+      // 1. A saved client name match for this exact text (see clientAliases.js).
+      const alias = aliases.get(aliasKey(clientText));
+      if (alias) cands = mine.filter((a) => a.client_id === alias.client_id && (a.program_id || null) === (alias.program_id || null));
+      // 2. Otherwise by name: the whole text as a client with no program, then "Program/Client".
+      if (!cands.length) cands = mine.filter((a) => a.client_name && nameKey(a.client_name) === whole && !a.program_id);
       if (!cands.length) {
         cands = mine.filter((a) => a.client_name && nameKey(a.client_name) === clientKey &&
           (progKey === null || (a.program_name && nameKey(a.program_name) === progKey)));
       }
       if (!cands.length) {
-        unmatched.push({ row: rowNo, name: nameText, client: clientText, reason: 'no billing pairing for this consultant on that client/program' });
+        unmatched.push({ row: rowNo, name: nameText, client: clientText, reason: 'no billing pairing for this consultant on that client/program', reasonCode: 'no_pairing', ...pairingFix(cons, mine, clientText) });
         return;
       }
       if (cands.length > 1) {
-        unmatched.push({ row: rowNo, name: nameText, client: clientText, reason: 'matches more than one program — put "Program/Client" in the Client column' });
+        unmatched.push({ row: rowNo, name: nameText, client: clientText, reason: 'matches more than one program — put "Program/Client" in the Client column', reasonCode: 'ambiguous', ...pairingFix(cons, mine, clientText) });
         return;
       }
       const a = cands[0];

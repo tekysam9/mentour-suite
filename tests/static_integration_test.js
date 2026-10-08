@@ -95,6 +95,16 @@ async function main() {
     check('sheet names: "December 2025", "Dec-25" parse; "Sheet1", "Notes" do not',
       JSON.stringify(IH.parseSheetName('December 2025')) === '{"month":12,"year":2025}' && IH.parseSheetName('Dec-25').year === 2025 &&
       IH.parseSheetName('Sheet1') === null && IH.parseSheetName('Notes') === null);
+    check('Bill Rate column is read per row (latest sheet wins) to pre-fill "Add as a new pairing"',
+      JSON.stringify(mr.rowBillRates) === '[66.5,40,72]', mr.rowBillRates);
+    check('invoices.html offers Merge / Add as a new pairing for unrecognised client text, and lists saved matches',
+      invHtml.includes('data-action="imp-merge"') && invHtml.includes('data-action="imp-add-open"') && invHtml.includes('/assignments/from-text') &&
+      invHtml.includes('/api/directory/client-aliases') && invHtml.includes('Saved client name matches'));
+    const CA = require('../src/routes/clientAliases.js');
+    check('client text split matches the Margin file: "International Resource Group/State of RI" -> client State of RI, program International Resource Group; "CDW" -> client only',
+      JSON.stringify(CA.splitClientText('International Resource Group/State of RI')) === '{"clientName":"State of RI","programName":"International Resource Group"}' &&
+      JSON.stringify(CA.splitClientText('CDW')) === '{"clientName":"CDW","programName":null}' &&
+      CA.aliasKey('ROSE/ University of MO') === CA.aliasKey('rose /university  of mo'));
     check('invoices.html reads every sheet via ImportHours.parseHoursSheets', invHtml.includes('ImportHours.parseHoursSheets(wb.SheetNames.map('));
 
     // "/" should serve index.html (express.static default)

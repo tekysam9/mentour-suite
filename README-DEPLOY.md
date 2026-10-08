@@ -236,6 +236,28 @@ Clear) to show only some months. `GET /api/invoices?months=2026-01,2026-02`
 (`periodMonth=` still works) returns `totals` for exactly the invoices listed,
 so totals follow Show inactive / payment / timesheet filters. No schema change.
 
+### Update: Import hours — merge or add an unrecognised Client (schema re-run needed)
+
+**Redeploying needs `db/schema.sql` re-run.** It adds one table,
+`client_text_aliases` (`CREATE TABLE IF NOT EXISTS`; additive, safe to run
+again). Until it is re-run, imports work exactly as before and only the
+"Merge" button reports that the database update is needed.
+
+When an hours row names a known consultant but its Client text doesn't match
+one of their pairings (or matches more than one), the preview lists it under
+"Client / program not recognised" with two fixes:
+- **Same as … → Merge**: pick one of the consultant's pairings. The text is
+  saved as another name for that client/program (Directory keeps one name per
+  record, so this is stored in `client_text_aliases`), and this and every later
+  import of the same text (case/spacing ignored) matches it. E.g.
+  "International Resource Group/State of RI" → State of RI / IRG.
+- **Add as a new pairing**: creates the client/program from the text (split like
+  the Margin file: Program/Client) and the consultant's pairing at the billing
+  rate entered (pre-filled from the sheet's Bill Rate column).
+Either way the preview re-runs and nothing is invoiced until Apply. Saved
+matches are listed under the preview with a Remove button. Directory merges
+repoint saved matches to the surviving client/program.
+
 ### Update: client invoices start at 0 hours; clearing client invoices
 
 Generated client invoices now start at **0 hours / $0** until hours are typed

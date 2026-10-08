@@ -262,6 +262,29 @@ CREATE TABLE IF NOT EXISTS consultant_assignments (
 ALTER TABLE consultant_assignments ADD COLUMN IF NOT EXISTS status ENUM('active', 'left') NOT NULL DEFAULT 'active';
 ALTER TABLE consultant_assignments ADD COLUMN IF NOT EXISTS left_date DATE NULL;
 
+-- Alternate names for a client/program as an hours file writes them in its
+-- Client column (Fin-Module > Import hours). The directory keeps one name per
+-- client/program, so when a file says "International Resource Group/State of RI"
+-- for the IRG program under State of RI, a person merges that text into the
+-- existing pairing once and it is saved here; later imports of the same text
+-- match automatically (see src/routes/clientAliases.js). alias_key is the text
+-- lower-cased with spaces collapsed and none around "/". Added October 2026;
+-- additive and safe to re-run.
+CREATE TABLE IF NOT EXISTS client_text_aliases (
+  id              INT AUTO_INCREMENT PRIMARY KEY,
+  organization_id INT NOT NULL,
+  alias_key       VARCHAR(255) NOT NULL,
+  alias_text      VARCHAR(255) NOT NULL,
+  client_id       INT NOT NULL,
+  program_id      INT NULL,
+  created_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE,
+  FOREIGN KEY (client_id) REFERENCES clients(id) ON DELETE CASCADE,
+  FOREIGN KEY (program_id) REFERENCES programs(id) ON DELETE CASCADE,
+  UNIQUE KEY uq_client_alias (organization_id, alias_key)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 -- ---------------------------------------------------------------------------
 -- "Smart parser" duplicate detection. An exact name match (case/whitespace
 -- insensitive, see directoryUpsert.js) always resolves to the same record

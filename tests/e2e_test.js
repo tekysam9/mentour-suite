@@ -1168,6 +1168,85 @@ async function main() {
       r = await otherOrgUser.fetch('/api/invoices?months=2026-01,2026-02');
       check('months filter stays scoped to the caller’s org', r.status === 200 && !r.body.invoices.some((i) => i.consultant_name === 'Asha Test'), r.body);
 
+      // 33h. Import hours: a Client-column text that doesn't match a pairing can be
+      // merged into an existing pairing (saved as another name, so later imports
+      // match too) or added as a new pairing. Nothing is invoiced until Apply.
+      const fixOwner = makeJar();
+      r = await fixOwner.fetch('/api/auth/signup', { method: 'POST', body: JSON.stringify({ orgName: 'Fix Pairing Co', name: 'Fix Owner', email: 'fix@fixpairing.test', password: 'fixpairingpass1' }) });
+      check('fix-pairing test org signup returns 201', r.status === 201, r);
+      await fixOwner.fetch('/api/margin', { method: 'POST', body: JSON.stringify({ fileName: 'fx.xlsx', data: { kpis: {}, records: [
+        hrsRec('Mo Example', 'State of Test', 'IRG', 74), hrsRec('Asha Test', 'Acme Health', 'HCL', 66.5),
+        hrsRec('Jun Sample', 'Beta', 'Rocket', 90), hrsRec('Jun Sample', 'Beta', 'Orbit', 95),
+      ] } }) });
+      r = await fixOwner.fetch('/api/directory/consultants');
+      const fxCons = Object.fromEntries(r.body.consultants.map((c) => [c.name, c]));
+      const moIrg = fxCons['Mo Example'].assignments.find((a) => a.program_name === 'IRG');
+      const junRocket = fxCons['Jun Sample'].assignments.find((a) => a.program_name === 'Rocket');
+      const fixRows = [
+        { name: 'Mo Example ', client: 'International Resource Group/State of Test', hours: { '2026-09': 168 } },
+        { name: 'Asha Test', client: 'NewProg/ New Client', hours: { '2026-08': 100 } },
+        { name: 'Jun Sample', client: 'Beta', hours: { '2026-08': 50 } },
+        { name: 'Nobody Known', client: 'Acme Health', hours: { '2026-08': 10 } },
+      ];
+      const fixPreview = () => fixOwner.fetch('/api/invoices/import-hours', { method: 'POST', body: JSON.stringify({ rows: fixRows }) });
+      r = await fixPreview();
+      const moMiss = r.body.unmatched.find((u) => u.row === 1);
+      check('unmatched client text for a known consultant is fixable: consultant, their pairings and how the text splits',
+        r.status === 200 && r.body.summary.willCreate === 0 && moMiss && moMiss.fixable === true && moMiss.reasonCode === 'no_pairing' &&
+        moMiss.consultantId === fxCons['Mo Example'].id && moMiss.pairings.some((x) => x.assignmentId === moIrg.id && x.program === 'IRG' && x.billing === 74) &&
+        moMiss.parsedClient === 'State of Test' && moMiss.parsedProgram === 'International Resource Group', r.body.unmatched);
+      check('ambiguous client text is fixable too; unknown consultant is not',
+        r.body.unmatched.some((u) => u.row === 3 && u.reasonCode === 'ambiguous' && u.fixable && u.pairings.length === 2) &&
+        r.body.unmatched.some((u) => u.row === 4 && !u.fixable && /not found/.test(u.reason)), r.body.unmatched);
+
+      // Merge into existing: the text becomes another name for State of Test / IRG.
+      r = await fixOwner.fetch('/api/directory/client-aliases', { method: 'POST', body: JSON.stringify({ aliasText: 'International Resource Group/State of Test', assignmentId: moIrg.id }) });
+      check('merge saves the text as another name for the client/program', r.status === 201 && r.body.alias.client_name === 'State of Test' && r.body.alias.program_name === 'IRG', r.body);
+      r = await fixPreview();
+      check('after merge the row moves into the preview: Sep 2026 hours -> Oct 2026 invoice on IRG at $74 (nothing created yet)',
+        r.body.willCreate.some((w) => w.consultant === 'Mo Example' && w.program === 'IRG' && w.periodMonth === '2026-10' && w.hoursMonth === '2026-09' && w.rate === 74 && w.amount === 12432) &&
+        !r.body.unmatched.some((u) => u.row === 1), r.body);
+      r = await fixOwner.fetch('/api/invoices?includeInactive=1');
+      check('merge/preview created no invoices', r.body.invoices.length === 0, r.body);
+      r = await fixOwner.fetch('/api/invoices/import-hours', { method: 'POST', body: JSON.stringify({ rows: [{ name: 'Mo Example', client: 'international resource group / state of test', hours: { '2026-08': 160 } }] }) });
+      check('the saved name matches later imports too (case / spacing ignored)', r.body.willCreate.length === 1 && r.body.willCreate[0].program === 'IRG', r.body);
+      r = await fixOwner.fetch('/api/directory/client-aliases');
+      check('saved client name matches are listed', r.status === 200 && r.body.aliases.length === 1 && r.body.aliases[0].alias_text === 'International Resource Group/State of Test', r.body);
+
+      // Ambiguous text merged into one of the two programs.
+      r = await fixOwner.fetch('/api/directory/client-aliases', { method: 'POST', body: JSON.stringify({ aliasText: 'Beta', assignmentId: junRocket.id }) });
+      r = await fixPreview();
+      check('ambiguous "Beta" merged into Beta / Rocket now matches Rocket', r.body.willCreate.some((w) => w.consultant === 'Jun Sample' && w.program === 'Rocket' && w.rate === 90), r.body);
+
+      // Add new: a pairing created from the Client text (Program/Client split like the Margin file).
+      r = await fixOwner.fetch('/api/directory/consultants/' + fxCons['Asha Test'].id + '/assignments/from-text', { method: 'POST', body: JSON.stringify({ clientText: 'NewProg/ New Client', billing: 55 }) });
+      check('add new creates the pairing: client New Client, program NewProg, $55, manual',
+        r.status === 201 && r.body.existed === false && r.body.assignment.client_name === 'New Client' && r.body.assignment.program_name === 'NewProg' &&
+        Number(r.body.assignment.billing) === 55 && r.body.assignment.source === 'manual' && r.body.clientCreated === true, r.body);
+      r = await fixOwner.fetch('/api/directory/consultants/' + fxCons['Asha Test'].id + '/assignments/from-text', { method: 'POST', body: JSON.stringify({ clientText: 'NewProg/New Client', billing: 99 }) });
+      check('adding the same pairing again returns it unchanged (no duplicate, billing kept)', r.status === 200 && r.body.existed === true && Number(r.body.assignment.billing) === 55, r.body);
+      r = await fixPreview();
+      check('after add the row is in the preview: Aug 2026 hours -> Sep 2026 invoice on New Client / NewProg at $55; only the unknown consultant left',
+        r.body.willCreate.some((w) => w.consultant === 'Asha Test' && w.client === 'New Client' && w.program === 'NewProg' && w.periodMonth === '2026-09' && w.amount === 5500) &&
+        r.body.summary.willCreate === 3 && r.body.unmatched.length === 1 && r.body.unmatched[0].row === 4, r.body);
+      r = await fixOwner.fetch('/api/invoices/import-hours', { method: 'POST', body: JSON.stringify({ rows: fixRows, apply: true }) });
+      check('Apply creates the 3 invoices', r.status === 201 && r.body.created === 3, r.body);
+
+      // Validation and scoping.
+      r = await fixOwner.fetch('/api/directory/consultants/' + fxCons['Asha Test'].id + '/assignments/from-text', { method: 'POST', body: JSON.stringify({ clientText: '  ', billing: 10 }) });
+      const rBill = await fixOwner.fetch('/api/directory/consultants/' + fxCons['Asha Test'].id + '/assignments/from-text', { method: 'POST', body: JSON.stringify({ clientText: 'X', billing: 'abc' }) });
+      check('add new: blank client text or bad billing returns 400', r.status === 400 && rBill.status === 400, [r, rBill]);
+      r = await otherOrgUser.fetch('/api/directory/client-aliases', { method: 'POST', body: JSON.stringify({ aliasText: 'Steal', assignmentId: moIrg.id }) });
+      const rOtherAdd = await otherOrgUser.fetch('/api/directory/consultants/' + fxCons['Asha Test'].id + '/assignments/from-text', { method: 'POST', body: JSON.stringify({ clientText: 'X/Y', billing: 1 }) });
+      check('another org cannot merge into or add to this org’s pairings', r.status === 404 && rOtherAdd.status === 404, [r, rOtherAdd]);
+      r = await makeJar().fetch('/api/directory/client-aliases');
+      check('client name matches without a login returns 401', r.status === 401, r);
+      r = await fixOwner.fetch('/api/directory/client-aliases');
+      const ircAlias = r.body.aliases.find((a) => /International Resource Group/.test(a.alias_text));
+      r = await fixOwner.fetch('/api/directory/client-aliases/' + ircAlias.id, { method: 'DELETE' });
+      const rAfterDel = await fixOwner.fetch('/api/invoices/import-hours', { method: 'POST', body: JSON.stringify({ rows: [fixRows[0]] }) });
+      check('removing a saved match makes that text unmatched again (fixable)', r.status === 200 && rAfterDel.body.unmatched.length === 1 && rAfterDel.body.unmatched[0].fixable, rAfterDel.body);
+
       // 34. Fin-Module "Subvendor payments": months already paid are read
       // read-only from the latest Ledger upload; December 2026 onwards can be
       // generated from the Ledger rate (else the Margin cost rate). Own org.
