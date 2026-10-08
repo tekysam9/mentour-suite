@@ -988,35 +988,37 @@ async function main() {
       const hrsBody = (extra) => JSON.stringify(Object.assign({ rows: hrsRows, year: 2026, netTerms: 'NET30', paymentStatus: 'paid', timesheetSubmitted: 'yes' }, extra || {}));
       r = await hrsOwner.fetch('/api/invoices/import-hours', { method: 'POST', body: hrsBody() });
       check('preview creates nothing but lists the plan', r.status === 200 && r.body.applied === false && r.body.summary.willCreate === 5, r.body);
-      check('preview: hours x billing rate (160 x 100 = 16000), client-only name matches, zero hours ignored',
-        r.body.willCreate.some((w) => w.consultant === 'Hana Hours' && w.periodMonth === '2026-01' && w.amount === 16000) &&
-        r.body.willCreate.some((w) => w.consultant === 'Hana Hours' && w.periodMonth === '2026-03' && w.hours === 168) &&
-        !r.body.willCreate.some((w) => w.consultant === 'Ivo Hours' && w.periodMonth === '2026-02'), r.body.willCreate);
+      // Billed one month in arrears: Jan hours -> Feb invoice.
+      check('preview: hours x billing rate (160 x 100 = 16000) on the next month\'s invoice, client-only name matches, zero hours ignored',
+        r.body.willCreate.some((w) => w.consultant === 'Hana Hours' && w.periodMonth === '2026-02' && w.hoursMonth === '2026-01' && w.amount === 16000) &&
+        r.body.willCreate.some((w) => w.consultant === 'Hana Hours' && w.periodMonth === '2026-04' && w.hoursMonth === '2026-03' && w.hours === 168) &&
+        !r.body.willCreate.some((w) => w.consultant === 'Ivo Hours' && w.periodMonth === '2026-03'), r.body.willCreate);
       check('unknown consultant, unknown client and ambiguous client are reported, not guessed',
         r.body.unmatched.some((u) => u.name === 'Nobody Known') && r.body.unmatched.some((u) => u.client === 'Wrong Client') &&
         r.body.unmatched.some((u) => u.client === 'Beta' && /more than one program/.test(u.reason)), r.body.unmatched);
-      r = await hrsOwner.fetch('/api/invoices?periodMonth=2026-01&includeInactive=1');
+      r = await hrsOwner.fetch('/api/invoices?periodMonth=2026-02&includeInactive=1');
       check('preview wrote no invoices', r.body.invoices.length === 0, r.body);
       r = await hrsOwner.fetch('/api/invoices/import-hours', { method: 'POST', body: hrsBody({ apply: true }) });
       check('apply creates the 5 invoices', r.status === 201 && r.body.created === 5, r.body);
-      r = await hrsOwner.fetch('/api/invoices?periodMonth=2026-01');
+      r = await hrsOwner.fetch('/api/invoices?periodMonth=2026-02');
       const hanaJan = r.body.invoices.find((i) => i.consultant_name === 'Hana Hours');
-      check('invoice: billed to program IRG, paid, timesheet yes, month-end issue, NET30 due',
+      check('Jan hours invoice: Feb 2026 invoice billed to program IRG, paid, timesheet yes, issued Feb 1, NET30 due Mar 3',
         !!hanaJan && hanaJan.program_name === 'IRG' && hanaJan.payment_status === 'paid' && hanaJan.timesheet_submitted === 'yes' &&
-        String(hanaJan.issue_date).slice(0, 10) === '2026-01-31' && String(hanaJan.due_date).slice(0, 10) === '2026-03-02' && Number(hanaJan.amount) === 16000 && /^INV-202601-\d{5}$/.test(hanaJan.invoice_number), hanaJan);
+        String(hanaJan.period_month).slice(0, 10) === '2026-02-01' &&
+        String(hanaJan.issue_date).slice(0, 10) === '2026-02-01' && String(hanaJan.due_date).slice(0, 10) === '2026-03-03' && Number(hanaJan.amount) === 16000 && /^INV-202602-\d{5}$/.test(hanaJan.invoice_number), hanaJan);
       r = await hrsOwner.fetch('/api/invoices/import-hours', { method: 'POST', body: hrsBody({ apply: true }) });
       check('re-uploading the same file creates nothing (existing months left untouched)',
         r.status === 201 && r.body.created === 0 && r.body.skippedExisting.length === 5, r.body);
       // An invoice generated at 0 hours is filled in from the file; one with hours is never changed.
-      r = await hrsOwner.fetch('/api/invoices/generate', { method: 'POST', body: JSON.stringify({ periodMonth: '2026-04' }) });
-      check('generating April creates 0-hour placeholders', r.status === 201 && r.body.created.length === 4 && r.body.created.every((i) => Number(i.hours) === 0), r.body);
+      r = await hrsOwner.fetch('/api/invoices/generate', { method: 'POST', body: JSON.stringify({ periodMonth: '2026-05' }) });
+      check('generating the May invoice month creates 0-hour placeholders', r.status === 201 && r.body.created.length === 4 && r.body.created.every((i) => Number(i.hours) === 0), r.body);
       const aprRows = [{ name: 'Ivo Hours', client: 'Acme', hours: { 4: 120 } }];
       r = await hrsOwner.fetch('/api/invoices/import-hours', { method: 'POST', body: JSON.stringify({ rows: aprRows, year: 2026, apply: true }) });
-      check('the 0-hour April invoice is filled in (120 x 80 = 9600), not duplicated',
+      check('April hours fill the 0-hour May invoice (120 x 80 = 9600), not duplicated',
         r.status === 201 && r.body.created === 0 && r.body.filled === 1, r.body);
-      r = await hrsOwner.fetch('/api/invoices?periodMonth=2026-04');
+      r = await hrsOwner.fetch('/api/invoices?periodMonth=2026-05');
       const ivoApr = r.body.invoices.filter((i) => i.consultant_name === 'Ivo Hours');
-      check('April invoice now has the file’s hours and amount', ivoApr.length === 1 && Number(ivoApr[0].hours) === 120 && Number(ivoApr[0].amount) === 9600, ivoApr);
+      check('May invoice now has the file’s April hours and amount', ivoApr.length === 1 && Number(ivoApr[0].hours) === 120 && Number(ivoApr[0].amount) === 9600, ivoApr);
       aprRows[0].hours = { 4: 999 };
       r = await hrsOwner.fetch('/api/invoices/import-hours', { method: 'POST', body: JSON.stringify({ rows: aprRows, year: 2026, apply: true }) });
       check('an invoice that already has hours is left untouched', r.body.created === 0 && r.body.filled === 0 && r.body.skippedExisting.length === 1, r.body);
@@ -1026,6 +1028,86 @@ async function main() {
       check('another org cannot match this org’s consultants (nothing created)', r.status === 201 && r.body.created === 0, r.body);
       r = await makeJar().fetch('/api/invoices/import-hours', { method: 'POST', body: hrsBody() });
       check('import without a login returns 401', r.status === 401, r);
+
+      // 33e. Each hours column gets its own year (Sam's W2 Payroll sheet: Hours/Dec is
+      // December 2025 hours, then Hours/Jan.. 2026), and billing is one month in arrears
+      // (Dec 2025 hours -> Jan 2026 invoice, issued Jan 1). The browser resolves the
+      // columns with public/import-hours.js and sends hours keyed by HOURS month 'YYYY-MM'.
+      const IH = require('../public/import-hours.js');
+      const decJanCols = IH.resolveHourColumns(['Hours/Dec', 'Hours/Jan'].map(IH.parseHoursHeader), 2026);
+      check('Dec-before-Jan columns with Year 2026: Dec 2025 hours -> Jan 2026 invoice, Jan 2026 hours -> Feb 2026 invoice',
+        decJanCols.map((c) => c.key + '>' + c.invoiceKey).join(',') === '2025-12>2026-01,2026-01>2026-02', decJanCols);
+      const decRow = { name: 'Hana Hours', client: 'IRG/State of RI', hours: {} };
+      decRow.hours[decJanCols[0].key] = 168;
+      decRow.hours[decJanCols[1].key] = 160; // the Feb 2026 invoice already has hours -> left untouched
+      r = await hrsOwner.fetch('/api/invoices/import-hours', { method: 'POST', body: JSON.stringify({ rows: [decRow] }) });
+      check('YYYY-MM payload needs no year; preview: invoice Jan 2026 for Dec 2025 hours (no Dec 2026)',
+        r.status === 200 && r.body.willCreate.length === 1 && r.body.willCreate[0].periodMonth === '2026-01' && r.body.willCreate[0].hoursMonth === '2025-12' &&
+        r.body.skippedExisting.length === 1 && r.body.skippedExisting[0].periodMonth === '2026-02' && r.body.skippedExisting[0].hoursMonth === '2026-01', r.body);
+      r = await hrsOwner.fetch('/api/invoices/import-hours', { method: 'POST', body: JSON.stringify({ rows: [decRow], apply: true }) });
+      check('apply creates the Jan 2026 invoice', r.status === 201 && r.body.created === 1, r.body);
+      r = await hrsOwner.fetch('/api/invoices?periodMonth=2026-01');
+      check('month filter returns only that invoice month (2026-01)',
+        r.status === 200 && r.body.invoices.length === 1 && r.body.invoices.every((i) => String(i.period_month).slice(0, 10) === '2026-01-01'), r.body);
+      const hanaDec = r.body.invoices.find((i) => i.consultant_name === 'Hana Hours');
+      check('Dec 2025 hours invoice: period_month 2026-01-01, issued 2026-01-01, NET30 due 2026-01-31, 168 x 100, INV-202601',
+        !!hanaDec && String(hanaDec.period_month).slice(0, 10) === '2026-01-01' && String(hanaDec.issue_date).slice(0, 10) === '2026-01-01' &&
+        String(hanaDec.due_date).slice(0, 10) === '2026-01-31' && Number(hanaDec.hours) === 168 && Number(hanaDec.amount) === 16800 &&
+        /^INV-202601-\d{5}$/.test(hanaDec.invoice_number), hanaDec);
+      r = await hrsOwner.fetch('/api/invoices?periodMonth=2025-12&includeInactive=1');
+      const r2 = await hrsOwner.fetch('/api/invoices?periodMonth=2026-12&includeInactive=1');
+      check('no Dec 2025 or Dec 2026 invoice was created', r.body.invoices.length === 0 && r2.body.invoices.length === 0, [r.body, r2.body]);
+      r = await hrsOwner.fetch('/api/invoices?periodMonth=2026-02');
+      check('month filter: 2026-02 lists only Feb 2026 invoices',
+        r.body.invoices.length === 3 && r.body.invoices.every((i) => String(i.period_month).slice(0, 10) === '2026-02-01'), r.body);
+      r = await hrsOwner.fetch('/api/invoices/months');
+      check('invoice months list is newest first with counts',
+        r.status === 200 && r.body.months[0].month === '2026-05' && r.body.months.some((m) => m.month === '2026-01' && m.count === 1) &&
+        r.body.months.every((m, k, a) => k === 0 || a[k - 1].month > m.month), r.body);
+      r = await makeJar().fetch('/api/invoices/months');
+      check('invoice months without a login returns 401', r.status === 401, r);
+
+      // An explicit year in the heading wins over the Year box.
+      const nov = IH.resolveHourColumns([IH.parseHoursHeader("Hours/Nov'25")], 2026);
+      check('explicit-year heading Hours/Nov\'25 is Nov 2025 hours (Dec 2025 invoice) even with Year 2026',
+        nov[0].key === '2025-11' && nov[0].invoiceKey === '2025-12', nov);
+      r = await hrsOwner.fetch('/api/invoices/import-hours', { method: 'POST', body: JSON.stringify({ rows: [{ name: 'Ivo Hours', client: 'Acme', hours: { [nov[0].key]: 150 } }], apply: true }) });
+      check('explicit-year column creates the Dec 2025 invoice', r.status === 201 && r.body.created === 1, r.body);
+      r = await hrsOwner.fetch('/api/invoices?periodMonth=2025-12');
+      check('Dec 2025 invoice (Nov 2025 hours) issued 2025-12-01 for 150 x 80',
+        r.body.invoices.length === 1 && String(r.body.invoices[0].issue_date).slice(0, 10) === '2025-12-01' && Number(r.body.invoices[0].amount) === 12000, r.body);
+
+      // An hours month after the current month is never invoiced, whatever the browser sends;
+      // the current month's hours are fine (they go on next month's invoice).
+      const nowNY = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit' }).formatToParts(new Date());
+      const nyY = Number(nowNY.find((x) => x.type === 'year').value), nyM = Number(nowNY.find((x) => x.type === 'month').value);
+      const thisKey = nyY + '-' + String(nyM).padStart(2, '0');
+      const nextKey = IH.invoiceMonthKey(thisKey);
+      r = await hrsOwner.fetch('/api/invoices/import-hours', { method: 'POST', body: JSON.stringify({ rows: [{ name: 'Ivo Hours', client: 'Acme', hours: { [nextKey]: 100 } }], apply: true }) });
+      check('future hours month (' + nextKey + ') is skipped with reason "month is in the future", nothing created',
+        r.status === 201 && r.body.created === 0 && r.body.summary.skippedFuture === 1 &&
+        r.body.unmatched.some((u) => u.hoursMonth === nextKey && u.reason === 'month is in the future'), r.body);
+      r = await hrsOwner.fetch('/api/invoices?periodMonth=' + IH.invoiceMonthKey(nextKey) + '&includeInactive=1');
+      check('no invoice exists for the future hours month', r.body.invoices.length === 0, r.body);
+      r = await hrsOwner.fetch('/api/invoices/import-hours', { method: 'POST', body: JSON.stringify({ rows: [{ name: 'Ivo Hours', client: 'Acme', hours: { 12: 100 } }], year: 2099 }) });
+      check('old payload shape: a future hours month is skipped too',
+        r.status === 200 && r.body.summary.willCreate === 0 && r.body.unmatched.some((u) => u.hoursMonth === '2099-12' && u.reason === 'month is in the future'), r.body);
+      r = await hrsOwner.fetch('/api/invoices/import-hours', { method: 'POST', body: JSON.stringify({ rows: [{ name: 'Ivo Hours', client: 'Acme', hours: { [thisKey]: 10 } }] }) });
+      check('the current hours month (' + thisKey + ') is allowed -> ' + nextKey + ' invoice',
+        r.status === 200 && r.body.willCreate.some((w) => w.hoursMonth === thisKey && w.periodMonth === nextKey), r.body);
+      // A lone Dec column with no rollover and no year is NOT moved to the year before.
+      const loneDec = IH.resolveHourColumns([IH.parseHoursHeader('Hours/Dec')], 2026);
+      check('lone Hours/Dec with Year 2026 stays Dec 2026 hours (so it is future in Oct 2026)',
+        loneDec[0].key === '2026-12' && IH.isFutureKey('2026-12', '2026-10'), loneDec);
+
+      // Old payload shape (hours-month number + body.year) still works.
+      r = await hrsOwner.fetch('/api/invoices/import-hours', { method: 'POST', body: JSON.stringify({ rows: [{ name: 'Ivo Hours', client: 'Acme', hours: { 5: 100 } }], year: 2025, apply: true }) });
+      check('old payload shape: May 2025 hours create the Jun 2025 invoice', r.status === 201 && r.body.created === 1, r.body);
+      r = await hrsOwner.fetch('/api/invoices?periodMonth=2025-06');
+      check('old-shape invoice is Jun 2025, issued 2025-06-01',
+        r.body.invoices.length === 1 && String(r.body.invoices[0].issue_date).slice(0, 10) === '2025-06-01' && Number(r.body.invoices[0].hours) === 100, r.body);
+      r = await hrsOwner.fetch('/api/invoices/import-hours', { method: 'POST', body: JSON.stringify({ rows: [{ name: 'Ivo Hours', client: 'Acme', hours: { 5: 100 } }] }) });
+      check('old payload shape without a year returns 400', r.status === 400, r);
 
       // 34. Fin-Module "Subvendor payments": months already paid are read
       // read-only from the latest Ledger upload; December 2026 onwards can be

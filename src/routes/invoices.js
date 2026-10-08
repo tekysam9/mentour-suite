@@ -274,15 +274,23 @@ router.post('/generate', async (req, res, next) => {
 // POST /api/invoices/import-hours
 // Past (or periodic) invoices from an uploaded hours sheet. The browser reads
 // the workbook and sends one row per consultant:
-//   rows: [{ name, client, hours: { "1": 160, "2": 152, ... } }]   (month number -> hours)
-//   year, netTerms (default NET30), paymentStatus ('paid'|'unpaid'), timesheetSubmitted ('yes'|'no'),
+//   rows: [{ name, client, hours: { "2025-12": 168, "2026-01": 160, ... } }]   (HOURS month 'YYYY-MM' -> hours;
+//         the browser works out each column's year -- see public/import-hours.js)
+//   (older shape still accepted: hours: { "1": 160, ... } hours-month number -> hours, with body.year)
+//   netTerms (default NET30), paymentStatus ('paid'|'unpaid'), timesheetSubmitted ('yes'|'no'),
 //   apply: false (default) previews, true creates.
 // Each row is matched to a Directory consultant by name and to one of that
 // consultant's billing pairings by the Client column ("Program/Client" like the
-// Margin file, or just the client). Invoice = pairing's billing rate x the
-// month's hours, issued on the last day of the month. Nothing is guessed: rows
-// that don't match exactly one pairing are reported and skipped, and a month
-// that already has an invoice with hours for that consultant/client/program is
+// Margin file, or just the client). Billing is one month in arrears: the
+// hours worked in a month go on the NEXT month's invoice (Dec 2025 hours ->
+// Jan 2026 invoice). period_month, the INV-YYYYMM number and the list filter
+// are the invoice month; the invoice is issued on the 1st of the invoice month
+// (like generated invoices) and the due date follows from the net terms.
+// Invoice = pairing's billing rate x that hours month's hours. An HOURS month
+// after the current month (America/New_York) is never invoiced -- it is
+// reported as "month is in the future" whatever the browser sent. Nothing is guessed: rows
+// that don't match exactly one pairing are reported and skipped, and an invoice
+// month that already has an invoice with hours for that consultant/client/program is
 // never overwritten (an invoice still at 0 hours is filled in). The apply step re-derives everything on the server in one
 // transaction, so the preview a person confirmed is not trusted blindly.
 const MAX_IMPORT_ROWS = 5000;
@@ -290,6 +298,20 @@ const MAX_IMPORT_ROWS = 5000;
 function nameKey(v) {
   const n = normalizeName(v);
   return n ? n.toLowerCase() : null;
+}
+const FUTURE_MONTH_REASON = 'month is in the future';
+// Hours month 'YYYY-MM' -> invoice month 'YYYY-MM' (one month in arrears).
+function invoiceMonthFor(hoursKey) {
+  const y = Number(hoursKey.slice(0, 4));
+  const m = Number(hoursKey.slice(5, 7));
+  return m === 12 ? (y + 1) + '-01' : y + '-' + String(m + 1).padStart(2, '0');
+}
+// 'YYYY-MM' of today in the business's time zone.
+function currentMonthKeyNY(now) {
+  const parts = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit' })
+    .formatToParts(now || new Date());
+  const get = (t) => parts.find((p) => p.type === t).value;
+  return get('year') + '-' + get('month');
 }
 
 router.post('/import-hours', async (req, res, next) => {
@@ -299,8 +321,13 @@ router.post('/import-hours', async (req, res, next) => {
     const rows = Array.isArray(body.rows) ? body.rows : null;
     if (!rows) return res.status(400).json({ error: 'rows must be a list.' });
     if (rows.length > MAX_IMPORT_ROWS) return res.status(400).json({ error: 'Too many rows (max ' + MAX_IMPORT_ROWS + ').' });
-    const year = Number(body.year);
-    if (!Number.isInteger(year) || year < 2000 || year > 2100) return res.status(400).json({ error: 'year must look like 2026.' });
+    // body.year is only needed for the older month-number shape; when sent it must be valid.
+    const hasYear = body.year !== undefined && body.year !== null && body.year !== '';
+    const year = hasYear ? Number(body.year) : null;
+    if (hasYear && (!Number.isInteger(year) || year < 2000 || year > 2100)) return res.status(400).json({ error: 'year must look like 2026.' });
+    const needsYear = rows.some((r) => r && r.hours && typeof r.hours === 'object' && Object.keys(r.hours).some((k) => /^\d{1,2}$/.test(k)));
+    if (needsYear && !hasYear) return res.status(400).json({ error: 'year must look like 2026.' });
+    const nowKey = currentMonthKeyNY();
     const netTerms = normalizeNetTerms(body.netTerms);
     if (!netTerms) return res.status(400).json({ error: 'netTerms must look like NET30.' });
     const paymentStatus = body.paymentStatus === 'unpaid' ? 'unpaid' : 'paid';
@@ -331,7 +358,7 @@ router.post('/import-hours', async (req, res, next) => {
     }
 
     const unmatched = [];
-    const planned = new Map(); // assignment|month -> plan item
+    const planned = new Map(); // assignment|invoice YYYY-MM -> plan item
     const dupKeys = new Set();
     const noRate = [];
 
@@ -341,10 +368,21 @@ router.post('/import-hours', async (req, res, next) => {
       const clientText = String((r && r.client) || '').trim();
       if (!nameText) return;
       const months = [];
-      for (const [m, h] of Object.entries((r && r.hours) || {})) {
-        const month = Number(m);
+      for (const [k, h] of Object.entries((r && r.hours) || {})) {
         const hours = Number(h);
-        if (Number.isInteger(month) && month >= 1 && month <= 12 && Number.isFinite(hours) && hours > 0) months.push({ month, hours });
+        if (!Number.isFinite(hours) || hours <= 0) continue;
+        let y = null, month = null;
+        const ym = /^(\d{4})-(\d{2})$/.exec(String(k).trim());
+        if (ym) { y = Number(ym[1]); month = Number(ym[2]); }
+        else if (/^\d{1,2}$/.test(String(k).trim())) { y = year; month = Number(k); }
+        if (!Number.isInteger(y) || y < 2000 || y > 2100 || !Number.isInteger(month) || month < 1 || month > 12) continue;
+        const hoursMonth = y + '-' + String(month).padStart(2, '0');
+        const invoiceMonth = invoiceMonthFor(hoursMonth);
+        if (hoursMonth > nowKey) {
+          unmatched.push({ row: rowNo, name: nameText, client: clientText, month, hoursMonth, invoiceMonth, reason: FUTURE_MONTH_REASON });
+          continue;
+        }
+        months.push({ month, hoursMonth, invoiceMonth, hours });
       }
       if (!months.length) return; // nothing worked, nothing to invoice
 
@@ -376,18 +414,18 @@ router.post('/import-hours', async (req, res, next) => {
         return;
       }
       const a = cands[0];
-      for (const { month, hours } of months) {
-        const key = a.assignment_id + '|' + month;
+      for (const { month, hoursMonth, invoiceMonth, hours } of months) {
+        const key = a.assignment_id + '|' + invoiceMonth;
         if (planned.has(key) || dupKeys.has(key)) {
           planned.delete(key); dupKeys.add(key);
-          unmatched.push({ row: rowNo, name: nameText, client: clientText, month, reason: 'this consultant/client appears on more than one row for the month' });
+          unmatched.push({ row: rowNo, name: nameText, client: clientText, month, hoursMonth, invoiceMonth, reason: 'this consultant/client appears on more than one row for the month' });
           continue;
         }
         if (a.billing === null || a.billing === undefined) {
-          noRate.push({ row: rowNo, name: nameText, client: clientText, month, reason: 'no billing rate set' });
+          noRate.push({ row: rowNo, name: nameText, client: clientText, month, hoursMonth, invoiceMonth, reason: 'no billing rate set' });
           continue;
         }
-        planned.set(key, { a, cons, month, hours, rowNo });
+        planned.set(key, { a, cons, hoursMonth, invoiceMonth, hours, rowNo });
       }
     });
 
@@ -395,13 +433,13 @@ router.post('/import-hours', async (req, res, next) => {
     const skippedExisting = [];
     const willFill = [];
     for (const item of planned.values()) {
-      const periodMonth = year + '-' + String(item.month).padStart(2, '0') + '-01';
+      const periodMonth = item.invoiceMonth + '-01'; // the invoice month (hours month + 1)
       const [existing] = await conn.query(
         `SELECT id, hours, rate FROM invoices
          WHERE organization_id = ? AND consultant_id = ? AND client_id <=> ? AND program_id <=> ? AND period_month = ?`,
         [organizationId, item.cons.id, item.a.client_id, item.a.program_id, periodMonth]
       );
-      const label = { consultant: item.cons.name, client: item.a.client_name, program: item.a.program_name, periodMonth: periodMonth.slice(0, 7), hours: item.hours };
+      const label = { consultant: item.cons.name, client: item.a.client_name, program: item.a.program_name, periodMonth: item.invoiceMonth, hoursMonth: item.hoursMonth, hours: item.hours };
       const existingHours = existing.length && existing[0].hours !== null ? Number(existing[0].hours) : null;
       // An invoice generated with no hours yet (0 / blank) is a placeholder: fill it from the file.
       // One that already has hours is never changed.
@@ -414,6 +452,7 @@ router.post('/import-hours', async (req, res, next) => {
     const summary = {
       willCreate: willCreate.length, willFill: willFill.length, skippedExisting: skippedExisting.length,
       unmatched: unmatched.length + noRate.length,
+      skippedFuture: unmatched.filter((u) => u.reason === FUTURE_MONTH_REASON).length,
       totalAmount: Math.round(willCreate.concat(willFill).reduce((t, w) => t + w.amount, 0) * 100) / 100,
     };
     const clean = (w) => { const { _item, _period, ...rest } = w; return rest; };
@@ -426,7 +465,7 @@ router.post('/import-hours', async (req, res, next) => {
     const createdIds = [];
     for (const w of willCreate) {
       const { a, cons } = w._item;
-      const issueDate = toDateOnly(new Date(Date.UTC(year, w._item.month, 0)));
+      const issueDate = w._period; // 1st of the invoice month
       const dueDate = addDays(issueDate, netTermsDays(netTerms));
       const billTo = a.program_id
         ? { name: a.program_name, email: a.program_email, phone: a.program_phone, address: a.program_address }
@@ -514,6 +553,33 @@ router.get('/', async (req, res, next) => {
       params
     );
     res.json({ invoices: rows });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/invoices/months?includeInactive=
+// Invoice months (period_month, 'YYYY-MM') that have invoices, newest first, with
+// counts -- the Client invoices month picker defaults to the newest one. Same
+// visibility rules as the list.
+router.get('/months', async (req, res, next) => {
+  try {
+    const where = ['i.organization_id = ?'];
+    if (!isTruthyFlag(req.query.includeInactive)) {
+      where.push("c.status = 'active'");
+      where.push("NOT (a.status = 'left' AND i.payment_status = 'unpaid' AND (a.left_date IS NULL OR i.period_month > a.left_date))");
+    }
+    const [rows] = await pool.query(
+      `SELECT DATE_FORMAT(i.period_month, '%Y-%m') AS month, COUNT(*) AS count
+       FROM invoices i
+       JOIN consultants c ON c.id = i.consultant_id
+       LEFT JOIN consultant_assignments a ON a.id = i.assignment_id
+       WHERE ${where.join(' AND ')}
+       GROUP BY i.period_month
+       ORDER BY i.period_month DESC`,
+      [req.user.organization_id]
+    );
+    res.json({ months: rows.map((r) => ({ month: r.month, count: Number(r.count) })) });
   } catch (err) {
     next(err);
   }

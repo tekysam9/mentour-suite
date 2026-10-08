@@ -203,6 +203,23 @@ You get a preview first (to create / already invoiced / not matched); months
 that already have an invoice are never changed, and nothing is guessed. No
 schema change.
 
+### Update: Import hours — per-column years, billing in arrears, invoice-month picker
+
+- Each `Hours/<month>` column gets its own year. A heading with a year
+  (`Hours/Dec 2025`, `Hours/Dec-25`, `Hours/Dec'25`) uses it; otherwise the
+  year comes from column order — when the month goes down (Dec → Jan) the
+  year moves forward, and the "Hours year" box is the year of the last run.
+  So `Hours/Dec, Hours/Jan … Hours/Sep` with 2026 is Dec 2025, Jan–Sep 2026.
+- Billing is one month in arrears: a month's hours go on the next month's
+  invoice (Dec 2025 hours → Jan 2026 invoice). `period_month`, the
+  `INV-YYYYMM` number and the month filter are the invoice month; the invoice
+  is issued on the 1st of the invoice month and NET terms count from there.
+- Hours for a month after the current month are never invoiced (shown as
+  "month is in the future"); the server enforces this too.
+- Client invoices shows one invoice month at a time (month picker, ‹ › to step,
+  starts on the newest month with invoices) with an "Hours for" column.
+- No schema change; no `db/schema.sql` re-run needed.
+
 ### Update: client invoices start at 0 hours; clearing client invoices
 
 Generated client invoices now start at **0 hours / $0** until hours are typed

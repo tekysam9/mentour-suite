@@ -106,6 +106,7 @@
   .fin-total-row td { font-weight: 600; background: var(--paper); border-top: 1px solid var(--line); }
 </style>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="/import-hours.js"></script>
 </head>
 <body>
 <div id="app"></div>
@@ -143,7 +144,7 @@
     savedId: null,
     tab: 'client',
     imp: {
-      fileName: null, rows: [], months: [], year: String(new Date().getFullYear()), yearDetected: false,
+      fileName: null, rows: [], cols: [], year: String(new Date().getFullYear()), yearDetected: false,
       netTerms: 'NET30', paymentStatus: 'paid', timesheet: 'yes',
       busy: false, error: null, preview: null, result: null,
     },
@@ -175,7 +176,8 @@
         '<td class="fin-invoice-no">' + escapeHtml(inv.invoice_number) + '</td>' +
         '<td class="fin-consultant">' + escapeHtml(inv.consultant_name) + inactiveTag(inv) + '</td>' +
         '<td>' + clientProgramCell(inv) + '</td>' +
-        '<td>' + (inv.period_month ? String(inv.period_month).slice(0, 7) : '') + '</td>' +
+        '<td>' + (inv.period_month ? escapeHtml(monthLabel(inv.period_month)) : '') + '</td>' +
+        '<td class="fin-muted">' + (inv.period_month ? escapeHtml(ImportHours.monthKeyLabel(ImportHours.hoursMonthKey(String(inv.period_month).slice(0, 7)))) : '') + '</td>' +
         '<td>' + (inv.rate !== null ? '$' + money(inv.rate) + '/hr' : '<span class="fin-muted">—</span>') + '</td>' +
         '<td><input class="fin-num-input" type="number" step="0.25" data-field="hours" value="' + (inv.hours !== null && inv.hours !== undefined ? inv.hours : '') + '" placeholder="—"></td>' +
         '<td><input class="fin-num-input" type="number" step="0.01" data-field="amount" value="' + (inv.amount !== null && inv.amount !== undefined ? inv.amount : '') + '" placeholder="—"></td>' +
@@ -200,10 +202,10 @@
 
   function renderTable() {
     if (state.loading) return '<div class="fin-loading">Loading…</div>';
-    if (!state.invoices.length) return '<div class="fin-empty-state">No invoices for this filter yet. Generate some above, or widen the filters.</div>';
+    if (!state.invoices.length) return '<div class="fin-empty-state">No invoices for ' + escapeHtml(monthLabel(state.periodFilter)) + ' with these filters. Pick another invoice month, generate some above, or widen the filters.</div>';
     return (
       '<div class="fin-table-wrap"><table class="fin-table"><thead><tr>' +
-        '<th>S.No.</th><th>Invoice #</th><th>Consultant</th><th>Client / Program</th><th>Period</th><th>Rate</th>' +
+        '<th>S.No.</th><th>Invoice #</th><th>Consultant</th><th>Client / Program</th><th>Invoice month</th><th title="Billed one month in arrears: the hours on this invoice are for the month before">Hours for</th><th>Rate</th>' +
         '<th>Hours</th><th>Amount</th><th>Net terms</th><th>Due date</th><th>Payment</th><th>Timesheet</th><th>Notes</th><th></th>' +
       '</tr></thead><tbody>' +
       state.invoices.map(renderRow).join('') +
@@ -246,7 +248,7 @@
     return (
       '<p class="fin-copy">One invoice per consultant/client/program billing combination, generated from the rate on file in Directory. Each invoice bills to the Program (or the Client, when that pairing has no program) — hours start at 0 until you type them in or upload them from an hours file (Import hours tab), then amount = rate × hours; both stay editable. Only Active consultants are invoiced and shown unless you opt in to inactive ones. Track NET terms, payment status, and whether the timesheet’s been submitted. Re-generating a month never duplicates an invoice that already exists.</p>' +
       '<div class="fin-generate-card">' +
-        '<label>Month<input type="month" id="gen-period" value="' + escapeHtml(gf.periodMonth) + '"></label>' +
+        '<label>Invoice month<input type="month" id="gen-period" value="' + escapeHtml(gf.periodMonth) + '"></label>' +
         '<label>Net terms<select id="gen-net-terms">' +
           ['NET15', 'NET30', 'NET45', 'NET60', 'NET90'].map(function (nt) {
             return '<option value="' + nt + '"' + (gf.netTerms === nt ? ' selected' : '') + '>' + nt + '</option>';
@@ -261,7 +263,12 @@
       renderGenerateResult() +
       '<div class="fin-controls">' +
         '<label class="fin-check"><input type="checkbox" id="filter-show-inactive"' + (state.showInactive ? ' checked' : '') + '>Show inactive consultants</label>' +
-        '<input type="month" id="filter-period" value="' + escapeHtml(state.periodFilter) + '">' +
+        '<label class="fin-check">Invoice month' +
+          '<button type="button" class="fin-btn fin-btn-small" data-action="period-prev" title="Previous month" aria-label="Previous month">‹</button>' +
+          '<input type="month" id="filter-period" required value="' + escapeHtml(state.periodFilter) + '">' +
+          '<button type="button" class="fin-btn fin-btn-small" data-action="period-next" title="Next month" aria-label="Next month">›</button>' +
+        '</label>' +
+        '<span class="fin-src">Hours for ' + escapeHtml(ImportHours.monthKeyLabel(ImportHours.hoursMonthKey(state.periodFilter))) + '</span>' +
         '<select id="filter-payment">' +
           '<option value="all"' + (state.paymentFilter === 'all' ? ' selected' : '') + '>All payment statuses</option>' +
           '<option value="unpaid"' + (state.paymentFilter === 'unpaid' ? ' selected' : '') + '>Unpaid</option>' +
@@ -428,49 +435,90 @@
 
 
   /* ===== Import hours: past/periodic client invoices from an Excel hours sheet ===== */
-  var IMP_MONTHS = { jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12 };
-  var IMP_MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  // Month + year per "Hours/<month>" column: see public/import-hours.js.
+  var IMP_MONTH_NAMES = ImportHours.MONTH_NAMES;
 
   // Finds the header row (a Name column plus "Hours/<month>" columns), then
-  // returns one row per consultant: { name, client, hours: { monthNumber: hours } }.
+  // returns { cols: [{ col, month, year|null }], rows: [{ name, client, byCol: { colIndex: hours } }] }.
+  // The year of each column is resolved later (impColumns) so changing the
+  // Year box re-resolves it without re-reading the file.
   function parseHoursWorkbook(wb) {
     for (var si = 0; si < wb.SheetNames.length; si++) {
       var grid = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[si]], { header: 1, raw: true, defval: null });
       for (var hr = 0; hr < Math.min(grid.length, 25); hr++) {
         var head = grid[hr] || [];
-        var nameCol = -1, clientCol = -1, hourCols = [], years = {};
+        var nameCol = -1, clientCol = -1, hourCols = [];
         head.forEach(function (cell, c) {
-          var t = typeof cell === 'string' ? cell.replace(/ /g, ' ').trim() : '';
+          var t = typeof cell === 'string' ? cell.replace(/\u00a0/g, ' ').trim() : '';
           if (!t) return;
-          var hm = /^hours?\s*[\/\-–]\s*([A-Za-z]{3,9})\.?\s*(?:'|’|\s)?\s*(\d{4}|\d{2})?$/i.exec(t);
-          if (hm && IMP_MONTHS[hm[1].slice(0, 3).toLowerCase()]) {
-            hourCols.push({ col: c, month: IMP_MONTHS[hm[1].slice(0, 3).toLowerCase()] });
-            if (hm[2]) years[hm[2].length === 2 ? 2000 + Number(hm[2]) : Number(hm[2])] = true;
-          } else if (nameCol < 0 && /^(name|consultant|resource)\b/i.test(t)) nameCol = c;
+          var hm = ImportHours.parseHoursHeader(t);
+          if (hm) hourCols.push({ col: c, month: hm.month, year: hm.year });
+          else if (nameCol < 0 && /^(name|consultant|resource)\b/i.test(t)) nameCol = c;
           else if (clientCol < 0 && /client|account/i.test(t)) clientCol = c;
         });
         if (nameCol < 0 || clientCol < 0 || !hourCols.length) continue;
         var rows = [];
         for (var r = hr + 1; r < grid.length; r++) {
           var row = grid[r] || [];
-          var name = row[nameCol] === null || row[nameCol] === undefined ? '' : String(row[nameCol]).replace(/ /g, ' ').trim();
+          var name = row[nameCol] === null || row[nameCol] === undefined ? '' : String(row[nameCol]).replace(/\u00a0/g, ' ').trim();
           if (!name || /^total/i.test(name)) continue;
-          var hours = {};
+          var byCol = {};
           hourCols.forEach(function (hc) {
             var v = row[hc.col];
             var n = typeof v === 'number' ? v : (typeof v === 'string' ? parseFloat(v.replace(/,/g, '')) : NaN);
-            if (isFinite(n) && n > 0) hours[hc.month] = n;
+            if (isFinite(n) && n > 0) byCol[hc.col] = n;
           });
-          rows.push({ name: name, client: row[clientCol] === null || row[clientCol] === undefined ? '' : String(row[clientCol]).trim(), hours: hours });
+          rows.push({ name: name, client: row[clientCol] === null || row[clientCol] === undefined ? '' : String(row[clientCol]).trim(), byCol: byCol });
         }
-        var yrs = Object.keys(years);
         return {
-          sheet: wb.SheetNames[si], rows: rows, months: hourCols.map(function (h) { return h.month; }),
-          year: yrs.length === 1 ? yrs[0] : null,
+          sheet: wb.SheetNames[si], rows: rows, cols: hourCols,
+          yearInHeadings: hourCols.some(function (h) { return !!h.year; }),
         };
       }
     }
     return null;
+  }
+
+  // The file's hours columns with their resolved month + year (and whether
+  // that month is still in the future, which is never invoiced).
+  function impColumns() {
+    var imp = state.imp;
+    var nowKey = ImportHours.currentMonthKey();
+    var resolved = ImportHours.resolveHourColumns(imp.cols, imp.year);
+    var seen = {};
+    resolved.forEach(function (rc) { seen[rc.key] = (seen[rc.key] || 0) + 1; });
+    return resolved.map(function (rc, i) {
+      rc.col = imp.cols[i].col;
+      rc.future = ImportHours.isFutureKey(rc.key, nowKey);
+      rc.duplicate = seen[rc.key] > 1; // two columns for one month: not guessed, skipped
+      return rc;
+    });
+  }
+
+  // Rows as sent to the server: hours keyed by 'YYYY-MM'. Future months are
+  // left out here (and listed by impFutureSkipped); the server refuses them too.
+  function impPayloadRows() {
+    var cols = impColumns();
+    return state.imp.rows.map(function (r) {
+      var hours = {}; // keyed by the HOURS month; the server puts them on the next month's invoice
+      cols.forEach(function (c) {
+        if (c.future || c.duplicate || !(c.col in r.byCol)) return;
+        hours[c.key] = r.byCol[c.col];
+      });
+      return { name: r.name, client: r.client, hours: hours };
+    });
+  }
+
+  // Hours the browser itself held back: future months, and months that two columns claim.
+  function impClientSkipped() {
+    var cols = impColumns().filter(function (c) { return c.future || c.duplicate; });
+    var out = [];
+    state.imp.rows.forEach(function (r, idx) {
+      cols.forEach(function (c) {
+        if (c.col in r.byCol) out.push({ row: idx + 1, name: r.name, client: r.client, hoursMonth: c.key, invoiceMonth: c.invoiceKey, reason: c.future ? ImportHours.FUTURE_REASON : 'more than one hours column for this month' });
+      });
+    });
+    return out;
   }
 
   function impMoney(n) { return '$' + Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
@@ -478,7 +526,7 @@
   function impPostBody(apply) {
     var imp = state.imp;
     return JSON.stringify({
-      rows: imp.rows, year: Number(imp.year), netTerms: imp.netTerms, paymentStatus: imp.paymentStatus,
+      rows: impPayloadRows(), netTerms: imp.netTerms, paymentStatus: imp.paymentStatus,
       timesheetSubmitted: imp.timesheet, apply: apply,
     });
   }
@@ -511,52 +559,59 @@
 
   function renderImportTab() {
     var imp = state.imp;
-    var months = imp.months.map(function (m) { return IMP_MONTH_NAMES[m - 1]; }).join(', ');
+    var impCols = imp.cols.length ? impColumns() : [];
+    var months = impCols.map(function (c) {
+      return c.label + ' → ' + c.invoiceLabel + ' invoice' + (c.future ? ' (future — skipped)' : (c.duplicate ? ' (repeated — skipped)' : ''));
+    }).join(', ');
     var p = imp.preview || imp.result;
     var out = '';
     if (p) {
       var sm = p.summary;
+      var impSkipped = imp.cols.length ? impClientSkipped() : [];
       out += '<div class="fin-readonly-note">' + (imp.result
         ? '<strong>Done — ' + imp.result.created + ' invoice(s) created, ' + (imp.result.filled || 0) + ' filled in.</strong> '
         : 'Preview only — nothing has been created yet. ') +
-        sm.willCreate + ' to create, ' + sm.willFill + ' existing 0-hour invoice(s) to fill in (' + impMoney(sm.totalAmount) + ' total), ' + sm.skippedExisting + ' already have hours (left untouched), ' + sm.unmatched + ' not matched.</div>';
+        sm.willCreate + ' to create, ' + sm.willFill + ' existing 0-hour invoice(s) to fill in (' + impMoney(sm.totalAmount) + ' total), ' + sm.skippedExisting + ' already have hours (left untouched), ' + (sm.unmatched + impSkipped.length) + ' not matched or skipped.</div>';
       if (imp.preview && (sm.willCreate || sm.willFill)) {
         out += '<div class="fin-controls" style="justify-content:flex-start"><button type="button" class="fin-btn fin-btn-primary" data-action="imp-apply"' + (imp.busy ? ' disabled' : '') + '>Apply: create ' + sm.willCreate + ', fill in ' + sm.willFill + '</button></div>';
       }
       if (imp.preview) {
-        out += impTable('Will be created', ['Consultant', 'Client / Program', 'Month', 'Hours', 'Rate', 'Amount'], p.willCreate.map(function (w) {
-          return '<tr><td>' + escapeHtml(w.consultant) + '</td><td>' + escapeHtml(w.program ? w.client + ' / ' + w.program : w.client) + '</td><td>' + escapeHtml(monthLabel(w.periodMonth + '-01')) +
+        out += impTable('Will be created', ['Consultant', 'Client / Program', 'Invoice month', 'Hours for', 'Hours', 'Rate', 'Amount'], p.willCreate.map(function (w) {
+          return '<tr><td>' + escapeHtml(w.consultant) + '</td><td>' + escapeHtml(w.program ? w.client + ' / ' + w.program : w.client) + '</td><td>' + escapeHtml(monthLabel(w.periodMonth + '-01')) + '</td><td>' + escapeHtml(ImportHours.monthKeyLabel(w.hoursMonth || ImportHours.hoursMonthKey(w.periodMonth))) +
             '</td><td class="fin-num">' + w.hours + '</td><td class="fin-num">' + impMoney(w.rate) + '</td><td class="fin-num">' + impMoney(w.amount) + '</td></tr>';
         }));
       }
       if (imp.preview) {
-        out += impTable('Existing invoices at 0 hours — will be filled in', ['Consultant', 'Client / Program', 'Month', 'Hours', 'Rate', 'Amount'], p.willFill.map(function (w) {
-          return '<tr><td>' + escapeHtml(w.consultant) + '</td><td>' + escapeHtml(w.program ? w.client + ' / ' + w.program : w.client) + '</td><td>' + escapeHtml(monthLabel(w.periodMonth + '-01')) +
+        out += impTable('Existing invoices at 0 hours — will be filled in', ['Consultant', 'Client / Program', 'Invoice month', 'Hours for', 'Hours', 'Rate', 'Amount'], p.willFill.map(function (w) {
+          return '<tr><td>' + escapeHtml(w.consultant) + '</td><td>' + escapeHtml(w.program ? w.client + ' / ' + w.program : w.client) + '</td><td>' + escapeHtml(monthLabel(w.periodMonth + '-01')) + '</td><td>' + escapeHtml(ImportHours.monthKeyLabel(w.hoursMonth || ImportHours.hoursMonthKey(w.periodMonth))) +
             '</td><td class="fin-num">' + w.hours + '</td><td class="fin-num">' + impMoney(w.rate) + '</td><td class="fin-num">' + impMoney(w.amount) + '</td></tr>';
         }));
       }
-      out += impTable('Already have hours — left as is', ['Consultant', 'Client / Program', 'Month', 'File hours', 'Invoice hours'], p.skippedExisting.map(function (w) {
-        return '<tr><td>' + escapeHtml(w.consultant) + '</td><td>' + escapeHtml(w.program ? w.client + ' / ' + w.program : w.client) + '</td><td>' + escapeHtml(monthLabel(w.periodMonth + '-01')) +
+      out += impTable('Already have hours — left as is', ['Consultant', 'Client / Program', 'Invoice month', 'Hours for', 'File hours', 'Invoice hours'], p.skippedExisting.map(function (w) {
+        return '<tr><td>' + escapeHtml(w.consultant) + '</td><td>' + escapeHtml(w.program ? w.client + ' / ' + w.program : w.client) + '</td><td>' + escapeHtml(monthLabel(w.periodMonth + '-01')) + '</td><td>' + escapeHtml(ImportHours.monthKeyLabel(w.hoursMonth || ImportHours.hoursMonthKey(w.periodMonth))) +
           '</td><td class="fin-num">' + w.hours + '</td><td class="fin-num">' + (w.existingHours === null ? '—' : w.existingHours) + '</td></tr>';
       }));
-      out += impTable('Not matched — not invoiced', ['Row', 'Consultant', 'Client column', 'Month', 'Why'], p.unmatched.map(function (u) {
-        return '<tr><td>' + u.row + '</td><td>' + escapeHtml(u.name) + '</td><td>' + escapeHtml(u.client) + '</td><td>' + (u.month ? IMP_MONTH_NAMES[u.month - 1] : '') + '</td><td>' + escapeHtml(u.reason) + '</td></tr>';
+      out += impTable('Not matched or skipped — not invoiced', ['Row', 'Consultant', 'Client column', 'Invoice month', 'Hours for', 'Why'], p.unmatched.concat(impSkipped).map(function (u) {
+        return '<tr><td>' + u.row + '</td><td>' + escapeHtml(u.name) + '</td><td>' + escapeHtml(u.client) + '</td><td>' + (u.invoiceMonth ? escapeHtml(ImportHours.monthKeyLabel(u.invoiceMonth)) : '') + '</td><td>' + (u.hoursMonth ? escapeHtml(ImportHours.monthKeyLabel(u.hoursMonth)) : (u.month ? IMP_MONTH_NAMES[u.month - 1] : '')) + '</td><td>' + escapeHtml(u.reason) + '</td></tr>';
       }));
     }
     return (
       '<h2 class="fin-subtitle">Import hours.</h2>' +
-      '<p class="fin-copy">Upload an Excel sheet with a <strong>Name</strong> column, a <strong>Client</strong> column (“Program/Client” or just the client) and one <strong>Hours/&lt;month&gt;</strong> column per month (e.g. Hours/Jan). Each consultant’s hours become that month’s invoice at the billing rate already on file for the matching client/program. You’ll see a preview first; a month whose invoice already has hours is never changed (an invoice still at 0 hours is filled in). Upload a new file any time to add more months.</p>' +
+      '<p class="fin-copy">Upload an Excel sheet with a <strong>Name</strong> column, a <strong>Client</strong> column (“Program/Client” or just the client) and one <strong>Hours/&lt;month&gt;</strong> column per month (e.g. Hours/Jan, or Hours/Dec 2025). Billing is one month in arrears: each month’s hours go on the <strong>next</strong> month’s invoice (Dec 2025 hours → Jan 2026 invoice, dated Jan 1) at the billing rate already on file for the matching client/program. You’ll see a preview first; a month whose invoice already has hours is never changed (an invoice still at 0 hours is filled in). Upload a new file any time to add more months.</p>' +
       '<div class="fin-generate-card">' +
         '<label>Hours file<input type="file" id="imp-file" accept=".xlsx,.xls"></label>' +
-        '<label>Year<input type="number" id="imp-year" min="2000" max="2100" value="' + escapeHtml(imp.year) + '" style="width:90px"></label>' +
+        '<label>Hours year<input type="number" id="imp-year" min="2000" max="2100" value="' + escapeHtml(imp.year) + '" style="width:90px"></label>' +
         '<label>Net terms<select id="imp-net">' + ['NET15', 'NET30', 'NET45', 'NET60', 'NET90'].map(function (nt) {
           return '<option value="' + nt + '"' + (imp.netTerms === nt ? ' selected' : '') + '>' + nt + '</option>';
         }).join('') + '</select></label>' +
         '<label>Create as<select id="imp-pay"><option value="paid"' + (imp.paymentStatus === 'paid' ? ' selected' : '') + '>Paid</option><option value="unpaid"' + (imp.paymentStatus === 'unpaid' ? ' selected' : '') + '>Unpaid</option></select></label>' +
         '<label>Timesheet<select id="imp-ts"><option value="yes"' + (imp.timesheet === 'yes' ? ' selected' : '') + '>Submitted</option><option value="no"' + (imp.timesheet === 'no' ? ' selected' : '') + '>Not yet</option></select></label>' +
       '</div>' +
-      (imp.fileName ? '<p class="fin-copy"><strong>' + escapeHtml(imp.fileName) + '</strong> — ' + imp.rows.length + ' consultant row(s); hours columns found for ' + escapeHtml(months) + '.' +
-        (imp.yearDetected ? ' Year read from the column headings.' : ' The headings have no year, so check the Year box.') + '</p>' : '') +
+      (imp.fileName ? '<p class="fin-copy"><strong>' + escapeHtml(imp.fileName) + '</strong> — ' + imp.rows.length + ' consultant row(s).<br><strong>Columns found:</strong> ' + escapeHtml(months) + '.<br>' +
+        (imp.yearDetected
+          ? 'Years read from the column headings.'
+          : 'The headings have no year. Columns after a Dec → Jan rollover use the Hours year box; columns before it are the year before. Change the Hours year box if these look wrong.') +
+        ' Hours for a month after the current month are never invoiced.</p>' : '') +
       (imp.busy ? '<p class="fin-copy">Working…</p>' : '') +
       (imp.error ? '<div class="fin-readonly-note" role="alert" style="background:#F6E7E7;border-color:#E3BDBD;color:#8A2D2D">' + escapeHtml(imp.error) + '</div>' : '') +
       out
@@ -689,6 +744,13 @@
   }
 
   appEl.addEventListener('click', function (e) {
+    var periodStep = e.target.closest('[data-action="period-prev"], [data-action="period-next"]');
+    if (periodStep) {
+      state.periodFilter = periodStep.getAttribute('data-action') === 'period-prev'
+        ? ImportHours.hoursMonthKey(state.periodFilter) : ImportHours.invoiceMonthKey(state.periodFilter);
+      loadInvoices();
+      return;
+    }
     if (e.target.closest('[data-action="imp-apply"]')) {
       if (state.imp.busy) return;
       impCall(true);
@@ -774,6 +836,8 @@
         state.generateResult = body;
         // Inactive consultants were just invoiced on purpose -- show them.
         if (state.generateForm.includeInactive) state.showInactive = true;
+        // Show the invoice month that was just generated.
+        if (/^\d{4}-\d{2}$/.test(state.generateForm.periodMonth || '')) state.periodFilter = state.generateForm.periodMonth;
         loadInvoices();
       }).catch(function (err) {
         state.generating = false;
@@ -824,12 +888,11 @@
         try {
           var parsed = parseHoursWorkbook(XLSX.read(new Uint8Array(ev.target.result), { type: 'array' }));
           if (!parsed) throw new Error('Could not find a header row with a Name column, a Client column and “Hours/<month>” columns.');
-          imp.fileName = f.name; imp.rows = parsed.rows; imp.months = parsed.months;
-          imp.yearDetected = !!parsed.year;
-          if (parsed.year) imp.year = String(parsed.year);
+          imp.fileName = f.name; imp.rows = parsed.rows; imp.cols = parsed.cols;
+          imp.yearDetected = parsed.yearInHeadings;
           imp.busy = false;
           impCall(false);
-        } catch (err) { imp.busy = false; imp.fileName = null; imp.rows = []; imp.error = err.message; render(); }
+        } catch (err) { imp.busy = false; imp.fileName = null; imp.rows = []; imp.cols = []; imp.error = err.message; render(); }
       };
       reader.onerror = function () { imp.busy = false; imp.error = 'Could not read the file.'; render(); };
       reader.readAsArrayBuffer(f);
@@ -868,7 +931,12 @@
     }
 
     var filterPeriod = e.target.closest('#filter-period');
-    if (filterPeriod) { state.periodFilter = filterPeriod.value; loadInvoices(); return; }
+    if (filterPeriod) {
+      // One invoice month at a time: a cleared picker keeps the month it had.
+      if (/^\d{4}-\d{2}$/.test(filterPeriod.value)) { state.periodFilter = filterPeriod.value; loadInvoices(); }
+      else filterPeriod.value = state.periodFilter;
+      return;
+    }
     var filterPayment = e.target.closest('#filter-payment');
     if (filterPayment) { state.paymentFilter = filterPayment.value; loadInvoices(); return; }
     var filterTimesheet = e.target.closest('#filter-timesheet');
@@ -903,7 +971,13 @@
   }).then(function (data) {
     if (!data) return;
     state.user = data.user;
-    loadInvoices();
+    // Month picker starts on the newest invoice month that has invoices (else this month).
+    fetch('/api/invoices/months').then(function (res) { return res.ok ? res.json() : { months: [] }; })
+      .catch(function () { return { months: [] }; })
+      .then(function (b) {
+        if (b.months && b.months.length) state.periodFilter = b.months[0].month;
+        loadInvoices();
+      });
   }).catch(function () {
     window.location.href = '/login.html';
   });
