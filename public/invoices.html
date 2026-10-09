@@ -103,6 +103,47 @@
   .fin-badge-static { cursor: default; }
   .fin-src { font-size: 11px; color: var(--text-muted); }
   .fin-num { text-align: right; font-variant-numeric: tabular-nums; }
+  .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
+  .fin-body button:focus-visible, .fin-body a:focus-visible, .fin-body select:focus-visible, .fin-body input:focus-visible, .fin-body summary:focus-visible { outline: 2px solid var(--pine); outline-offset: 2px; }
+  .hist-section-label { font-size: 11px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-muted); margin: 18px 0 8px; }
+  .hist-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+  .hist-chip, .hist-month {
+    border: 1px solid var(--line); background: var(--card); border-radius: 8px; cursor: pointer; font-family: inherit; color: var(--ink);
+    text-align: left; display: flex; flex-direction: column; gap: 2px; padding: 8px 12px; font-size: 14px; font-weight: 600;
+  }
+  .hist-chip span, .hist-month span { font-size: 11px; font-weight: 500; color: var(--text-muted); }
+  .hist-chip:hover, .hist-month:hover { border-color: var(--pine); }
+  .hist-chip.on, .hist-month.on { background: var(--pine); border-color: var(--pine); color: #EFF3EC; }
+  .hist-chip.on span, .hist-month.on span { color: #D5E3D8; }
+  .hist-months { display: grid; grid-template-columns: repeat(auto-fill, minmax(112px, 1fr)); gap: 8px; }
+  .hist-month b { font-size: 14px; }
+  .hist-month.empty:not(.on) { opacity: 0.55; }
+  .hist-filters { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end; margin: 20px 0 14px; }
+  .hist-field { display: flex; flex-direction: column; gap: 4px; font-size: 11px; font-weight: 600; color: var(--text-muted); }
+  .hist-field input, .hist-field select { border: 1px solid var(--line); border-radius: 6px; padding: 7px 9px; font-size: 13px; font-family: inherit; color: var(--text); background: var(--card); }
+  .hist-search { flex: 1 1 260px; }
+  .hist-search input { width: 100%; box-sizing: border-box; }
+  .hist-inline { flex-direction: row; align-items: center; gap: 6px; }
+  .hist-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin: 6px 0 14px; }
+  .hist-card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; }
+  .hist-card-label { font-size: 11px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.03em; }
+  .hist-card-value { font-size: 20px; font-weight: 700; color: var(--ink); margin-top: 3px; font-variant-numeric: tabular-nums; }
+  .hist-card-sub { font-size: 11.5px; color: var(--text-muted); margin-top: 2px; line-height: 1.4; }
+  .hist-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+  .hist-actions a.fin-btn { text-decoration: none; display: inline-block; }
+  .hist-sort { background: none; border: none; font: inherit; color: inherit; text-transform: inherit; letter-spacing: inherit; cursor: pointer; padding: 0; }
+  .hist-sort:hover { color: var(--ink); text-decoration: underline; }
+  .hist-tag { display: inline-block; font-size: 10.5px; font-weight: 700; padding: 2px 8px; border-radius: 99px; }
+  .hist-tag-w2 { background: #E6EEF7; color: #2F5C8F; }
+  .hist-tag-1099 { background: #F1E8F5; color: #6B3F86; }
+  .hist-tag-sub { background: #FBEFD9; color: #8A5A12; }
+  .hist-norate { color: var(--brick); font-size: 11.5px; font-weight: 600; }
+  .hist-pager { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 10px; margin-top: 12px; font-size: 12.5px; color: var(--text-muted); }
+  .hist-pager-btns { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .imp-details { margin: 10px 0; }
+  .imp-details > summary { cursor: pointer; font-size: 13.5px; font-weight: 600; color: var(--ink); padding: 6px 0; }
+  .imp-details .fin-table-wrap { max-height: 360px; overflow: auto; }
+  @media (max-width: 640px) { .fin-body { padding: 24px 14px 48px; } .hist-months { grid-template-columns: repeat(3, 1fr); } }
   .fin-total-row td { font-weight: 600; background: var(--paper); border-top: 1px solid var(--line); }
   .fin-month-row td { background: #F3F1EA; font-weight: 600; color: var(--ink); font-size: 13px; padding-top: 9px; padding-bottom: 9px; }
   .fin-month-row .fin-src { font-weight: 500; margin-left: 8px; }
@@ -130,6 +171,8 @@
 </head>
 <body>
 <div id="app"></div>
+<script src="/fin-import.js"></script>
+<script src="/fin-history.js"></script>
 <script>
   function escapeHtml(s) {
     if (s === null || s === undefined) return '';
@@ -170,6 +213,16 @@
       fix: {}, fixBusy: false, notice: null, aliases: [], aliasesLoaded: false,
       netTerms: 'NET30', paymentStatus: 'paid', timesheet: 'yes',
       busy: false, error: null, preview: null, result: null,
+    },
+    hx: {
+      fileName: null, rows: [], sheets: [], skipped: [], warnings: [],
+      netTerms: 'NET30', paymentStatus: 'unpaid', timesheet: 'yes', createSubvendors: false, enforceDates: true, arrears: true,
+      busy: false, error: null, preview: null, result: null,
+    },
+    hist: {
+      loaded: false, loading: false, error: null, data: null, flash: null,
+      year: '', month: '', q: '', category: '', paymentStatus: '', hours: '', rate: '', clientId: '',
+      sort: 'period', dir: 'desc', page: 1, pageSize: 50,
     },
     sv: {
       loading: false, loaded: false, invoices: [], subvendors: [], ledgerFile: null,
@@ -389,7 +442,7 @@
   function svRow(inv, idx) {
     var src = inv.kind === 'paid'
       ? 'Payments file' + (inv.paid_in ? ' · paid in ' + inv.paid_in : '') + (inv.multi_month ? ' · multi-month' : '')
-      : (inv.rate_source === 'margin' ? 'Generated · Margin cost rate' : 'Generated · Ledger rate');
+      : (inv.rate_source === 'margin' ? 'Generated · Margin cost rate' : inv.rate_source === 'hours_file' ? 'Imported · hours file' : 'Generated · Ledger rate');
     var head =
       '<td class="fin-sno">' + (idx + 1) + '</td>' +
       '<td class="fin-invoice-no">' + escapeHtml(inv.invoice_number) + '</td>' +
@@ -754,9 +807,11 @@
         '<div class="fin-tabs">' +
           '<button type="button" class="fin-tab' + (state.tab === 'client' ? ' active' : '') + '" data-tab="client">Client invoices</button>' +
           '<button type="button" class="fin-tab' + (state.tab === 'subvendor' ? ' active' : '') + '" data-tab="subvendor">Subvendor payments</button>' +
+          '<button type="button" class="fin-tab' + (state.tab === 'history' ? ' active' : '') + '" data-tab="history">Year &amp; month view</button>' +
           '<button type="button" class="fin-tab' + (state.tab === 'import' ? ' active' : '') + '" data-tab="import">Import hours</button>' +
+          '<button type="button" class="fin-tab' + (state.tab === 'hximport' ? ' active' : '') + '" data-tab="hximport">Import history</button>' +
         '</div>' +
-        (state.tab === 'subvendor' ? renderSubvendorTab() : state.tab === 'import' ? renderImportTab() : renderClientTab()) +
+        (state.tab === 'subvendor' ? renderSubvendorTab() : state.tab === 'import' ? renderImportTab() : state.tab === 'hximport' ? renderHxTab() : state.tab === 'history' ? renderHistoryTab() : renderClientTab()) +
       '</div>';
 
     document.getElementById('logout-btn').addEventListener('click', async function () {
@@ -956,7 +1011,9 @@
     var tabBtn = e.target.closest('[data-tab]');
     if (tabBtn) {
       state.tab = tabBtn.getAttribute('data-tab');
-      if (state.tab === 'subvendor' && !state.sv.loaded) loadSubvendor(); else render();
+      if (state.tab === 'subvendor' && !state.sv.loaded) loadSubvendor();
+      else if (state.tab === 'history') histLoad();
+      else render();
       return;
     }
 

@@ -275,6 +275,49 @@ Add `--org <id>` to limit it to one organization, or
 `--include-subvendor-generated` to also clear invoices generated on the
 Subvendor payments tab. This cannot be undone.
 
+### Update: Import history (multi-year workbook) and the Year & month view
+
+Two new Fin-Module tabs. **Import hours** (the recent-upload tab above) is
+unchanged. **Import history** loads the whole "New hire hours by month" workbook
+(one sheet per month, any number of years; sheet-name typos like "March2020" are
+tolerated; "Total…" and "review" sheets are skipped) via
+`POST /api/invoices/import-workbook`. From each row it reads Name, Start Date,
+Hours/{Month}, Client, Payment Terms and Date, if left. Preview first, then Apply
+(one transaction; safe to re-run).
+
+* Billing is one month in arrears like the rest of Fin-Module: Jul 2019 hours →
+  Aug 2019 invoice, issued on the 1st, NET terms from there. (Untick "Bill one
+  month in arrears" to invoice the hours month itself.) Hours of a month after
+  the current month are held back.
+* Rate = the billing rate already on the consultant's pairing in Directory (the
+  file's Bill rate column is not read). A pairing with no rate still gets an
+  invoice at $0 flagged "no rate"; once the rate is set (e.g. by a Margin upload)
+  use **Apply Directory rates** in the Year & month view. Saved client-name
+  matches (client_text_aliases) are honoured.
+* Missing consultants (no status), clients, programs and pairings are created.
+  "Program/Client" splits at the first "/" like the Margin file. A new pairing
+  with a left date is created as left. "-1 / -2" name suffixes mean the same person.
+* Payment Terms: W2 / W-2 / W-2 Canada / W2/SMBA → W2; anything with 1099 → 1099;
+  anything else → Subvendor. Stored on each invoice with the text as written.
+  Subvendor rows also get a Subvendor-payments invoice (month = hours month; hours
+  from the file; the Ledger/Margin $/hr if known, else $0) when the subvendor
+  exists in Directory, or when "Also add subvendor companies…" is ticked. Months
+  already paid in Ledger are skipped.
+* Hours outside Start Date … Date-if-left are skipped and listed (untick the box to
+  include them; some dates in the file look mistyped). Text in the hours cell
+  ("no timesheets", "157/140 approved") is listed, not guessed; "155 hours 30
+  minutes" is read as 155.5. The same consultant+client twice in a month is listed.
+* Invoices are created Unpaid; an invoice that already has hours is never
+  touched, one at 0 hours is filled in.
+* **Year & month view** tab: invoice-year chips, 12 month tiles, search, filters
+  (paid via, status, hours, rate, client), sortable paged table, bulk "mark paid"
+  for a chosen year, CSV download.
+
+Schema change (re-run `db/schema.sql`): `invoices.payment_category`,
+`payment_terms`, `subvendor_id`, `source`; `subvendor_invoices.rate_source` gains
+`hours_file`. To undo an import: `npm run undo-hours-import` (dry run), then
+`npm run undo-hours-import -- --yes` (Directory records it added are kept).
+
 ## If you outgrow Cloud/Node.js hosting
 
 The "other companies down the line" case is already handled in the data

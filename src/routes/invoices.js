@@ -12,6 +12,7 @@ const pool = require('../db');
 const { requireAuth } = require('../auth');
 const { normalizeName } = require('./directoryUpsert');
 const { aliasKey, splitClientText, loadAliasMap } = require('./clientAliases');
+const hoursImport = require('./hoursImport');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -521,6 +522,194 @@ router.post('/import-hours', async (req, res, next) => {
     next(err);
   } finally {
     conn.release();
+  }
+});
+
+// POST /api/invoices/import-workbook
+// Invoices from the multi-year hours workbook (the "Import history" tab) (see hoursImport.js for the rules).
+//   body: { rows: [{ sheet, name, client, year, month, hours, hoursNote, paymentTerms, startDate, leftDate }],
+//           netTerms (default NET30), paymentStatus ('unpaid' default | 'paid'), timesheetSubmitted ('yes' default | 'no'),
+//           createSubvendors (false), enforceDates (true), arrears (true), apply (false = preview) }
+router.post('/import-workbook', async (req, res, next) => {
+  const conn = await pool.getConnection();
+  try {
+    const body = req.body || {};
+    if (!Array.isArray(body.rows)) return res.status(400).json({ error: 'rows must be a list.' });
+    if (body.rows.length > hoursImport.MAX_ROWS) return res.status(400).json({ error: 'Too many rows (max ' + hoursImport.MAX_ROWS + ').' });
+    const netTerms = normalizeNetTerms(body.netTerms);
+    if (!netTerms) return res.status(400).json({ error: 'netTerms must look like NET30.' });
+    body._netTerms = netTerms;
+    const organizationId = req.user.organization_id;
+
+    const plan = await hoursImport.planImport(conn, organizationId, body);
+    if (!isTruthyFlag(body.apply)) return res.json(hoursImport.publicView(plan, { applied: false }));
+
+    await conn.beginTransaction();
+    const done = await hoursImport.applyPlan(conn, organizationId, body, plan);
+    await conn.commit();
+    res.status(201).json(hoursImport.publicView(plan, { applied: true, done }));
+  } catch (err) {
+    try { await conn.rollback(); } catch (_) { /* no-op */ }
+    next(err);
+  } finally {
+    conn.release();
+  }
+});
+
+// ---- Year / month browsing -------------------------------------------------
+// Shared filter for the history view and its bulk actions. Unlike the main
+// list this shows every invoice (any consultant status, left pairings too):
+// it is the archive.
+function historyFilter(src, organizationId) {
+  const where = ['i.organization_id = ?'];
+  const params = [organizationId];
+  const q = String(src.q || '').trim();
+  if (q) {
+    where.push('(c.name LIKE ? OR cl.name LIKE ? OR p.name LIKE ? OR i.invoice_number LIKE ? OR i.payment_terms LIKE ?)');
+    const like = '%' + q.replace(/[%_\\]/g, '\\$&') + '%';
+    params.push(like, like, like, like, like);
+  }
+  if (src.category) {
+    if (src.category === 'none') where.push('i.payment_category IS NULL');
+    else if (['W2', '1099', 'Subvendor'].includes(src.category)) { where.push('i.payment_category = ?'); params.push(src.category); }
+  }
+  if (['paid', 'unpaid'].includes(src.paymentStatus)) { where.push('i.payment_status = ?'); params.push(src.paymentStatus); }
+  if (src.hours === 'with') where.push('i.hours > 0');
+  else if (src.hours === 'zero') where.push('(i.hours IS NULL OR i.hours = 0)');
+  if (src.rate === 'missing') where.push('i.rate IS NULL');
+  if (src.clientId) { where.push('i.client_id = ?'); params.push(Number(src.clientId)); }
+  if (src.consultantId) { where.push('i.consultant_id = ?'); params.push(Number(src.consultantId)); }
+  return { where, params };
+}
+
+const HISTORY_FROM = `FROM invoices i
+  JOIN consultants c ON c.id = i.consultant_id
+  LEFT JOIN clients cl ON cl.id = i.client_id
+  LEFT JOIN programs p ON p.id = i.program_id
+  LEFT JOIN subvendors sv ON sv.id = i.subvendor_id`;
+
+function yearMonthWhere(src) {
+  const sql = []; const params = [];
+  const year = Number(src.year); const month = Number(src.month);
+  if (Number.isInteger(year) && year >= 2000 && year <= 2100) { sql.push('YEAR(i.period_month) = ?'); params.push(year); }
+  if (Number.isInteger(month) && month >= 1 && month <= 12) { sql.push('MONTH(i.period_month) = ?'); params.push(month); }
+  return { sql, params };
+}
+
+// GET /api/invoices/history?year=&month=&q=&category=&paymentStatus=&hours=&rate=&clientId=&sort=&dir=&page=&pageSize=
+router.get('/history', async (req, res, next) => {
+  try {
+    const org = req.user.organization_id;
+    const base = historyFilter(req.query, org);
+    const ym = yearMonthWhere(req.query);
+    const sums = 'COUNT(*) AS invoices, COALESCE(SUM(i.hours),0) AS hours, COALESCE(SUM(i.amount),0) AS amount, ' +
+      "COALESCE(SUM(CASE WHEN i.payment_status='unpaid' THEN i.amount ELSE 0 END),0) AS unpaid_amount, COUNT(DISTINCT i.consultant_id) AS consultants";
+
+    // Year chips ignore the year/month choice; month tiles honour the year only.
+    const [years] = await pool.query(
+      `SELECT YEAR(i.period_month) AS year, ${sums} ${HISTORY_FROM} WHERE ${base.where.join(' AND ')} GROUP BY YEAR(i.period_month) ORDER BY year DESC`, base.params);
+    const yOnly = yearMonthWhere({ year: req.query.year });
+    const [months] = await pool.query(
+      `SELECT MONTH(i.period_month) AS month, ${sums} ${HISTORY_FROM}
+       WHERE ${base.where.concat(yOnly.sql).join(' AND ')} GROUP BY MONTH(i.period_month) ORDER BY month`, base.params.concat(yOnly.params));
+    const allWhere = base.where.concat(ym.sql).join(' AND ');
+    const allParams = base.params.concat(ym.params);
+    const [[summary]] = await pool.query(`SELECT ${sums} ${HISTORY_FROM} WHERE ${allWhere}`, allParams);
+
+    const sortMap = {
+      period: 'i.period_month', consultant: 'c.name', client: 'cl.name', hours: 'i.hours', rate: 'i.rate',
+      amount: 'i.amount', status: 'i.payment_status', category: 'i.payment_category', invoice: 'i.invoice_number',
+    };
+    const sortCol = sortMap[req.query.sort] || 'i.period_month';
+    const dir = String(req.query.dir).toLowerCase() === 'asc' ? 'ASC' : 'DESC';
+    const pageSize = Math.min(Math.max(parseInt(req.query.pageSize, 10) || 50, 10), 200);
+    const page = Math.max(parseInt(req.query.page, 10) || 1, 1);
+    const [invoices] = await pool.query(
+      `SELECT i.id, i.invoice_number, i.period_month, i.consultant_id, c.name AS consultant_name, c.status AS consultant_status,
+              cl.name AS client_name, p.name AS program_name, i.hours, i.rate, i.amount, i.payment_status,
+              i.payment_category, i.payment_terms, sv.name AS subvendor_name, i.net_terms, i.issue_date, i.due_date, i.notes, i.source
+       ${HISTORY_FROM} WHERE ${allWhere}
+       ORDER BY ${sortCol} ${dir}, i.period_month DESC, c.name ASC, i.id ASC LIMIT ? OFFSET ?`,
+      allParams.concat([pageSize, (page - 1) * pageSize]));
+
+    const [clients] = await pool.query(
+      `SELECT DISTINCT cl.id, cl.name FROM invoices i JOIN clients cl ON cl.id = i.client_id WHERE i.organization_id = ? ORDER BY cl.name`, [org]);
+    const num = (r) => ({ invoices: Number(r.invoices), consultants: Number(r.consultants), hours: Number(r.hours), amount: Number(r.amount), unpaidAmount: Number(r.unpaid_amount) });
+    res.json({
+      summary: num(summary),
+      years: years.map((r) => Object.assign({ year: r.year }, num(r))),
+      months: months.map((r) => Object.assign({ month: r.month }, num(r))),
+      invoices, total: Number(summary.invoices), page, pageSize, clients,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/invoices/history/export -- the same filters as /history, as a CSV
+// (every matching invoice, not just one page).
+router.get('/history/export', async (req, res, next) => {
+  try {
+    const base = historyFilter(req.query, req.user.organization_id);
+    const ym = yearMonthWhere(req.query);
+    const [rows] = await pool.query(
+      `SELECT i.invoice_number, DATE_FORMAT(i.period_month, '%Y-%m') AS month, c.name AS consultant, cl.name AS client, p.name AS program,
+              i.payment_category, i.payment_terms, sv.name AS subvendor, i.hours, i.rate, i.amount, i.payment_status, i.net_terms,
+              DATE_FORMAT(i.due_date, '%Y-%m-%d') AS due_date, i.notes
+       ${HISTORY_FROM} WHERE ${base.where.concat(ym.sql).join(' AND ')}
+       ORDER BY i.period_month, c.name, cl.name LIMIT 100000`, base.params.concat(ym.params));
+    const cols = ['invoice_number', 'month', 'consultant', 'client', 'program', 'payment_category', 'payment_terms', 'subvendor', 'hours', 'rate', 'amount', 'payment_status', 'net_terms', 'due_date', 'notes'];
+    // A leading = + - @ would be run as a formula by Excel; prefix such text with a quote.
+    const q = (v) => {
+      let t = v === null || v === undefined ? '' : String(v);
+      if (/^[=+\-@]/.test(t) && !/^-?\d+(\.\d+)?$/.test(t)) t = "'" + t;
+      return '"' + t.replace(/"/g, '""') + '"';
+    };
+    const lines = [cols.join(',')].concat(rows.map((r) => cols.map((c) => q(r[c])).join(',')));
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename="invoices.csv"');
+    res.send('\ufeff' + lines.join('\r\n'));
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/invoices/bulk-status  { paymentStatus, <same filters as /history, incl. year, month> }
+// Marks every invoice the filters match as paid / unpaid -- for setting a whole
+// imported year paid in one go.
+router.post('/bulk-status', async (req, res, next) => {
+  try {
+    const body = req.body || {};
+    if (!['paid', 'unpaid'].includes(body.paymentStatus)) return res.status(400).json({ error: 'paymentStatus must be paid or unpaid.' });
+    const year = Number(body.year);
+    if (!Number.isInteger(year)) return res.status(400).json({ error: 'Pick a year first so a bulk change cannot touch every invoice by accident.' });
+    // `paymentStatus` is the NEW status here; the status filter travels as filterStatus.
+    const base = historyFilter(Object.assign({}, body, { paymentStatus: body.filterStatus }), req.user.organization_id);
+    const ym = yearMonthWhere(body);
+    const [result] = await pool.query(
+      `UPDATE invoices i JOIN consultants c ON c.id = i.consultant_id
+         LEFT JOIN clients cl ON cl.id = i.client_id LEFT JOIN programs p ON p.id = i.program_id
+         LEFT JOIN subvendors sv ON sv.id = i.subvendor_id
+       SET i.payment_status = ? WHERE ${base.where.concat(ym.sql).join(' AND ')}`,
+      [body.paymentStatus].concat(base.params, ym.params));
+    res.json({ updated: result.affectedRows });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/invoices/fill-rates -- imported invoices that had no billing rate get
+// the rate now on their pairing in the Directory (hours x rate). Only invoices
+// with no rate are touched.
+router.post('/fill-rates', async (req, res, next) => {
+  try {
+    const [result] = await pool.query(
+      `UPDATE invoices i JOIN consultant_assignments a ON a.id = i.assignment_id
+       SET i.rate = a.billing, i.amount = ROUND(a.billing * COALESCE(i.hours, 0), 2)
+       WHERE i.organization_id = ? AND i.rate IS NULL AND a.billing IS NOT NULL`, [req.user.organization_id]);
+    res.json({ updated: result.affectedRows });
+  } catch (err) {
+    next(err);
   }
 });
 

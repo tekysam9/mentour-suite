@@ -467,3 +467,5 @@ router.delete('/:id', async (req, res, next) => {
 
 module.exports = router;
 module.exports.parseHoursMonth = parseHoursMonth;
+module.exports.ledgerMonthlyRecords = ledgerMonthlyRecords;
+module.exports.latestImport = latestImport;

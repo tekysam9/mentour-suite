@@ -1247,6 +1247,139 @@ async function main() {
       const rAfterDel = await fixOwner.fetch('/api/invoices/import-hours', { method: 'POST', body: JSON.stringify({ rows: [fixRows[0]] }) });
       check('removing a saved match makes that text unmatched again (fixable)', r.status === 200 && rAfterDel.body.unmatched.length === 1 && rAfterDel.body.unmatched[0].fixable, rAfterDel.body);
 
+      // 33e. Import history: the multi-year hours workbook (one flat row per consultant / client / month); billed one month in arrears.
+      const hxOwner = makeJar();
+      r = await hxOwner.fetch('/api/auth/signup', { method: 'POST', body: JSON.stringify({ orgName: 'History Import Co', name: 'Hrs Owner', email: 'hx@historyimport.test', password: 'historyimportpass1' }) });
+      check('hours-import test org signup returns 201', r.status === 201, r);
+      const hxRec = (name, client, program, billing) => ({ name, client, program, clientDetail: client, cost: 50, billing, margin: 10, status: 'Active', employmentType: 'W2 (direct)', subvendorText: 'W2' });
+      await hxOwner.fetch('/api/margin', { method: 'POST', body: JSON.stringify({ fileName: 'h.xlsx', data: { kpis: {}, records: [
+        hxRec('Hana Hours', 'State of RI', 'IRG', 100), hxRec('Ivo Hours', 'Acme', 'Acme', 80), hxRec('Jun Hours', 'Beta', 'Rocket', 90), hxRec('Jun Hours', 'Beta', 'Orbit', 95),
+      ] } }) });
+      const hxr = (name, client, year, month, hours, extra) => Object.assign({ sheet: year + '-' + month, name, client, year, month, hours, paymentTerms: 'W2' }, extra || {});
+      const hxRows = [
+        hxr('Hana Hours', 'IRG/State of RI', 2026, 1, 160),
+        hxr('Hana Hours', 'IRG/State of RI', 2026, 2, 152),
+        hxr('HANA HOURS', 'State of RI', 2026, 3, 168),
+        hxr('Ivo Hours', 'Acme', 2026, 1, 100),
+        hxr('Ivo Hours', 'Acme', 2026, 2, 0),
+        hxr('Nobody Known', 'Acme', 2025, 11, 10, { paymentTerms: 'Garni Software' }),
+        hxr('Jun Hours', 'Beta', 2026, 1, 50),
+        hxr('Jun Hours', 'Rocket/Beta', 2026, 1, 40),
+        hxr('Ivo Hours', 'Wrong Client', 2026, 1, 5, { paymentTerms: 'Shyam 1099' }),
+        hxr('Mia Text', 'Acme', 2026, 1, null, { hoursNote: 'no timesheets' }),
+        hxr('Abdul Hours-2', 'Acme', 2026, 1, 20),
+        hxr('Abdul Hours-1', 'Beta/Cobalt', 2026, 1, 30),
+        // Start / left dates: January is before the start date, March after the left date.
+        hxr('Eve Dates', 'Dateco', 2026, 1, 10, { startDate: '2026-02-01', leftDate: '2026-02-15' }),
+        hxr('Eve Dates', 'Dateco', 2026, 2, 20, { startDate: '2026-02-01', leftDate: '2026-02-15' }),
+        hxr('Eve Dates', 'Dateco', 2026, 3, 30, { startDate: '2026-02-01', leftDate: '2026-02-15' }),
+        // The same consultant and client twice in one month is a conflict, never summed or guessed.
+        hxr('Twin Row', 'Acme', 2026, 1, 10), hxr('Twin Row', 'Acme', 2026, 1, 12),
+      ];
+      const hxBody = (extra, rows) => JSON.stringify(Object.assign({ rows: rows || hxRows, netTerms: 'NET30', paymentStatus: 'unpaid', timesheetSubmitted: 'yes' }, extra || {}));
+      r = await hxOwner.fetch('/api/invoices/import-workbook', { method: 'POST', body: hxBody() });
+      check('preview creates nothing but lists the plan', r.status === 200 && r.body.applied === false && r.body.summary.willCreate === 10, r.body.summary);
+      check('preview: hours x Directory billing rate (160 x 100 = 16000); client-only name matches; 0 hours ignored',
+        r.body.willCreate.some((w) => w.consultant === 'Hana Hours' && w.periodMonth === '2026-02' && w.hoursMonth === '2026-01' && w.amount === 16000) &&
+        r.body.willCreate.some((w) => w.consultant === 'Hana Hours' && w.periodMonth === '2026-04' && w.hours === 168) &&
+        !r.body.willCreate.some((w) => w.consultant === 'Ivo Hours' && w.hoursMonth === '2026-02'), r.body.willCreate);
+      check('ambiguous client, text hours, out-of-range dates and same-month duplicates are reported, not guessed',
+        r.body.issues.some((u) => u.name === 'Jun Hours' && u.client === 'Beta' && /more than one program/.test(u.reason)) &&
+        r.body.issues.some((u) => u.name === 'Mia Text' && u.kind === 'hours-text') &&
+        r.body.issues.some((u) => u.name === 'Eve Dates' && /before Start Date/.test(u.reason)) &&
+        r.body.issues.some((u) => u.name === 'Eve Dates' && /after Date-if-left/.test(u.reason)) &&
+        r.body.issues.filter((u) => u.name === 'Twin Row' && u.kind === 'conflict').length === 2 &&
+        !r.body.willCreate.some((w) => w.consultant === 'Twin Row'), r.body.issues);
+      check('preview counts what would be added to Directory',
+        r.body.summary.newConsultants === 3 && r.body.summary.newClients >= 3 && r.body.summary.noRate === 5, r.body.summary);
+      check('"-1 / -2" name suffixes are treated as the same person', r.body.willCreate.filter((w) => w.consultant === 'Abdul Hours').length === 2, r.body.willCreate);
+      check('Payment Terms: W2, 1099 (even "Shyam 1099") and subvendor text are tagged',
+        r.body.willCreate.find((w) => w.consultant === 'Hana Hours').category === 'W2' &&
+        r.body.willCreate.find((w) => w.consultant === 'Ivo Hours' && w.client === 'Wrong Client').category === '1099' &&
+        r.body.willCreate.find((w) => w.consultant === 'Nobody Known').category === 'Subvendor', r.body.willCreate);
+      r = await hxOwner.fetch('/api/invoices/history?year=2026');
+      check('preview wrote no invoices', r.body.total === 0, r.body.summary);
+      r = await hxOwner.fetch('/api/invoices/import-workbook', { method: 'POST', body: hxBody({ apply: true }) });
+      check('apply creates the 10 invoices', r.status === 201 && r.body.done.created === 10, r.body);
+      r = await hxOwner.fetch('/api/invoices/history?year=2026&month=2&pageSize=200');
+      const hxHanaFeb = r.body.invoices.find((i) => i.consultant_name === 'Hana Hours');
+      check('invoice (Jan hours → Feb invoice): billed to program IRG, unpaid, tagged W2, issued the 1st, NET30 due, INV-202602-#####',
+        !!hxHanaFeb && hxHanaFeb.program_name === 'IRG' && hxHanaFeb.payment_status === 'unpaid' && hxHanaFeb.payment_category === 'W2' &&
+        String(hxHanaFeb.due_date).slice(0, 10) === '2026-03-03' && String(hxHanaFeb.issue_date).slice(0, 10) === '2026-02-01' && Number(hxHanaFeb.amount) === 16000 && /^INV-202602-\d{5}$/.test(hxHanaFeb.invoice_number), hxHanaFeb);
+      const hxWrongInv = r.body.invoices.find((i) => i.client_name === 'Wrong Client');
+      check('a pairing with no Directory rate still gets its invoice, flagged: no rate, $0',
+        !!hxWrongInv && hxWrongInv.rate === null && Number(hxWrongInv.amount) === 0 && /no billing rate/.test(hxWrongInv.notes) && hxWrongInv.payment_category === '1099', hxWrongInv);
+      r = await hxOwner.fetch('/api/directory/consultants');
+      const hxEve = (r.body.consultants || []).find((c) => c.name === 'Eve Dates');
+      const hxEveAssign = hxEve && (hxEve.assignments || [])[0];
+      check('new consultants get no status; a new pairing with a left date is marked left',
+        !!hxEve && hxEve.status === null && !!hxEveAssign && hxEveAssign.status === 'left' && String(hxEveAssign.left_date).slice(0, 10) === '2026-02-15', hxEve);
+      r = await hxOwner.fetch('/api/invoices/history?year=2025');
+      check('multi-year: the Nov 2025 hours land on a Dec 2025 invoice', r.body.total === 1 && r.body.years.length === 2 && r.body.months[0].month === 12, r.body.summary);
+      r = await hxOwner.fetch('/api/invoices/history?year=2026&month=2&q=hana');
+      check('history search by consultant', r.body.total === 1, r.body.summary);
+      r = await hxOwner.fetch('/api/invoices/history?category=1099');
+      check('history filter by Paid-via category', r.body.total === 1, r.body.summary);
+      r = await hxOwner.fetch('/api/invoices/history?year=2026&sort=amount&dir=desc&pageSize=10&page=1');
+      check('history sorts by amount and pages', r.body.invoices[0].consultant_name === 'Hana Hours' && Number(r.body.invoices[0].amount) === 16800 && r.body.pageSize === 10, r.body.invoices[0]);
+      r = await hxOwner.fetch('/api/invoices/import-workbook', { method: 'POST', body: hxBody({ apply: true }) });
+      check('re-uploading the same file creates nothing (existing months left untouched)',
+        r.status === 201 && r.body.done.created === 0 && r.body.summary.skippedExisting === 10, r.body.summary);
+      r = await hxOwner.fetch('/api/directory/consultants');
+      check('re-upload adds no duplicate consultants', (r.body.consultants || []).filter((c) => c.name === 'Hana Hours').length === 1 && (r.body.consultants || []).length === 6, (r.body.consultants || []).length);
+      // An invoice generated at 0 hours is filled in from the file; one with hours is never changed.
+      r = await hxOwner.fetch('/api/invoices/generate', { method: 'POST', body: JSON.stringify({ periodMonth: '2026-05' }) });
+      check('generating May creates 0-hour placeholders', r.status === 201 && r.body.created.length >= 1 && r.body.created.every((i) => Number(i.hours) === 0), r.body);
+      const mayRows = [hxr('Ivo Hours', 'Acme', 2026, 4, 120)];
+      r = await hxOwner.fetch('/api/invoices/import-workbook', { method: 'POST', body: hxBody({ apply: true }, mayRows) });
+      check('the 0-hour May invoice (April hours) is filled in (120 x 80 = 9600), not duplicated', r.status === 201 && r.body.done.created === 0 && r.body.done.filled === 1, r.body);
+      r = await hxOwner.fetch('/api/invoices/history?year=2026&month=5&q=ivo');
+      check('May invoice now has the file’s hours and amount', r.body.total === 1 && Number(r.body.invoices[0].hours) === 120 && Number(r.body.invoices[0].amount) === 9600 && r.body.invoices[0].payment_category === 'W2', r.body.invoices);
+      mayRows[0].hours = 999;
+      r = await hxOwner.fetch('/api/invoices/import-workbook', { method: 'POST', body: hxBody({ apply: true }, mayRows) });
+      check('an invoice that already has hours is left untouched', r.body.done.created === 0 && r.body.done.filled === 0 && r.body.summary.skippedExisting === 1, r.body.summary);
+      // Dates can be switched off, and subvendors are only created on request.
+      r = await hxOwner.fetch('/api/invoices/import-workbook', { method: 'POST', body: hxBody({ enforceDates: false }, hxRows.filter((x) => x.name === 'Eve Dates')) });
+      check('with date limits off, Eve’s January and March hours are planned too', r.body.summary.willCreate === 2 && r.body.summary.skippedExisting === 1, r.body.summary);
+      const hxSubRows = [hxr('Sub Person', 'Acme', 2026, 5, 100, { paymentTerms: 'Garni Software' })];
+      r = await hxOwner.fetch('/api/invoices/import-workbook', { method: 'POST', body: hxBody({}, hxSubRows) });
+      check('an unknown subvendor is listed, not created, by default', r.body.summary.subvendorInvoices === 0 && r.body.notes.unrecognizedTerms[0].text === 'Garni Software', r.body);
+      r = await hxOwner.fetch('/api/invoices/import-workbook', { method: 'POST', body: hxBody({ apply: true, createSubvendors: true }, hxSubRows) });
+      check('with "add subvendors" on, the subvendor and its subvendor invoice are created', r.status === 201 && r.body.done.subvendorCreated === 1, r.body);
+      r = await hxOwner.fetch('/api/subvendor-invoices?periodMonth=2026-05');
+      check('the subvendor invoice shows in Subvendor payments (hours from the file, no rate yet)',
+        r.body.invoices.length === 1 && r.body.invoices[0].subvendor_name === 'Garni Software' && Number(r.body.invoices[0].hours) === 100 && r.body.invoices[0].rate_source === 'hours_file', r.body.invoices);
+      const futureRows = [hxr('Future Fred', 'Acme', 2099, 1, 10)];
+      r = await hxOwner.fetch('/api/invoices/import-workbook', { method: 'POST', body: hxBody({}, futureRows) });
+      check('hours of a future month are held back and listed', r.body.summary.willCreate === 0 && r.body.issues.some((u) => u.kind === 'future'), r.body.summary);
+      r = await hxOwner.fetch('/api/invoices/import-workbook', { method: 'POST', body: hxBody({ arrears: false }, [hxr('Hana Hours', 'IRG/State of RI', 2026, 7, 100)]) });
+      check('with arrears off the invoice month is the hours month', r.body.willCreate.length === 1 && r.body.willCreate[0].periodMonth === '2026-07' && r.body.willCreate[0].hoursMonth === '2026-07', r.body.willCreate);
+      r = await hxOwner.fetch('/api/invoices/import-workbook', { method: 'POST', body: hxBody({}, [hxr('Hana Hours', 'IRG/State of RI', 2026, 7, 100)]) });
+      check('by default July hours go on the August invoice', r.body.willCreate.length === 1 && r.body.willCreate[0].periodMonth === '2026-08' && r.body.willCreate[0].hoursMonth === '2026-07', r.body.willCreate);
+      // Bulk paid, fill rates, CSV.
+      r = await hxOwner.fetch('/api/invoices/bulk-status', { method: 'POST', body: JSON.stringify({ paymentStatus: 'paid' }) });
+      check('bulk status without a year is refused', r.status === 400, r);
+      r = await hxOwner.fetch('/api/invoices/bulk-status', { method: 'POST', body: JSON.stringify({ year: 2025, paymentStatus: 'paid' }) });
+      check('bulk: mark 2025 paid touches only 2025', r.status === 200 && r.body.updated === 1, r);
+      r = await hxOwner.fetch('/api/invoices/history?paymentStatus=paid');
+      check('only the 2025 invoice is paid', r.body.total === 1, r.body.summary);
+      await hxOwner.fetch('/api/margin', { method: 'POST', body: JSON.stringify({ fileName: 'h2.xlsx', data: { kpis: {}, records: [hxRec('Ivo Hours', 'Wrong Client', null, 70)] } }) });
+      r = await hxOwner.fetch('/api/invoices/fill-rates', { method: 'POST' });
+      check('fill-rates gives the no-rate invoice the Directory rate', r.status === 200 && r.body.updated === 1, r);
+      r = await hxOwner.fetch('/api/invoices/history?year=2026&month=2&q=wrong');
+      check('…and recomputes its amount (5 h x $70)', r.body.invoices[0] && Number(r.body.invoices[0].rate) === 70 && Number(r.body.invoices[0].amount) === 350, r.body.invoices);
+      r = await otherOrgUser.fetch('/api/invoices/import-workbook', { method: 'POST', body: hxBody({ apply: true }) });
+      check('another org’s import creates records only in its own org', r.status === 201, r.body && r.body.summary);
+      r = await hxOwner.fetch('/api/invoices/history');
+      const hxTotalAfter = r.body.total;
+      check('…and this org’s invoices are unchanged by it', hxTotalAfter === 15, hxTotalAfter);
+      r = await hxOwner.fetch('/api/invoices/import-workbook', { method: 'POST', body: JSON.stringify({ rows: 'nope' }) });
+      check('bad rows returns 400', r.status === 400, r);
+      r = await makeJar().fetch('/api/invoices/import-workbook', { method: 'POST', body: hxBody() });
+      check('import without a login returns 401', r.status === 401, r);
+      r = await makeJar().fetch('/api/invoices/history');
+      check('history without a login returns 401', r.status === 401, r);
+
       // 34. Fin-Module "Subvendor payments": months already paid are read
       // read-only from the latest Ledger upload; December 2026 onwards can be
       // generated from the Ledger rate (else the Margin cost rate). Own org.

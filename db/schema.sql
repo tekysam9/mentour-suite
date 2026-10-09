@@ -377,6 +377,14 @@ CREATE TABLE IF NOT EXISTS invoices (
   INDEX idx_invoice_combo (organization_id, consultant_id, client_id, program_id, period_month)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+-- Hours-file import (public/invoices.html "Import hours"): how the consultant is
+-- paid (W2 / 1099 / Subvendor, plus the Payment Terms text as written and the
+-- subvendor when it is a known one) and where the invoice came from.
+ALTER TABLE invoices ADD COLUMN IF NOT EXISTS payment_category VARCHAR(16) NULL;
+ALTER TABLE invoices ADD COLUMN IF NOT EXISTS payment_terms VARCHAR(255) NULL;
+ALTER TABLE invoices ADD COLUMN IF NOT EXISTS subvendor_id INT NULL;
+ALTER TABLE invoices ADD COLUMN IF NOT EXISTS source VARCHAR(32) NULL;
+
 -- ---------------------------------------------------------------------------
 -- Fin-Module, "Subvendor payments": invoices from subvendors to Mentour for
 -- each consultant they supply, one per (subvendor, consultant, month).
@@ -430,6 +438,7 @@ ALTER TABLE subvendor_invoices ADD COLUMN IF NOT EXISTS payment_status ENUM('unp
 ALTER TABLE subvendor_invoices ADD COLUMN IF NOT EXISTS timesheet_submitted ENUM('yes', 'no') NOT NULL DEFAULT 'no' AFTER payment_status;
 ALTER TABLE subvendor_invoices ADD COLUMN IF NOT EXISTS notes VARCHAR(1000) NULL AFTER timesheet_submitted;
 ALTER TABLE subvendor_invoices MODIFY COLUMN hours DECIMAL(8,2) NULL;
+ALTER TABLE subvendor_invoices MODIFY COLUMN rate_source ENUM('ledger', 'margin', 'hours_file') NOT NULL;
 ALTER TABLE subvendor_invoices MODIFY COLUMN amount DECIMAL(12,2) NULL;
 
 -- Session store table (used by express-mysql-session; it will create/manage
