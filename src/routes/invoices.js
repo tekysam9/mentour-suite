@@ -205,11 +205,11 @@ router.post('/generate', async (req, res, next) => {
         continue;
       }
       if (a.assignment_status === 'left' && !includeInactive) {
-        skipped.push({ assignmentId: a.assignment_id, consultant: a.consultant_name, reason: 'consultant left this client/program' });
+        skipped.push({ assignmentId: a.assignment_id, consultant: a.consultant_name, reason: 'consultant left this client/sub-vendor' });
         continue;
       }
       if (!a.client_id && !a.program_id) {
-        skipped.push({ assignmentId: a.assignment_id, consultant: a.consultant_name, reason: 'no client or program to bill' });
+        skipped.push({ assignmentId: a.assignment_id, consultant: a.consultant_name, reason: 'no client or sub-vendor to bill' });
         continue;
       }
       if (a.billing === null || a.billing === undefined) {
@@ -428,11 +428,11 @@ router.post('/import-hours', async (req, res, next) => {
           (progKey === null || (a.program_name && nameKey(a.program_name) === progKey)));
       }
       if (!cands.length) {
-        unmatched.push({ row: rowNo, name: nameText, client: clientText, reason: 'no billing pairing for this consultant on that client/program', reasonCode: 'no_pairing', ...pairingFix(cons, mine, clientText) });
+        unmatched.push({ row: rowNo, name: nameText, client: clientText, reason: 'no billing pairing for this consultant on that client/sub-vendor', reasonCode: 'no_pairing', ...pairingFix(cons, mine, clientText) });
         return;
       }
       if (cands.length > 1) {
-        unmatched.push({ row: rowNo, name: nameText, client: clientText, reason: 'matches more than one program — put "Program/Client" in the Client column', reasonCode: 'ambiguous', ...pairingFix(cons, mine, clientText) });
+        unmatched.push({ row: rowNo, name: nameText, client: clientText, reason: 'matches more than one sub-vendor — put "Sub-vendor/Client" in the Client column', reasonCode: 'ambiguous', ...pairingFix(cons, mine, clientText) });
         return;
       }
       const a = cands[0];

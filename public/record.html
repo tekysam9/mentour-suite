@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Record — Mentour Suite</title>
+<link rel="stylesheet" href="/shared.css">
+<style>
+  .rec-body { max-width: 1120px; margin: 0 auto; padding: 32px 24px 64px; }
+  .rec-back { font-size: 12.5px; color: var(--pine); text-decoration: none; font-weight: 500; }
+  .rec-back:hover { text-decoration: underline; }
+  .rec-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin: 14px 0 20px; }
+  .rec-title { font-family: Georgia, 'Iowan Old Style', 'Palatino Linotype', serif; font-size: 30px; font-weight: 600; color: var(--ink); margin: 0; }
+  .rec-kind { font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--text-muted); font-weight: 600; }
+  .rec-layout { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 24px; align-items: start; }
+  @media (max-width: 900px) { .rec-layout { grid-template-columns: 1fr; } }
+  .rec-card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 18px 20px; margin-bottom: 16px; }
+  .rec-card h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--text-muted); margin: 0 0 14px; font-weight: 700; }
+  .rec-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 14px 16px; }
+  .rec-field label { display: block; font-size: 11.5px; font-weight: 600; color: var(--text-muted); margin-bottom: 4px; }
+  .rec-field input, .rec-field select, .rec-field textarea {
+    width: 100%; box-sizing: border-box; border: 1px solid var(--line); border-radius: 5px; padding: 7px 9px;
+    font-size: 13px; font-family: inherit; color: var(--text); background: var(--paper); outline: none;
+  }
+  .rec-field textarea { min-height: 70px; resize: vertical; }
+  .rec-field input:focus, .rec-field select:focus, .rec-field textarea:focus { border-color: var(--pine); }
+  .rec-field.wide { grid-column: 1 / -1; }
+  .rec-field input[readonly] { background: #EFEBDD; color: var(--text-muted); }
+  .rec-help { font-size: 11px; color: var(--text-muted); margin-top: 3px; line-height: 1.4; }
+  .rec-req { color: var(--brick); }
+  .rec-secret-row { display: flex; gap: 8px; align-items: center; }
+  .rec-mask { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 13px; letter-spacing: .04em; color: var(--ink); background: #EAF3EE; border-radius: 5px; padding: 6px 9px; white-space: nowrap; }
+  .rec-unset { font-size: 12px; color: var(--text-muted); font-style: italic; }
+  .rec-btn { border: 1px solid var(--line); background: var(--card); border-radius: 5px; padding: 7px 14px; font-size: 12.5px; font-weight: 600; cursor: pointer; font-family: inherit; color: var(--text); text-decoration: none; display: inline-block; }
+  .rec-btn:hover { background: var(--paper); }
+  .rec-btn-primary { background: var(--pine); border-color: var(--pine); color: #EFF3EC; }
+  .rec-btn-primary:hover { background: #275F46; }
+  .rec-btn-small { padding: 4px 9px; font-size: 11.5px; }
+  .rec-savebar { position: sticky; bottom: 0; background: var(--paper); border-top: 1px solid var(--line); padding: 12px 0; display: flex; gap: 12px; align-items: center; }
+  .rec-msg { font-size: 12.5px; font-weight: 600; }
+  .rec-msg.ok { color: var(--pine); }
+  .rec-msg.err { color: var(--brick); }
+  .rec-banner { background: #F5F1E4; border: 1px solid #E3D9B3; color: #6E5F26; border-radius: 8px; padding: 10px 14px; font-size: 12.5px; margin-bottom: 16px; line-height: 1.5; }
+  .rec-side ul { list-style: none; margin: 0; padding: 0; font-size: 13px; }
+  .rec-side li { padding: 7px 0; border-bottom: 1px solid var(--line); }
+  .rec-side li:last-child { border-bottom: none; }
+  .rec-side a { color: var(--pine); text-decoration: none; font-weight: 500; }
+  .rec-side a:hover { text-decoration: underline; }
+  .rec-muted { color: var(--text-muted); font-size: 12px; }
+  .rec-note { padding: 9px 0; border-bottom: 1px solid var(--line); font-size: 13px; line-height: 1.5; white-space: pre-wrap; }
+  .rec-note.log { color: var(--text-muted); font-size: 12px; }
+  .rec-note .who { display: block; font-size: 11px; color: var(--text-muted); }
+  .rec-newnote textarea { width: 100%; box-sizing: border-box; min-height: 60px; border: 1px solid var(--line); border-radius: 5px; padding: 7px 9px; font: inherit; font-size: 13px; background: var(--paper); margin-bottom: 8px; }
+  .rec-loading { padding: 40px; text-align: center; color: var(--text-muted); }
+</style>
+</head>
+<body>
+<div id="app"><div class="rec-loading">Loading…</div></div>
+<script>
+(function () {
+  var q = new URLSearchParams(location.search);
+  var TYPE = q.get('type');
+  var ID = q.get('id');
+  var IS_NEW = q.get('new') === '1';
+  var appEl = document.getElementById('app');
+  var S = { user: null, schema: null, rec: null, msg: null, msgKind: '', saving: false };
+
+  function esc(s) {
+    if (s === null || s === undefined) return '';
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  }
+  function api(method, url, body) {
+    return fetch(url, { method: method, headers: { 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined })
+      .then(function (r) { return r.json().catch(function () { return {}; }).then(function (j) { return { ok: r.ok, status: r.status, body: j }; }); });
+  }
+  function spec() { return S.schema.spec[TYPE]; }
+
+  function optionsFor(fld) {
+    if (fld.kind === 'record') {
+      var list = S.schema.lists[fld.source] || [];
+      return '<option value="">—</option>' + list.map(function (r) { return '<option value="' + r.id + '">' + esc(r.name) + '</option>'; }).join('');
+    }
+    return '<option value="">—</option>' + (fld.options || []).map(function (o) { return '<option value="' + esc(o) + '">' + esc(o) + '</option>'; }).join('');
+  }
+
+  function fieldHtml(fld) {
+    var id = 'f-' + fld.key;
+    var lock = !IS_NEW && fld.readOnlyAfterCreate;
+    var label = '<label for="' + id + '">' + esc(fld.label) + (fld.required ? ' <span class="rec-req">*</span>' : '') + '</label>';
+    var help = fld.help ? '<div class="rec-help">' + esc(fld.help) + '</div>' : '';
+    var cls = 'rec-field' + (fld.kind === 'textarea' ? ' wide' : '');
+    if (fld.kind === 'secret') {
+      var sec = (S.rec && S.rec.secrets && S.rec.secrets[fld.key]) || { set: false };
+      var canEdit = S.schema.canEditSecrets;
+      var shown = sec.set ? '<span class="rec-mask">' + esc(sec.masked) + '</span>' : '<span class="rec-unset">Not on file</span>';
+      var input = canEdit
+        ? '<input id="' + id + '" data-secret="' + fld.key + '" type="password" autocomplete="off" placeholder="' + (sec.set ? 'Type to replace' : 'Enter value') + '">'
+        : '<span class="rec-help">Only the account owner can change this.</span>';
+      return '<div class="' + cls + '">' + label + '<div class="rec-secret-row">' + shown + '</div><div style="margin-top:6px">' + input + '</div>' + help +
+        (sec.set && canEdit ? '<label style="font-weight:500;margin-top:4px"><input type="checkbox" data-secret-clear="' + fld.key + '" style="width:auto"> Remove stored value</label>' : '') + '</div>';
+    }
+    var val = (S.rec && S.rec.values[fld.key]);
+    if (val === undefined || val === null) val = '';
+    var control;
+    if (fld.kind === 'select' || fld.kind === 'record') {
+      control = '<select id="' + id + '" data-key="' + fld.key + '"' + (lock ? ' disabled' : '') + '>' + optionsFor(fld).replace('value="' + esc(val) + '"', 'value="' + esc(val) + '" selected') + '</select>';
+    } else if (fld.kind === 'bool') {
+      control = '<select id="' + id + '" data-key="' + fld.key + '"><option value="false"' + (!val ? ' selected' : '') + '>No</option><option value="true"' + (val ? ' selected' : '') + '>Yes</option></select>';
+    } else if (fld.kind === 'textarea') {
+      control = '<textarea id="' + id + '" data-key="' + fld.key + '">' + esc(val) + '</textarea>';
+    } else {
+      var type = { email: 'email', date: 'date', number: 'number', url: 'text', phone: 'tel' }[fld.kind] || 'text';
+      control = '<input id="' + id + '" data-key="' + fld.key + '" type="' + type + '"' + (fld.kind === 'number' ? ' step="any" min="0"' : '') + ' value="' + esc(val) + '"' + (lock ? ' readonly' : '') + '>';
+    }
+    return '<div class="' + cls + '">' + label + control + help + '</div>';
+  }
+
+  function sideHtml() {
+    if (IS_NEW) return '<div class="rec-card rec-side"><h2>After you save</h2><p class="rec-muted">You can add notes, and see linked clients, sub-vendors and billing here.</p></div>';
+    var r = S.rec.related || {};
+    var html = '';
+    if (TYPE === 'consultants') {
+      html += '<div class="rec-card rec-side"><h2>Client &amp; sub-vendor pairings</h2>';
+      var a = r.assignments || [];
+      html += a.length ? '<ul>' + a.map(function (x) {
+        return '<li>' + (x.clientId ? '<a href="/record.html?type=clients&id=' + x.clientId + '">' + esc(x.clientName) + '</a>' : '—') +
+          (x.programId ? ' / <a href="/record.html?type=programs&id=' + x.programId + '">' + esc(x.programName) + '</a>' : '') +
+          '<br><span class="rec-muted">' + (x.status === 'left' ? 'Left' + (x.leftDate ? ' ' + esc(String(x.leftDate).slice(0, 10)) : '') : 'Active') +
+          (x.billing !== null && x.billing !== undefined ? ' · bills $' + Number(x.billing).toFixed(2) + '/hr' : '') + '</span></li>';
+      }).join('') + '</ul>' : '<p class="rec-muted">No pairings yet. Add billing rates in the Directory.</p>';
+      html += '</div>';
+    } else if (TYPE === 'clients') {
+      html += '<div class="rec-card rec-side"><h2>Sub-vendors</h2>';
+      var s = r.subVendors || [];
+      html += s.length ? '<ul>' + s.map(function (x) { return '<li><a href="/record.html?type=programs&id=' + x.id + '">' + esc(x.name) + '</a></li>'; }).join('') + '</ul>' : '<p class="rec-muted">None yet.</p>';
+      html += '<p class="rec-muted" style="margin-top:10px">' + (r.activeConsultants || 0) + ' active consultant(s)</p>';
+      html += '<p style="margin-top:8px"><a class="rec-btn rec-btn-small" href="/record.html?type=programs&new=1&client=' + S.rec.id + '">+ Add sub-vendor</a></p></div>';
+    } else {
+      html += '<div class="rec-card rec-side"><h2>Active consultants</h2>';
+      var c = r.activeConsultantsList || [];
+      html += c.length ? '<ul>' + c.map(function (x) { return '<li><a href="/record.html?type=consultants&id=' + x.id + '">' + esc(x.name) + '</a></li>'; }).join('') + '</ul>' : '<p class="rec-muted">None right now.</p>';
+      html += '</div>';
+    }
+    var notes = S.rec.notes || [];
+    html += '<div class="rec-card rec-side"><h2>Notes &amp; activity</h2>' +
+      '<div class="rec-newnote"><textarea id="note-text" placeholder="Add an internal note…"></textarea><button class="rec-btn rec-btn-small rec-btn-primary" id="note-add" type="button">Add note</button></div>' +
+      (notes.length ? notes.map(function (n) {
+        return '<div class="rec-note ' + n.kind + '">' + esc(n.body) + '<span class="who">' + esc(n.userName || '') + ' · ' + esc(String(n.createdAt).replace('T', ' ').slice(0, 16)) + '</span></div>';
+      }).join('') : '<p class="rec-muted" style="margin-top:8px">Nothing yet.</p>') + '</div>';
+    return html;
+  }
+
+  function render() {
+    var sp = spec();
+    var title = IS_NEW ? 'New ' + sp.singular.toLowerCase() + '.' : esc(S.rec.name);
+    var banner = '';
+    if (!S.schema.encryptionConfigured) banner = '<div class="rec-banner">Sensitive fields (SSN, tax ID, bank numbers) can’t be saved until the server’s encryption key is set. Everything else saves normally.</div>';
+    var sections = sp.sections.map(function (sec) {
+      return '<div class="rec-card"><h2>' + esc(sec.title) + '</h2><div class="rec-grid">' + sec.fields.map(fieldHtml).join('') + '</div></div>';
+    }).join('');
+    appEl.innerHTML =
+      '<div class="landing-header"><div><div class="landing-wordmark">Mentour Suite</div><div class="landing-sub">' + esc(S.user.organization.name) + '</div></div>' +
+      '<div class="landing-account">Signed in as ' + esc(S.user.name) + '<br><button class="landing-btn" id="logout-btn" type="button">Log out</button></div></div>' +
+      '<div class="rec-body"><a class="rec-back" href="/directory.html">← Back to directory</a>' +
+      '<div class="rec-head"><div><div class="rec-kind">' + esc(sp.singular) + '</div><h1 class="rec-title">' + title + '</h1></div></div>' +
+      banner +
+      '<div class="rec-layout"><div id="form">' + sections +
+      '<div class="rec-savebar"><button class="rec-btn rec-btn-primary" id="save-btn" type="button"' + (S.saving ? ' disabled' : '') + '>' + (IS_NEW ? 'Create ' + esc(sp.singular.toLowerCase()) : 'Save changes') + '</button>' +
+      '<span class="rec-msg ' + S.msgKind + '" role="status">' + esc(S.msg || '') + '</span></div></div>' +
+      '<div>' + sideHtml() + '</div></div></div>';
+    document.getElementById('logout-btn').addEventListener('click', function () {
+      fetch('/api/auth/logout', { method: 'POST' }).then(function () { location.href = '/login.html'; });
+    });
+    document.getElementById('save-btn').addEventListener('click', save);
+    var nb = document.getElementById('note-add');
+    if (nb) nb.addEventListener('click', addNote);
+  }
+
+  function collect() {
+    var values = {}; var secrets = {};
+    appEl.querySelectorAll('[data-key]').forEach(function (el) {
+      if (el.disabled || el.readOnly) return;
+      values[el.getAttribute('data-key')] = el.value;
+    });
+    appEl.querySelectorAll('[data-secret]').forEach(function (el) {
+      var k = el.getAttribute('data-secret');
+      var clear = appEl.querySelector('[data-secret-clear="' + k + '"]');
+      if (clear && clear.checked) secrets[k] = null;
+      else if (el.value.trim()) secrets[k] = el.value.trim();
+    });
+    return { values: values, secrets: secrets };
+  }
+
+  function save() {
+    if (S.saving) return;
+    var payload = collect();
+    S.saving = true; S.msg = 'Saving…'; S.msgKind = '';
+    var btn = document.getElementById('save-btn'); if (btn) btn.disabled = true;
+    var req = IS_NEW ? api('POST', '/api/profiles/' + TYPE, payload) : api('PATCH', '/api/profiles/' + TYPE + '/' + ID, payload);
+    req.then(function (r) {
+      S.saving = false;
+      if (!r.ok) {
+        S.msg = r.body.error || 'Could not save.'; S.msgKind = 'err';
+        var m = document.querySelector('.rec-msg'); if (m) { m.textContent = S.msg; m.className = 'rec-msg err'; }
+        if (btn) btn.disabled = false;
+        if (r.status === 409 && r.body.existingId) { S.msg += ' Open it?'; location.hash = ''; }
+        return;
+      }
+      if (IS_NEW) { location.href = '/record.html?type=' + TYPE + '&id=' + r.body.id; return; }
+      S.msg = 'Saved.'; S.msgKind = 'ok';
+      load();
+    });
+  }
+
+  function addNote() {
+    var t = document.getElementById('note-text');
+    if (!t || !t.value.trim()) return;
+    api('POST', '/api/profiles/' + TYPE + '/' + ID + '/notes', { body: t.value }).then(function (r) {
+      if (r.ok) { S.msg = null; load(); } else { S.msg = r.body.error || 'Could not add note.'; S.msgKind = 'err'; render(); }
+    });
+  }
+
+  function load() {
+    return api('GET', '/api/profiles/' + TYPE + '/' + ID).then(function (r) {
+      if (!r.ok) { appEl.innerHTML = '<div class="rec-loading">' + esc(r.body.error || 'Could not load this record.') + ' <a href="/directory.html">Back to directory</a></div>'; return; }
+      S.rec = r.body; render();
+    });
+  }
+
+  fetch('/api/auth/me').then(function (r) {
+    if (!r.ok) { location.href = '/login.html'; return null; }
+    return r.json();
+  }).then(function (d) {
+    if (!d) return;
+    S.user = d.user;
+    return api('GET', '/api/profiles/schema').then(function (r) {
+      if (!r.ok || !r.body.spec || !r.body.spec[TYPE]) { appEl.innerHTML = '<div class="rec-loading">Unknown record type. <a href="/directory.html">Back to directory</a></div>'; return; }
+      S.schema = r.body;
+      document.title = spec().singular + ' — Mentour Suite';
+      if (IS_NEW) {
+        S.rec = { values: {}, secrets: {}, related: {}, notes: [] };
+        if (TYPE === 'programs' && q.get('client')) S.rec.values.client_id = q.get('client');
+        render();
+      } else if (!/^\d+$/.test(ID || '')) {
+        appEl.innerHTML = '<div class="rec-loading">Missing record. <a href="/directory.html">Back to directory</a></div>';
+      } else load();
+    });
+  });
+})();
+</script>
+</body>
+</html>

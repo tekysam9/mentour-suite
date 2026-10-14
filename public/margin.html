@@ -417,8 +417,8 @@
   var COLUMNS = [
     { key: 'name', label: 'Consultant' },
     { key: 'client', label: 'Client / Account' },
-    { key: 'program', label: 'Program' },
-    { key: 'subvendorText', label: 'Subvendor / Employment' },
+    { key: 'program', label: 'Sub-vendor' },
+    { key: 'subvendorText', label: 'Supplier / Employment' },
     { key: 'cost', label: 'Cost $/hr' },
     { key: 'billing', label: 'Billing $/hr' },
     { key: 'margin', label: 'Margin $/hr' },
@@ -560,7 +560,7 @@
         tile('Avg cost', fmtRate(d.kpis.avgCost), 'active roster') +
         tile('Avg billing', fmtRate(d.kpis.avgBilling), 'active roster') +
         tile('Avg margin', fmtRate(d.kpis.avgMargin), 'active roster') +
-        tile('Subvendors used', d.kpis.distinctSubvendors, 'active, non-W2/1099') +
+        tile('Suppliers used', d.kpis.distinctSubvendors, 'active, non-W2/1099') +
       '</div>'
     );
   }
@@ -573,7 +573,7 @@
           renderHBars(d.topMargins, function (v) { return '$' + Math.round(v * 100) / 100; }) +
         '</div>' +
         '<div class="cl-chart-card">' +
-          '<div class="cl-chart-title">Program / prime vendor<span class="cl-chart-title-sub">by headcount</span></div>' +
+          '<div class="cl-chart-title">Sub-vendor / prime vendor<span class="cl-chart-title-sub">by headcount</span></div>' +
           renderProgramDonut(d.programTotals) +
         '</div>' +
         '<div class="cl-chart-card">' +
@@ -653,7 +653,7 @@
           '<input type="text" id="search-input" placeholder="Search consultant, client, or subvendor\u2026" value="' + escapeHtml(f.search) + '">' +
         '</div>' +
         '<select data-filter="status">' + opt('All', 'All statuses', f.status) + opt('Active', 'Active', f.status) + opt('Left', 'Left', f.status) + '</select>' +
-        '<select data-filter="program">' + opt('All', 'All programs', f.program) + programs.map(function (p) { return opt(p, p, f.program); }).join('') + '</select>' +
+        '<select data-filter="program">' + opt('All', 'All sub-vendors', f.program) + programs.map(function (p) { return opt(p, p, f.program); }).join('') + '</select>' +
         '<select data-filter="employment">' + opt('All', 'All employment types', f.employment) + employments.map(function (e) { return opt(e, e, f.employment); }).join('') + '</select>' +
         '<div class="cl-filter-count">' + resultCount + ' of ' + d.records.length + '</div>' +
         '<button class="cl-reset" data-action="reset-filters" type="button">Reset</button>' +
@@ -711,7 +711,7 @@
         field('Full client / account string', r.rawClient) +
         field('Recruiter', r.recruiter) +
         field('Status detail', leftInfo) +
-        field('Employment / subvendor', r.subvendorText) +
+        field('Employment / supplier', r.subvendorText) +
         field('Source tab', r.sourceSheet) +
         field('Employment type', r.employmentType) +
       '</div></div></td></tr>'
@@ -724,7 +724,7 @@
       '<div class="cl-footer">' +
         '<b>Reading the numbers:</b> Cost and Billing are hourly rates ($/hr) straight from the workbook, not dollar ' +
         'totals \u2014 there\u2019s no hours field in this file, so nothing here is extrapolated into a monthly or annual figure. ' +
-        'Margin is Billing minus Cost per hour. <b>Subvendor / Employment</b> shows "W2 (direct)" or "1099 (direct)" when ' +
+        'Margin is Billing minus Cost per hour. <b>Supplier / Employment</b> shows "W2 (direct)" or "1099 (direct)" when ' +
         'the person is a direct hire rather than placed through a subvendor company. <b>Status</b> comes straight from the ' +
         'workbook\u2019s "If LEFT" column for that row \u2014 a date or a leave reason means Left; "still working" means Active. ' +
         'Click a row for the full client string, recruiter, and which tab it came from.' +
@@ -793,7 +793,7 @@
   }
 
   function exportCSV(list) {
-    var header = ['Consultant', 'Client / Account', 'Program', 'Subvendor / Employment', 'Cost $/hr', 'Billing $/hr', 'Margin $/hr', 'Status', 'Joined', 'Recruiter'];
+    var header = ['Consultant', 'Client / Account', 'Sub-vendor', 'Supplier / Employment', 'Cost $/hr', 'Billing $/hr', 'Margin $/hr', 'Status', 'Joined', 'Recruiter'];
     var rows = list.map(function (x) {
       var r = x.r;
       return [r.name, r.client, r.program, r.subvendorText, r.cost, r.billing, r.margin, r.status, r.joined, r.recruiter];

@@ -17,6 +17,33 @@ const { upsertAssignmentBilling } = require('./assignmentUpsert');
 const { findOrCreateDirectoryRecord } = require('./directoryUpsert');
 const { aliasKey, splitClientText, isMissingTable, SCHEMA_NEEDED_MESSAGE } = require('./clientAliases');
 
+// Profile form data follows the surviving record when two records are merged:
+// fields the survivor leaves blank are filled from the removed record, secrets
+// and notes are carried over (optional: tables exist once schema.sql has run).
+async function mergeProfileRecords(conn, tableName, keepId, loseId, orgId) {
+  if (!['consultants', 'clients', 'programs'].includes(tableName)) return;
+  try {
+    const [rows] = await conn.query(
+      `SELECT record_id, data FROM record_profiles WHERE organization_id = ? AND entity = ? AND record_id IN (?, ?)`,
+      [orgId, tableName, keepId, loseId]);
+    const parse = (r) => { try { return (r && r.data && JSON.parse(r.data)) || {}; } catch (e) { return {}; } };
+    const keep = parse(rows.find((r) => r.record_id === keepId));
+    const lose = parse(rows.find((r) => r.record_id === loseId));
+    if (Object.keys(lose).length) {
+      const merged = Object.assign({}, lose, keep);
+      await conn.query(
+        `INSERT INTO record_profiles (organization_id, entity, record_id, data) VALUES (?, ?, ?, ?)
+         ON DUPLICATE KEY UPDATE data = VALUES(data)`, [orgId, tableName, keepId, JSON.stringify(merged)]);
+    }
+    await conn.query(`UPDATE IGNORE record_secrets SET record_id = ? WHERE organization_id = ? AND entity = ? AND record_id = ?`, [keepId, orgId, tableName, loseId]);
+    await conn.query(`DELETE FROM record_secrets WHERE organization_id = ? AND entity = ? AND record_id = ?`, [orgId, tableName, loseId]);
+    await conn.query(`UPDATE record_notes SET record_id = ? WHERE organization_id = ? AND entity = ? AND record_id = ?`, [keepId, orgId, tableName, loseId]);
+    await conn.query(`DELETE FROM record_profiles WHERE organization_id = ? AND entity = ? AND record_id = ?`, [orgId, tableName, loseId]);
+  } catch (err) {
+    if (!(err && err.code === 'ER_NO_SUCH_TABLE')) throw err;
+  }
+}
+
 const router = express.Router();
 router.use(requireAuth);
 
@@ -221,7 +248,7 @@ router.post('/consultants/:id/assignments', async (req, res, next) => {
         'SELECT id FROM programs WHERE id = ? AND organization_id = ? AND client_id <=> ?',
         [programId, req.user.organization_id, clientId]
       );
-      if (!programRows.length) return res.status(400).json({ error: 'Unknown program, or it doesn’t belong to that client.' });
+      if (!programRows.length) return res.status(400).json({ error: 'Unknown sub-vendor, or it doesn’t belong to that client.' });
     }
 
     const assignmentId = await upsertAssignmentBilling(pool, {
@@ -292,7 +319,7 @@ router.post('/consultants/:id/assignments/from-text', async (req, res, next) => 
     if (!consultant) return res.status(404).json({ error: 'Not found.' });
     const body = req.body || {};
     const { clientName, programName } = splitClientText(body.clientText);
-    if (!clientName) return res.status(400).json({ error: 'clientText must name a client (e.g. "Program/Client" or "Client").' });
+    if (!clientName) return res.status(400).json({ error: 'clientText must name a client (e.g. "Sub-vendor/Client" or "Client").' });
     const billing = body.billing === null || body.billing === undefined || body.billing === '' ? null : Number(body.billing);
     if (billing !== null && (!Number.isFinite(billing) || billing < 0)) return res.status(400).json({ error: 'Billing must be a number.' });
 
@@ -490,7 +517,7 @@ router.get('/:table/:id/usage', async (req, res, next) => {
   try {
     const tableName = req.params.table;
     if (!DIRECTORY_TABLES.includes(tableName)) {
-      return res.status(400).json({ error: 'Unknown table. Use consultants, subvendors, clients, or programs.' });
+      return res.status(400).json({ error: 'Unknown table. Use consultants, supplier companies, clients, or sub-vendors.' });
     }
 
     const [recordRows] = await pool.query(
@@ -546,7 +573,7 @@ router.get('/duplicates', async (req, res, next) => {
   try {
     const requested = req.query.table;
     if (requested && !DIRECTORY_TABLES.includes(requested)) {
-      return res.status(400).json({ error: 'Unknown table. Use consultants, subvendors, clients, or programs.' });
+      return res.status(400).json({ error: 'Unknown table. Use consultants, supplier companies, clients, or sub-vendors.' });
     }
     const tables = requested ? [requested] : DIRECTORY_TABLES;
     const out = {};
@@ -660,6 +687,8 @@ router.post('/duplicates/:id/merge', async (req, res, next) => {
       await dedupeAssignments(conn, req.user.organization_id);
     }
 
+    await mergeProfileRecords(conn, tableName, keepId, loseId, req.user.organization_id);
+
     await conn.query(`DELETE FROM ${tableName} WHERE id = ? AND organization_id = ?`, [loseId, req.user.organization_id]);
 
     await conn.query(
@@ -681,7 +710,7 @@ router.post('/duplicates/:id/merge', async (req, res, next) => {
     await conn.rollback();
     if (err && err.code === 'ER_DUP_ENTRY') {
       return res.status(409).json({
-        error: 'Could not merge: the two records have a conflicting child record (e.g. a program with the same name under both clients). Resolve that by hand first.',
+        error: 'Could not merge: the two records have a conflicting child record (e.g. a sub-vendor with the same name under both clients). Resolve that by hand first.',
       });
     }
     next(err);

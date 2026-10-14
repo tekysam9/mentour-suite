@@ -51,6 +51,9 @@
   .dir-btn-primary:hover { background: #275F46; }
   .dir-btn-save-status { font-size: 11.5px; color: var(--pine); font-weight: 500; }
 
+  .dir-name-link { color: var(--ink); text-decoration: none; border-bottom: 1px dotted var(--pine); }
+  .dir-name-link:hover { color: var(--pine); }
+  .dir-add-btn { float: right; text-decoration: none; display: inline-block; margin-top: 2px; }
   .dir-loading, .dir-empty-state { padding: 40px; text-align: center; color: var(--text-muted); font-size: 13.5px; }
 
   .dir-status-badge {
@@ -117,8 +120,8 @@
   var TABS = [
     { key: 'consultants', label: 'Consultants', endpoint: '/api/directory/consultants', listKey: 'consultants' },
     { key: 'clients', label: 'Clients', endpoint: '/api/directory/clients', listKey: 'clients' },
-    { key: 'programs', label: 'Programs', endpoint: '/api/directory/programs', listKey: 'programs' },
-    { key: 'subvendors', label: 'Subvendors', endpoint: '/api/directory/subvendors', listKey: 'subvendors' },
+    { key: 'programs', label: 'Sub-vendors', endpoint: '/api/directory/programs', listKey: 'programs' },
+    { key: 'subvendors', label: 'Supplier companies', endpoint: '/api/directory/subvendors', listKey: 'subvendors' },
   ];
 
   var state = {
@@ -173,7 +176,7 @@
     var uploadTotal = (record.margin_rows || 0) + (record.ledger_rows || 0);
     var summary = usageUploadSummary(record);
     var programsNote = typeof record.program_count === 'number'
-      ? '<span class="dir-count dir-usage-programs-note"><strong>' + record.program_count + '</strong> programs</span>'
+      ? '<span class="dir-count dir-usage-programs-note"><strong>' + record.program_count + '</strong> sub-vendors</span>'
       : '';
 
     if (!uploadTotal) {
@@ -238,7 +241,7 @@
           }).join('');
           var whoHeader = tab.key === 'consultants' ? '' : '<th>Consultant</th>';
           body += '<table class="dir-assign-table"><thead><tr>' +
-            '<th>Margin file</th><th>Uploaded</th><th>Sheet</th>' + whoHeader + '<th>Client / Program</th><th>Billing</th><th>Status</th>' +
+            '<th>Margin file</th><th>Uploaded</th><th>Sheet</th>' + whoHeader + '<th>Client / Sub-vendor</th><th>Billing</th><th>Status</th>' +
             '</tr></thead><tbody>' + mBody + '</tbody></table>';
         }
         if (ledgerRows.length) {
@@ -305,12 +308,14 @@
       return '<div class="dir-empty-state">No ' + (state.statusFilter === 'none' ? 'status-not-set' : state.statusFilter) + ' ' + tab.label.toLowerCase() + '.</div>';
     }
     var extraCol = tab.key === 'programs' ? '<th>Client</th>'
-      : tab.key === 'consultants' ? '<th>Client</th><th>Program</th><th>Billing</th>' : '';
+      : tab.key === 'consultants' ? '<th>Client</th><th>Sub-vendor</th><th>Billing</th>' : '';
     var rows = records.map(function (r) {
       var editing = state.editingId === r.id;
+      var nameLink = tab.key === 'subvendors' ? escapeHtml(r.name)
+        : '<a class="dir-name-link" href="/record.html?type=' + tab.key + '&id=' + r.id + '">' + escapeHtml(r.name) + '</a>';
       var nameCell = tab.key === 'programs'
-        ? '<td class="dir-name">' + escapeHtml(r.name) + '</td><td class="dir-muted">' + escapeHtml(r.client_name) + '</td>'
-        : '<td class="dir-name">' + escapeHtml(r.name) + '</td>';
+        ? '<td class="dir-name">' + nameLink + '</td><td class="dir-muted">' + escapeHtml(r.client_name) + '</td>'
+        : '<td class="dir-name">' + nameLink + '</td>';
       var billingCols = '';
       if (tab.key === 'consultants') {
         var sums = assignmentSummaryCells(r);
@@ -390,7 +395,7 @@
       '<p class="dir-dupe-title">Possible duplicates (' + candidates.length + ')</p>' +
       (state.dupeError ? '<p class="dir-dupe-copy" role="alert" style="color:#b00020;font-weight:600">' + escapeHtml(state.dupeError) + '</p>' : '') +
       '<p class="dir-dupe-copy">These names looked close enough to already-listed ' + tab.label.toLowerCase() + ' that they might be the same ' +
-        (tab.key === 'consultants' ? 'person' : tab.key === 'subvendors' ? 'vendor' : tab.key === 'clients' ? 'account' : 'program') +
+        (tab.key === 'consultants' ? 'person' : tab.key === 'subvendors' ? 'vendor' : tab.key === 'clients' ? 'account' : 'sub-vendor') +
         ', typo’d or formatted differently — nothing was merged automatically. Keep one name to merge the two records (their upload history moves to the one you keep), or mark it not a duplicate to leave both as-is.</p>' +
       rows +
     '</div>';
@@ -407,14 +412,14 @@
     if (!clients.length && !programs.length) {
       return '<div class="dir-assign-empty">Loading clients…</div>';
     }
-    var options = '<option value="">— choose a client or program —</option>';
+    var options = '<option value="">— choose a client or sub-vendor —</option>';
     if (clients.length) {
       options += '<optgroup label="Client only">' + clients.map(function (c) {
         return '<option value="client:' + c.id + '">' + escapeHtml(c.name) + '</option>';
       }).join('') + '</optgroup>';
     }
     if (programs.length) {
-      options += '<optgroup label="Client / Program">' + programs.map(function (p) {
+      options += '<optgroup label="Client / Sub-vendor">' + programs.map(function (p) {
         return '<option value="program:' + p.id + '">' + escapeHtml(p.client_name) + ' / ' + escapeHtml(p.name) + '</option>';
       }).join('') + '</optgroup>';
     }
@@ -458,7 +463,7 @@
           '<td>' + actions + (state.assignmentStatus === 'error' && editing ? ' <span class="dir-btn-save-status" style="color:#9B3B3B">Couldn’t save</span>' : '') + '</td>' +
         '</tr>';
       }).join('');
-      body = '<table class="dir-assign-table"><thead><tr><th>Client</th><th>Program</th><th>Status</th><th>Billing</th><th></th><th></th></tr></thead><tbody>' + rows + '</tbody></table>' +
+      body = '<table class="dir-assign-table"><thead><tr><th>Client</th><th>Sub-vendor</th><th>Status</th><th>Billing</th><th></th><th></th></tr></thead><tbody>' + rows + '</tbody></table>' +
         renderAssignAddRow(consultant.id);
     }
     return '<tr class="dir-assign-row"><td colspan="' + rowColspan(tab) + '">' + body + '</td></tr>';
@@ -490,7 +495,9 @@
     } else {
       body = renderTable(activeTab, state.cache[activeTab.key] || []);
       dupePanel = renderDuplicates(activeTab);
-      controls =
+      var addLabel = { consultants: 'consultant', clients: 'client', programs: 'sub-vendor' }[activeTab.key];
+      var addBtn = addLabel ? '<a class="dir-btn dir-btn-primary dir-add-btn" href="/record.html?type=' + activeTab.key + '&new=1">+ Add ' + addLabel + '</a>' : '';
+      controls = addBtn +
         '<div class="dir-controls"><select data-filter="status">' +
           '<option value="all"' + (state.statusFilter === 'all' ? ' selected' : '') + '>All statuses</option>' +
           '<option value="active"' + (state.statusFilter === 'active' ? ' selected' : '') + '>Active</option>' +
@@ -509,7 +516,7 @@
       '<div class="dir-body">' +
         '<a class="dir-back" href="/">← Back to dashboards</a>' +
         '<h1 class="dir-title">Directory.</h1>' +
-        '<p class="dir-copy">Everyone and every account your team has ever uploaded, in one place — add an email, phone, or address once and it stays, no matter how many more files come in. Status tracks each upload automatically: active if it showed up that way in the most recent file, inactive otherwise. Open “Seen in” on a row to see exactly which uploads named it. On Consultants, open “Billing” to see or add their rate on each client/program.</p>' +
+        '<p class="dir-copy">Everyone and every account your team has ever uploaded, in one place — add an email, phone, or address once and it stays, no matter how many more files come in. Status tracks each upload automatically: active if it showed up that way in the most recent file, inactive otherwise. Open “Seen in” on a row to see exactly which uploads named it. On Consultants, open “Billing” to see or add their rate on each client/sub-vendor.</p>' +
         '<div class="dir-tabs">' + tabsHtml + '</div>' +
         dupePanel +
         controls +

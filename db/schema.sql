@@ -443,3 +443,51 @@ ALTER TABLE subvendor_invoices MODIFY COLUMN amount DECIMAL(12,2) NULL;
 
 -- Session store table (used by express-mysql-session; it will create/manage
 -- this automatically, but it's listed here for visibility). No action needed.
+
+-- ---------------------------------------------------------------------------
+-- Record profiles (Consultant / Client / Sub-vendor forms). Added October 2026;
+-- additive and safe to re-run.
+--   record_profiles : the extra CRM fields for a directory record (JSON text)
+--   record_secrets  : SSN / tax ID / bank numbers, AES-256-GCM encrypted
+--                     (key = FIELD_ENCRYPTION_KEY env var, never in the DB);
+--                     last4 is the only readable part
+--   record_notes    : internal notes + a change log (field names only)
+-- entity is the directory table name; "programs" are shown as "Sub-vendors".
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS record_profiles (
+  id              INT AUTO_INCREMENT PRIMARY KEY,
+  organization_id INT NOT NULL,
+  entity          ENUM('consultants', 'clients', 'programs') NOT NULL,
+  record_id       INT NOT NULL,
+  data            MEDIUMTEXT NULL,
+  created_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE,
+  UNIQUE KEY uq_record_profile (organization_id, entity, record_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS record_secrets (
+  id              INT AUTO_INCREMENT PRIMARY KEY,
+  organization_id INT NOT NULL,
+  entity          ENUM('consultants', 'clients', 'programs') NOT NULL,
+  record_id       INT NOT NULL,
+  field           VARCHAR(40) NOT NULL,
+  cipher          TEXT NOT NULL,
+  last4           VARCHAR(4) NOT NULL,
+  updated_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE,
+  UNIQUE KEY uq_record_secret (organization_id, entity, record_id, field)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS record_notes (
+  id              INT AUTO_INCREMENT PRIMARY KEY,
+  organization_id INT NOT NULL,
+  entity          ENUM('consultants', 'clients', 'programs') NOT NULL,
+  record_id       INT NOT NULL,
+  kind            ENUM('note', 'log') NOT NULL DEFAULT 'note',
+  body            TEXT NOT NULL,
+  user_name       VARCHAR(255) NULL,
+  created_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE,
+  INDEX idx_record_notes (organization_id, entity, record_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

@@ -339,3 +339,21 @@ environments, or per-tenant subdomains — if you get there, that's a VPS
   slow down brute-force guessing.
 - `SESSION_SECRET` and database credentials live only in environment
   variables — never commit a real `.env` file.
+
+## Consultant / Client / Sub-vendor profile forms
+
+Every Directory name is now a link to a full CRM-style profile (`/record.html`), and each Directory tab has a
+**+ Add** button for a blank intake form. "Programs" are labelled **Sub-vendors** everywhere (stored data and
+links are unchanged); the old supplier-company list is labelled **Supplier companies**.
+
+**Before using SSN / tax ID / bank fields you must set an encryption key** (otherwise saving them is refused and
+nothing is stored):
+
+1. Generate one: `openssl rand -base64 32`
+2. Hostinger → Node.js app → Environment variables → add `FIELD_ENCRYPTION_KEY` = that value, restart the app.
+3. Keep a copy somewhere safe. **If the key is lost, stored SSNs/bank numbers cannot be recovered**; do not change
+   it once data is saved.
+4. Re-run `db/schema.sql` (adds `record_profiles`, `record_secrets`, `record_notes`).
+
+SSN, tax ID, routing and account numbers are AES-256-GCM encrypted, write-only, and only ever shown as the last 4
+characters. Only the account owner can set or change them. `/api/version` reports `fieldEncryptionConfigured`.

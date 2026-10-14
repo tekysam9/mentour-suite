@@ -32,6 +32,7 @@ function makeJar() {
 async function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
 
 async function main() {
+  process.env.FIELD_ENCRYPTION_KEY = require('crypto').randomBytes(32).toString('base64');
   const server = spawn('node', ['server.js'], { cwd: path.join(__dirname, '..'), env: process.env, stdio: 'pipe' });
   let serverOut = '';
   server.stdout.on('data', (d) => { serverOut += d.toString(); });
@@ -803,7 +804,7 @@ async function main() {
       check('generate skips exactly 4 (Fran: no rate, Gale: no client/program, Hal: inactive, Ivy: status not set)', r.body.skipped && r.body.skipped.length === 4, r.body);
       check('skip reasons are the expected four',
         r.body.skipped.some((s) => s.consultant === 'Fran NoRate' && s.reason === 'no billing rate set') &&
-        r.body.skipped.some((s) => s.consultant === 'Gale NoClient' && s.reason === 'no client or program to bill') &&
+        r.body.skipped.some((s) => s.consultant === 'Gale NoClient' && s.reason === 'no client or sub-vendor to bill') &&
         r.body.skipped.some((s) => s.consultant === 'Hal Inactive' && s.reason === 'consultant is inactive' && s.inactive === true) &&
         r.body.skipped.some((s) => s.consultant === 'Ivy Unset' && s.reason === 'consultant status not set' && s.inactive === true), r.body.skipped);
       check('active-only generation reports skippedInactive = 2 and invoices no inactive/unset consultant',
@@ -995,7 +996,7 @@ async function main() {
         !r.body.willCreate.some((w) => w.consultant === 'Ivo Hours' && w.periodMonth === '2026-03'), r.body.willCreate);
       check('unknown consultant, unknown client and ambiguous client are reported, not guessed',
         r.body.unmatched.some((u) => u.name === 'Nobody Known') && r.body.unmatched.some((u) => u.client === 'Wrong Client') &&
-        r.body.unmatched.some((u) => u.client === 'Beta' && /more than one program/.test(u.reason)), r.body.unmatched);
+        r.body.unmatched.some((u) => u.client === 'Beta' && /more than one sub-vendor/.test(u.reason)), r.body.unmatched);
       r = await hrsOwner.fetch('/api/invoices?periodMonth=2026-02&includeInactive=1');
       check('preview wrote no invoices', r.body.invoices.length === 0, r.body);
       r = await hrsOwner.fetch('/api/invoices/import-hours', { method: 'POST', body: hrsBody({ apply: true }) });
@@ -1284,7 +1285,7 @@ async function main() {
         r.body.willCreate.some((w) => w.consultant === 'Hana Hours' && w.periodMonth === '2026-04' && w.hours === 168) &&
         !r.body.willCreate.some((w) => w.consultant === 'Ivo Hours' && w.hoursMonth === '2026-02'), r.body.willCreate);
       check('ambiguous client, text hours, out-of-range dates and same-month duplicates are reported, not guessed',
-        r.body.issues.some((u) => u.name === 'Jun Hours' && u.client === 'Beta' && /more than one program/.test(u.reason)) &&
+        r.body.issues.some((u) => u.name === 'Jun Hours' && u.client === 'Beta' && /more than one sub-vendor/.test(u.reason)) &&
         r.body.issues.some((u) => u.name === 'Mia Text' && u.kind === 'hours-text') &&
         r.body.issues.some((u) => u.name === 'Eve Dates' && /before Start Date/.test(u.reason)) &&
         r.body.issues.some((u) => u.name === 'Eve Dates' && /after Date-if-left/.test(u.reason)) &&
@@ -1560,6 +1561,132 @@ async function main() {
       check('deleted subvendor invoice is gone from the list', r.body.invoices.length === 1 && r.body.invoices[0].consultant_name === 'Max Margin', r.body);
       r = await svOwner.fetch('/api/subvendor-invoices/' + samJan27.id, { method: 'DELETE' });
       check('deleting it again returns 404', r.status === 404, r);
+
+      // 35. Record profiles (Consultant / Client / Sub-vendor forms): CRM fields,
+      // encrypted SSN / tax ID / bank numbers shown as last 4 only, org isolation.
+      const pfOwner = makeJar();
+      r = await pfOwner.fetch('/api/auth/signup', { method: 'POST', body: JSON.stringify({ orgName: 'Profile Co', name: 'Pf Owner', email: 'pf@pftest.test', password: 'profilepassword1' }) });
+      check('profile test org signup returns 201', r.status === 201, r);
+      const pfOther = makeJar();
+      r = await pfOther.fetch('/api/auth/signup', { method: 'POST', body: JSON.stringify({ orgName: 'Profile Other Co', name: 'Pf Other', email: 'pfo@pftest.test', password: 'profilepassword2' }) });
+
+      r = await pfOwner.fetch('/api/profiles/schema');
+      check('schema lists the three forms and says encryption is configured', r.status === 200 && r.body.spec.consultants && r.body.spec.clients && r.body.spec.programs && r.body.spec.programs.singular === 'Sub-vendor' && r.body.encryptionConfigured === true && r.body.canEditSecrets === true, r.body);
+      const allKeys = (e) => r.body.spec[e].sections.flatMap((x) => x.fields.map((f2) => f2.key));
+      check('consultant form has the SSN and bank secret fields', ['ssn', 'bank_routing', 'bank_account'].every((k) => allKeys('consultants').includes(k)), allKeys('consultants'));
+
+      r = await pfOwner.fetch('/api/profiles/clients', { method: 'POST', body: JSON.stringify({ values: { name: 'Acme Health', industry: 'Healthcare', payment_terms: 'Net 30', email: 'ap@acme.test', billing_email: 'bill@acme.test', contact_name: 'Dana Lee' }, secrets: { tax_id: '12-3456789' } }) });
+      check('creating a client returns 201 with an id', r.status === 201 && r.body.id > 0, r);
+      const pfClient = r.body.id;
+      r = await pfOwner.fetch('/api/profiles/clients', { method: 'POST', body: JSON.stringify({ values: { name: 'acme health' } }) });
+      check('creating a client with an existing name (any case) returns 409', r.status === 409, r);
+      r = await pfOwner.fetch('/api/profiles/clients', { method: 'POST', body: JSON.stringify({ values: { name: 'Bad Co', industry: 'Basket weaving' } }) });
+      check('an option outside the list is rejected with 400', r.status === 400 && /Industry/.test(r.body.error), r);
+      r = await pfOwner.fetch('/api/profiles/clients', { method: 'POST', body: JSON.stringify({ values: { name: 'Bad Co', billing_email: 'not-an-email' } }) });
+      check('a bad email is rejected with 400', r.status === 400, r);
+      r = await pfOwner.fetch('/api/profiles/clients', { method: 'POST', body: JSON.stringify({ values: {} }) });
+      check('name is required', r.status === 400, r);
+
+      r = await pfOwner.fetch('/api/profiles/clients/' + pfClient);
+      check('client profile returns the saved fields and core email', r.status === 200 && r.body.values.industry === 'Healthcare' && r.body.values.email === 'ap@acme.test' && r.body.values.contact_name === 'Dana Lee', r.body);
+      check('tax ID comes back as last 4 only', r.body.secrets.tax_id.set === true && r.body.secrets.tax_id.last4 === '6789' && r.body.secrets.tax_id.masked === '****6789', r.body.secrets);
+      check('the full tax ID never appears in the response', !JSON.stringify(r.body).includes('123456789') && !JSON.stringify(r.body).includes('12-3456789'), r.body);
+
+      r = await pfOwner.fetch('/api/profiles/programs', { method: 'POST', body: JSON.stringify({ values: { name: 'Prime Staffing', client_id: String(pfClient), payment_terms: 'Net 45', contact_name: 'Raj Rao' }, secrets: { bank_routing: '021000021', bank_account: '000123456789' } }) });
+      check('creating a sub-vendor under the client returns 201', r.status === 201, r);
+      const pfSub = r.body.id;
+      r = await pfOwner.fetch('/api/profiles/programs', { method: 'POST', body: JSON.stringify({ values: { name: 'Prime Staffing', client_id: String(pfClient) } }) });
+      check('a duplicate sub-vendor under the same client returns 409', r.status === 409, r);
+      r = await pfOwner.fetch('/api/profiles/programs', { method: 'POST', body: JSON.stringify({ values: { name: 'No Client' } }) });
+      check('a sub-vendor needs a client', r.status === 400, r);
+      r = await pfOwner.fetch('/api/profiles/programs/' + pfSub);
+      check('sub-vendor bank numbers are masked to last 4', r.body.secrets.bank_routing.last4 === '0021' && r.body.secrets.bank_account.last4 === '6789' && !JSON.stringify(r.body).includes('000123456789'), r.body.secrets);
+      r = await pfOwner.fetch('/api/directory/programs');
+      check('the sub-vendor shows in the existing Directory list (same table)', r.body.programs.some((p) => p.id === pfSub && p.client_name === 'Acme Health'), r.body);
+
+      r = await pfOwner.fetch('/api/profiles/consultants', { method: 'POST', body: JSON.stringify({ values: { name: 'Priya Nair', worker_type: 'W2', work_authorization: 'H-1B', date_of_birth: '1990-04-12', phone: '555-010-2000', pay_rate: '55.5', i9_verified: 'true' }, secrets: { ssn: '123-45-6789', bank_account: '9876543210' } }) });
+      check('creating a consultant returns 201', r.status === 201, r);
+      const pfCons = r.body.id;
+      r = await pfOwner.fetch('/api/profiles/consultants/' + pfCons);
+      check('SSN is returned as ***-**-6789 only', r.body.secrets.ssn.masked === '***-**-6789' && r.body.secrets.ssn.last4 === '6789' && !JSON.stringify(r.body).includes('123456789') && !JSON.stringify(r.body).includes('123-45-6789'), r.body.secrets);
+      check('consultant values, bool and number round-trip', r.body.values.worker_type === 'W2' && r.body.values.i9_verified === true && r.body.values.pay_rate === '55.5' && r.body.values.date_of_birth === '1990-04-12' && r.body.values.phone === '555-010-2000', r.body.values);
+      r = await pfOwner.fetch('/api/profiles/consultants', { method: 'POST', body: JSON.stringify({ values: { name: 'Bad Ssn' }, secrets: { ssn: '12345' } }) });
+      check('an invalid SSN is rejected and nothing is created', r.status === 400, r);
+      r = await pfOwner.fetch('/api/directory/consultants');
+      check('rejected create left no consultant behind', !r.body.consultants.some((c) => c.name === 'Bad Ssn'), r.body);
+
+      // The database holds ciphertext, never the number.
+      const [secRows] = await dbConn.query(`SELECT cipher, last4 FROM record_secrets WHERE entity = 'consultants' AND record_id = ? AND field = 'ssn'`, [pfCons]);
+      check('SSN is stored encrypted (v1: AES-GCM), not in plain text', secRows.length === 1 && /^v1:/.test(secRows[0].cipher) && !secRows[0].cipher.includes('123456789') && secRows[0].last4 === '6789', secRows);
+      const [profRows] = await dbConn.query(`SELECT data FROM record_profiles WHERE entity = 'consultants' AND record_id = ?`, [pfCons]);
+      check('the profile JSON does not contain the SSN or account number', !profRows[0].data.includes('6789') && !profRows[0].data.includes('9876543210'), profRows);
+      const cryptoMod = require('../src/crypto');
+      check('ciphertext decrypts back to the original with the key', cryptoMod.decrypt(secRows[0].cipher) === '123456789');
+      const [c1] = await dbConn.query(`SELECT cipher FROM record_secrets WHERE entity = 'consultants' AND record_id = ? AND field = 'bank_account'`, [pfCons]);
+      check('two encryptions of the same value differ (random IV)', cryptoMod.encrypt('123456789') !== cryptoMod.encrypt('123456789') && c1.length === 1);
+      const savedKey = process.env.FIELD_ENCRYPTION_KEY;
+      delete process.env.FIELD_ENCRYPTION_KEY;
+      let noKeyThrew = false;
+      try { cryptoMod.encrypt('x'); } catch (e) { noKeyThrew = e.code === 'NO_KEY'; }
+      process.env.FIELD_ENCRYPTION_KEY = savedKey;
+      check('with no key the crypto module refuses to encrypt (fails closed)', noKeyThrew === true && cryptoMod.isConfigured() === true);
+
+      // Editing
+      r = await pfOwner.fetch('/api/profiles/consultants/' + pfCons, { method: 'PATCH', body: JSON.stringify({ values: { job_title: 'Data Engineer', name: 'Changed Name', email: 'priya@pftest.test', status: 'active' } }) });
+      check('PATCH saves fields', r.status === 200, r);
+      r = await pfOwner.fetch('/api/profiles/consultants/' + pfCons);
+      check('PATCH updated profile + core fields but did not rename', r.body.values.job_title === 'Data Engineer' && r.body.values.email === 'priya@pftest.test' && r.body.name === 'Priya Nair' && r.body.values.worker_type === 'W2' && r.body.secrets.ssn.last4 === '6789', r.body);
+      r = await pfOwner.fetch('/api/profiles/consultants/' + pfCons, { method: 'PATCH', body: JSON.stringify({ values: {}, secrets: { ssn: '987-65-4321' } }) });
+      r = await pfOwner.fetch('/api/profiles/consultants/' + pfCons);
+      check('replacing the SSN changes the last 4', r.body.secrets.ssn.last4 === '4321', r.body.secrets);
+      r = await pfOwner.fetch('/api/profiles/consultants/' + pfCons, { method: 'PATCH', body: JSON.stringify({ values: {}, secrets: { ssn: null } }) });
+      r = await pfOwner.fetch('/api/profiles/consultants/' + pfCons);
+      check('removing the SSN clears it', r.body.secrets.ssn.set === false, r.body.secrets);
+      check('the change log records field names but never secret values', r.body.notes.some((n) => n.kind === 'log' && /ssn \(encrypted\)/.test(n.body)) && !r.body.notes.some((n) => /4321|6789/.test(n.body)), r.body.notes);
+      r = await pfOwner.fetch('/api/profiles/consultants/' + pfCons + '/notes', { method: 'POST', body: JSON.stringify({ body: 'Called about onboarding.' }) });
+      check('adding a note returns 201', r.status === 201, r);
+      r = await pfOwner.fetch('/api/profiles/consultants/' + pfCons);
+      check('the note appears with the author', r.body.notes.some((n) => n.kind === 'note' && n.body === 'Called about onboarding.' && n.userName === 'Pf Owner'), r.body.notes);
+
+      // Other orgs see nothing
+      r = await pfOther.fetch('/api/profiles/consultants/' + pfCons);
+      check('another organisation gets 404 for the record', r.status === 404, r);
+      r = await pfOther.fetch('/api/profiles/consultants/' + pfCons, { method: 'PATCH', body: JSON.stringify({ values: { job_title: 'Hacked' } }) });
+      check('another organisation cannot edit it', r.status === 404, r);
+      r = await pfOther.fetch('/api/profiles/programs', { method: 'POST', body: JSON.stringify({ values: { name: 'X', client_id: String(pfClient) } }) });
+      check('another organisation cannot create a sub-vendor under this client', r.status === 400, r);
+      const anon = makeJar();
+      r = await anon.fetch('/api/profiles/consultants/' + pfCons);
+      check('profile API needs sign-in', r.status === 401 || r.status === 403, r);
+      r = await pfOwner.fetch('/api/profiles/widgets/1');
+      check('unknown record type returns 404', r.status === 404, r);
+
+      // Merge carries the profile over
+      r = await pfOwner.fetch('/api/profiles/consultants', { method: 'POST', body: JSON.stringify({ values: { name: 'Priya Nairr', city: 'Edison' }, secrets: { bank_account: '5550001111' } }) });
+      const pfDup = r.body.id;
+      await dbConn.query(`INSERT INTO directory_duplicate_candidates (organization_id, table_name, record_id, matched_record_id, similarity, status) SELECT organization_id, 'consultants', ?, ?, 0.95, 'open' FROM consultants WHERE id = ?`, [pfDup, pfCons, pfCons]);
+      const [fl] = await dbConn.query(`SELECT id FROM directory_duplicate_candidates WHERE table_name = 'consultants' AND record_id = ?`, [pfDup]);
+      r = await pfOwner.fetch('/api/directory/duplicates/' + fl[0].id + '/merge', { method: 'POST', body: JSON.stringify({ keep: 'matched' }) });
+      check('merging two consultants succeeds', r.status === 200, r);
+      r = await pfOwner.fetch('/api/profiles/consultants/' + pfCons);
+      check('the survivor gained the removed record’s blank fields', r.body.values.city === 'Edison' && r.body.values.job_title === 'Data Engineer', r.body.values);
+      const [orph] = await dbConn.query(`SELECT COUNT(*) AS n FROM record_profiles WHERE entity = 'consultants' AND record_id = ?`, [pfDup]);
+      check('no profile rows are left on the removed record', orph[0].n === 0, orph);
+
+      // Client page links
+      r = await pfOwner.fetch('/api/profiles/clients/' + pfClient);
+      check('the client profile lists its sub-vendors', r.body.related.subVendors.some((x) => x.id === pfSub), r.body.related);
+
+      // Every field the form can write maps to a real column
+      const [clientCols] = await dbConn.query(`SELECT column_name AS c FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = 'clients'`);
+      const specAll = require('../src/routes/profileFields');
+      const coreMissing = [];
+      for (const ent of ['consultants', 'clients', 'programs']) {
+        const [cols] = await dbConn.query(`SELECT column_name AS c FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = ?`, [ent]);
+        const names = cols.map((x) => x.c);
+        specAll.fieldsOf(ent).filter((x) => x.core).forEach((x) => { if (!names.includes(x.key)) coreMissing.push(ent + '.' + x.key); });
+      }
+      check('every "core" form field is a real column in its table', coreMissing.length === 0 && clientCols.length > 0, coreMissing);
     } finally {
       await dbConn.end();
     }
