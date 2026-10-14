@@ -9,7 +9,8 @@
     "backfill-client-program-swap": "node scripts/backfill-client-program-swap.js",
     "backfill-assignment-status": "node scripts/backfill-assignment-status.js",
     "delete-client-invoices": "node scripts/delete-client-invoices.js",
-    "undo-hours-import": "node scripts/undo-hours-import.js"
+    "undo-hours-import": "node scripts/undo-hours-import.js",
+    "verify-deploy": "node scripts/verify-deploy.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",

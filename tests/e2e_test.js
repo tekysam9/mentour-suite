@@ -1380,6 +1380,12 @@ async function main() {
       r = await makeJar().fetch('/api/invoices/history');
       check('history without a login returns 401', r.status === 401, r);
 
+      // Deploy check: public, read-only, no data.
+      r = await makeJar().fetch('/api/version');
+      check('/api/version is public and reports fingerprint + schema flags only',
+        r.status === 200 && r.body.schema && r.body.schema.ok === true && r.body.fingerprint && /^[0-9a-f]{16}$/.test(r.body.fingerprint.server.overall) &&
+        !JSON.stringify(r.body).match(/password|secret|@/i), r.body);
+
       // 34. Fin-Module "Subvendor payments": months already paid are read
       // read-only from the latest Ledger upload; December 2026 onwards can be
       // generated from the Ledger rate (else the Margin cost rate). Own org.

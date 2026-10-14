@@ -10,6 +10,7 @@ const { saveLedgerRoster } = require('./src/routes/ledgerRoster');
 const directoryRoutes = require('./src/routes/directory');
 const invoiceRoutes = require('./src/routes/invoices');
 const subvendorInvoiceRoutes = require('./src/routes/subvendorInvoices');
+const versionRoutes = require('./src/routes/version');
 
 const app = express();
 
@@ -19,6 +20,7 @@ app.set('trust proxy', 1); // Hostinger sits behind a proxy/load balancer
 app.use(express.json({ limit: '15mb' }));
 app.use(sessionMiddleware);
 
+app.use('/api/version', versionRoutes);
 app.use('/api/auth', authRoutes);
 app.use('/api/ledger', createImportRouter('ledger_imports', { onSave: saveLedgerRoster }));
 app.use('/api/margin', createImportRouter('margin_imports', { onSave: saveMarginRoster }));
