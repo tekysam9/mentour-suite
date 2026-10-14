@@ -75,7 +75,9 @@ router.get('/', async (req, res) => {
     const [pt] = await pool.query(`SELECT COUNT(*) AS n FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name IN ('record_profiles','record_secrets','record_notes','record_forms')`);
     out.schema.profileTables = pt[0].n === 4;
     out.fieldEncryptionConfigured = require('../crypto').isConfigured();
-    if (!out.schema.profileTables) out.schema.ok = false;
+    const [ee] = await pool.query(`SELECT column_type AS ct FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = 'record_profiles' AND column_name = 'entity'`);
+    out.schema.supplierProfiles = !!ee.length && /subvendors/.test(ee[0].ct);
+    if (!out.schema.profileTables || !out.schema.supplierProfiles) out.schema.ok = false;
     if (!out.schema.clientTextAliasesTable || !out.schema.rateSourceHasHoursFile) out.schema.ok = false;
   } catch (e) { out.schema = { ok: false, error: 'could not read the database schema' }; }
   res.set('Cache-Control', 'no-store').json(out);

@@ -193,10 +193,10 @@ function renderHxTab() {
       hxCard('0-hour invoices to fill', hxNum(sm.willFill), 'existing, no hours yet') +
       hxCard('Already have hours', hxNum(sm.skippedExisting), 'left untouched') +
       hxCard('Not invoiced', hxNum(sm.issues), 'see the lists below') +
-      hxCard('New in Directory', hxNum(sm.newConsultants) + ' · ' + hxNum(sm.newClients), 'consultants · clients<br>' + hxNum(sm.newPrograms) + ' sub-vendors, ' + hxNum(sm.newPairings) + ' pairings') +
+      hxCard('New in Directory', hxNum(sm.newConsultants) + ' · ' + hxNum(sm.newClients), 'consultants · clients<br>' + hxNum(sm.newPrograms) + ' vendors, ' + hxNum(sm.newPairings) + ' pairings') +
       hxCard('Supplier invoices', hxNum(sm.subvendorInvoices), hxNum(sm.subvendorInvoicesSkipped) + ' already exist or are paid in Ledger') +
     '</div>';
-    if (sm.noRate) out += '<div class="fin-readonly-note">' + hxNum(sm.noRate) + ' invoice(s) belong to a client/sub-vendor pairing with <strong>no billing rate</strong> in Directory yet. They will be created at $0 and marked in their notes; upload the Margin file (or add the rate), then use “Apply Directory rates” in the Year &amp; month view.</div>';
+    if (sm.noRate) out += '<div class="fin-readonly-note">' + hxNum(sm.noRate) + ' invoice(s) belong to a client/vendor pairing with <strong>no billing rate</strong> in Directory yet. They will be created at $0 and marked in their notes; upload the Margin file (or add the rate), then use “Apply Directory rates” in the Year &amp; month view.</div>';
 
     if (imp.preview) {
       out += '<div class="fin-controls" style="justify-content:flex-start"><button type="button" class="fin-btn fin-btn-primary" data-action="hx-apply"' +
@@ -230,7 +230,7 @@ function renderHxTab() {
     }
 
     var cap = p.listCap;
-    var invHead = ['Consultant', 'Client / Sub-vendor', 'Invoice month', 'Hours for', 'Hours', 'Rate', 'Amount', 'Paid via'];
+    var invHead = ['Consultant', 'Client / Vendor', 'Invoice month', 'Hours for', 'Hours', 'Rate', 'Amount', 'Paid via'];
     function invRows(list) {
       return list.map(function (w) {
         return '<tr><td>' + escapeHtml(w.consultant) + '</td><td>' + hxPairLabel(w) + '</td><td>' + hxPeriodLabel(w.periodMonth) + '</td><td class="fin-muted">' + hxPeriodLabel(w.hoursMonth) +
@@ -240,7 +240,7 @@ function renderHxTab() {
     }
     out += hxDetails('First ' + Math.min(cap, sm.willCreate) + ' of the invoices to create', Math.min(cap, sm.willCreate), invHead, invRows(p.willCreate), false);
     out += hxDetails('Existing invoices at 0 hours — will be filled in', Math.min(cap, sm.willFill), invHead, invRows(p.willFill), false);
-    out += hxDetails('Already have hours — left as is', Math.min(cap, sm.skippedExisting), ['Consultant', 'Client / Sub-vendor', 'Invoice month', 'File hours', 'Invoice hours'],
+    out += hxDetails('Already have hours — left as is', Math.min(cap, sm.skippedExisting), ['Consultant', 'Client / Vendor', 'Invoice month', 'File hours', 'Invoice hours'],
       p.skippedExisting.map(function (w) {
         return '<tr><td>' + escapeHtml(w.consultant) + '</td><td>' + hxPairLabel(w) + '</td><td>' + hxPeriodLabel(w.periodMonth) +
           '</td><td class="fin-num">' + w.hours + '</td><td class="fin-num">' + w.existingHours + '</td></tr>';

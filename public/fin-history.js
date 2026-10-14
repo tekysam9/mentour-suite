@@ -109,7 +109,7 @@ function renderHistoryTab() {
   // Filters
   var clientOptions = [['', 'All clients']].concat(d.clients.map(function (c) { return [String(c.id), c.name]; }));
   out += '<div class="hist-filters">' +
-    '<label class="hist-field hist-search"><span>Search</span><input type="search" id="hist-q" placeholder="Consultant, client, sub-vendor, invoice no., payment terms" value="' + escapeHtml(h.q) + '"></label>' +
+    '<label class="hist-field hist-search"><span>Search</span><input type="search" id="hist-q" placeholder="Consultant, client, vendor, invoice no., payment terms" value="' + escapeHtml(h.q) + '"></label>' +
     histSelect('hist-category', 'Paid via', h.category, [['', 'All'], ['W2', 'W2'], ['1099', '1099'], ['Subvendor', 'Supplier'], ['none', 'Not tagged']]) +
     histSelect('hist-status', 'Status', h.paymentStatus, [['', 'All'], ['unpaid', 'Unpaid'], ['paid', 'Paid']]) +
     histSelect('hist-hours', 'Hours', h.hours, [['', 'All'], ['with', 'With hours'], ['zero', 'No hours yet']]) +
@@ -134,7 +134,7 @@ function renderHistoryTab() {
   out += '<div class="hist-actions">' +
     '<button type="button" class="fin-btn fin-btn-small" data-hist-bulk="paid"' + (canBulk ? '' : ' disabled title="Pick a year first"') + '>Mark these ' + histFmt(s.invoices) + ' as paid</button>' +
     '<button type="button" class="fin-btn fin-btn-small" data-hist-bulk="unpaid"' + (canBulk ? '' : ' disabled title="Pick a year first"') + '>Mark these as unpaid</button>' +
-    '<button type="button" class="fin-btn fin-btn-small" data-hist-fill-rates title="Invoices imported without a rate pick up the rate now on their client/sub-vendor pairing">Apply Directory rates</button>' +
+    '<button type="button" class="fin-btn fin-btn-small" data-hist-fill-rates title="Invoices imported without a rate pick up the rate now on their client/vendor pairing">Apply Directory rates</button>' +
     '<a class="fin-btn fin-btn-small" href="/api/invoices/history/export?' + histQuery().toString() + '" download>Download CSV</a>' +
   '</div>';
 
@@ -145,7 +145,7 @@ function renderHistoryTab() {
   }
   var from = (d.page - 1) * d.pageSize + 1, to = Math.min(d.total, d.page * d.pageSize), pages = Math.max(1, Math.ceil(d.total / d.pageSize));
   out += '<div class="fin-table-wrap"><table class="fin-table hist-table"><caption class="sr-only">Invoices for ' + escapeHtml(scope) + ', showing ' + from + ' to ' + to + ' of ' + d.total + '</caption><thead><tr>' +
-    histSortTh('period', 'Invoice month') + '<th scope="col">Hours for</th>' + histSortTh('invoice', 'Invoice no.') + histSortTh('consultant', 'Consultant') + histSortTh('client', 'Client / Sub-vendor') +
+    histSortTh('period', 'Invoice month') + '<th scope="col">Hours for</th>' + histSortTh('invoice', 'Invoice no.') + histSortTh('consultant', 'Consultant') + histSortTh('client', 'Client / Vendor') +
     histSortTh('category', 'Paid via') + histSortTh('hours', 'Hours', true) + histSortTh('rate', 'Rate', true) + histSortTh('amount', 'Amount', true) + histSortTh('status', 'Status') +
     '</tr></thead><tbody>' +
     d.invoices.map(function (inv) {

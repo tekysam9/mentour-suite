@@ -116,11 +116,11 @@
   }
 
   function sideHtml() {
-    if (IS_NEW) return '<div class="rec-card rec-side"><h2>After you save</h2><p class="rec-muted">You can add notes, and see linked clients, sub-vendors and billing here.</p></div>';
+    if (IS_NEW) return '<div class="rec-card rec-side"><h2>After you save</h2><p class="rec-muted">You can add notes, and see linked clients, vendors and billing here.</p></div>';
     var r = S.rec.related || {};
     var html = '';
     if (TYPE === 'consultants') {
-      html += '<div class="rec-card rec-side"><h2>Client &amp; sub-vendor pairings</h2>';
+      html += '<div class="rec-card rec-side"><h2>Client &amp; vendor pairings</h2>';
       var a = r.assignments || [];
       html += a.length ? '<ul>' + a.map(function (x) {
         return '<li>' + (x.clientId ? '<a href="/record.html?type=clients&id=' + x.clientId + '">' + esc(x.clientName) + '</a>' : '—') +
@@ -130,11 +130,16 @@
       }).join('') + '</ul>' : '<p class="rec-muted">No pairings yet. Add billing rates in the Directory.</p>';
       html += '</div>';
     } else if (TYPE === 'clients') {
-      html += '<div class="rec-card rec-side"><h2>Sub-vendors</h2>';
+      html += '<div class="rec-card rec-side"><h2>Vendors</h2>';
       var s = r.subVendors || [];
       html += s.length ? '<ul>' + s.map(function (x) { return '<li><a href="/record.html?type=programs&id=' + x.id + '">' + esc(x.name) + '</a></li>'; }).join('') + '</ul>' : '<p class="rec-muted">None yet.</p>';
       html += '<p class="rec-muted" style="margin-top:10px">' + (r.activeConsultants || 0) + ' active consultant(s)</p>';
-      html += '<p style="margin-top:8px"><a class="rec-btn rec-btn-small" href="/record.html?type=programs&new=1&client=' + S.rec.id + '">+ Add sub-vendor</a></p></div>';
+      html += '<p style="margin-top:8px"><a class="rec-btn rec-btn-small" href="/record.html?type=programs&new=1&client=' + S.rec.id + '">+ Add vendor</a></p></div>';
+    } else if (TYPE === 'subvendors') {
+      html += '<div class="rec-card rec-side"><h2>Consultants placed through this supplier</h2>';
+      var sc = r.supplierConsultants || [];
+      html += sc.length ? '<ul>' + sc.map(function (x) { return '<li><a href="/record.html?type=consultants&id=' + x.id + '">' + esc(x.name) + '</a></li>'; }).join('') + '</ul>' : '<p class="rec-muted">None linked yet. Set “Supplier company” on a consultant’s profile, or generate supplier payments.</p>';
+      html += '</div>';
     } else {
       html += '<div class="rec-card rec-side"><h2>Active consultants</h2>';
       var c = r.activeConsultantsList || [];

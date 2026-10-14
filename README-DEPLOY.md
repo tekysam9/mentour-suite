@@ -340,10 +340,10 @@ environments, or per-tenant subdomains — if you get there, that's a VPS
 - `SESSION_SECRET` and database credentials live only in environment
   variables — never commit a real `.env` file.
 
-## Consultant / Client / Sub-vendor profile forms
+## Consultant / Client / Vendor profile forms
 
 Every Directory name is now a link to a full CRM-style profile (`/record.html`), and each Directory tab has a
-**+ Add** button for a blank intake form. "Programs" are labelled **Sub-vendors** everywhere (stored data and
+**+ Add** button for a blank intake form. "Programs" are labelled **Vendors** everywhere (stored data and
 links are unchanged); the old supplier-company list is labelled **Supplier companies**.
 
 **Before using SSN / tax ID / bank fields you must set an encryption key** (otherwise saving them is refused and
@@ -360,9 +360,12 @@ characters. Only the account owner can set or change them. `/api/version` report
 
 ## Fillable forms (W-9, W-4, I-9)
 
-Open a record's profile → **Forms & documents**. Sub-vendors get a W-9; consultants get a W-4 and an I-9.
+Open a record's profile → **Forms & documents**. Vendors get a W-9; consultants get a W-4 and an I-9.
 Fields are pre-filled from the directory, SSN / TIN / A-number / document numbers are encrypted (last 4 shown),
 and each signature section is signed with a typed name + consent (name, time, user and IP are recorded) and then
 locked. Only the owner can reopen a signature (a reason is required and logged). Re-run `db/schema.sql` once
 (adds `record_forms`). The forms follow the IRS / USCIS field layout but are an in-app record: confirm the
 current editions at irs.gov and uscis.gov.
+
+**Update:** "Sub-vendors" are now labelled **Vendors**; Supplier companies have the same profile form (re-run
+`db/schema.sql` to allow them); Directory tabs open filtered to **Active**.

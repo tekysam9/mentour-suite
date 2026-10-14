@@ -250,7 +250,7 @@ async function planImport(conn, organizationId, body) {
         if (!cands.length) cands = mine.filter((a) => nameOf(a) === whole && !a.program_id);
         if (!cands.length) cands = mine.filter((a) => nameOf(a) === clientKey && (progKey === null || progOf(a) === progKey));
       }
-      if (cands.length > 1) res = { bad: ['client', 'matches more than one sub-vendor — put "Sub-vendor/Client" in the Client column'] };
+      if (cands.length > 1) res = { bad: ['client', 'matches more than one vendor — put "Vendor/Client" in the Client column'] };
       else if (cands.length === 1) res = { cons, a: cands[0], ref: 'a' + cands[0].id };
       else {
         const sp = splitClient(r.clientText);

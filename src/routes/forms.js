@@ -14,7 +14,7 @@ const router = express.Router();
 router.use(requireAuth);
 
 const SCHEMA_MSG = 'Forms need the latest database update. Run db/schema.sql on the database, then try again.';
-const ENTITIES = ['consultants', 'clients', 'programs'];
+const ENTITIES = ['consultants', 'clients', 'programs', 'subvendors'];
 // A signature can only be applied after the one it depends on.
 const SIGN_AFTER = { employer: 'employee', reverify: 'employer' };
 const OPTIONAL_SIG = { i9: ['reverify'] };

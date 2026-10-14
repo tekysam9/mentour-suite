@@ -1,5 +1,5 @@
 // Field definitions for the fillable tax / employment-eligibility forms:
-//   w9  (IRS Form W-9, Request for Taxpayer Identification Number)  -> sub-vendors
+//   w9  (IRS Form W-9, Request for Taxpayer Identification Number)  -> vendors
 //   w4  (IRS Form W-4, Employee's Withholding Certificate)           -> consultants / employees
 //   i9  (USCIS Form I-9, Employment Eligibility Verification)        -> consultants / employees
 //

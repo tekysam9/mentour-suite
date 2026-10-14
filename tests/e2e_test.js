@@ -804,7 +804,7 @@ async function main() {
       check('generate skips exactly 4 (Fran: no rate, Gale: no client/program, Hal: inactive, Ivy: status not set)', r.body.skipped && r.body.skipped.length === 4, r.body);
       check('skip reasons are the expected four',
         r.body.skipped.some((s) => s.consultant === 'Fran NoRate' && s.reason === 'no billing rate set') &&
-        r.body.skipped.some((s) => s.consultant === 'Gale NoClient' && s.reason === 'no client or sub-vendor to bill') &&
+        r.body.skipped.some((s) => s.consultant === 'Gale NoClient' && s.reason === 'no client or vendor to bill') &&
         r.body.skipped.some((s) => s.consultant === 'Hal Inactive' && s.reason === 'consultant is inactive' && s.inactive === true) &&
         r.body.skipped.some((s) => s.consultant === 'Ivy Unset' && s.reason === 'consultant status not set' && s.inactive === true), r.body.skipped);
       check('active-only generation reports skippedInactive = 2 and invoices no inactive/unset consultant',
@@ -996,7 +996,7 @@ async function main() {
         !r.body.willCreate.some((w) => w.consultant === 'Ivo Hours' && w.periodMonth === '2026-03'), r.body.willCreate);
       check('unknown consultant, unknown client and ambiguous client are reported, not guessed',
         r.body.unmatched.some((u) => u.name === 'Nobody Known') && r.body.unmatched.some((u) => u.client === 'Wrong Client') &&
-        r.body.unmatched.some((u) => u.client === 'Beta' && /more than one sub-vendor/.test(u.reason)), r.body.unmatched);
+        r.body.unmatched.some((u) => u.client === 'Beta' && /more than one vendor/.test(u.reason)), r.body.unmatched);
       r = await hrsOwner.fetch('/api/invoices?periodMonth=2026-02&includeInactive=1');
       check('preview wrote no invoices', r.body.invoices.length === 0, r.body);
       r = await hrsOwner.fetch('/api/invoices/import-hours', { method: 'POST', body: hrsBody({ apply: true }) });
@@ -1285,7 +1285,7 @@ async function main() {
         r.body.willCreate.some((w) => w.consultant === 'Hana Hours' && w.periodMonth === '2026-04' && w.hours === 168) &&
         !r.body.willCreate.some((w) => w.consultant === 'Ivo Hours' && w.hoursMonth === '2026-02'), r.body.willCreate);
       check('ambiguous client, text hours, out-of-range dates and same-month duplicates are reported, not guessed',
-        r.body.issues.some((u) => u.name === 'Jun Hours' && u.client === 'Beta' && /more than one sub-vendor/.test(u.reason)) &&
+        r.body.issues.some((u) => u.name === 'Jun Hours' && u.client === 'Beta' && /more than one vendor/.test(u.reason)) &&
         r.body.issues.some((u) => u.name === 'Mia Text' && u.kind === 'hours-text') &&
         r.body.issues.some((u) => u.name === 'Eve Dates' && /before Start Date/.test(u.reason)) &&
         r.body.issues.some((u) => u.name === 'Eve Dates' && /after Date-if-left/.test(u.reason)) &&
@@ -1562,7 +1562,7 @@ async function main() {
       r = await svOwner.fetch('/api/subvendor-invoices/' + samJan27.id, { method: 'DELETE' });
       check('deleting it again returns 404', r.status === 404, r);
 
-      // 35. Record profiles (Consultant / Client / Sub-vendor forms): CRM fields,
+      // 35. Record profiles (Consultant / Client / Vendor forms): CRM fields,
       // encrypted SSN / tax ID / bank numbers shown as last 4 only, org isolation.
       const pfOwner = makeJar();
       r = await pfOwner.fetch('/api/auth/signup', { method: 'POST', body: JSON.stringify({ orgName: 'Profile Co', name: 'Pf Owner', email: 'pf@pftest.test', password: 'profilepassword1' }) });
@@ -1571,7 +1571,7 @@ async function main() {
       r = await pfOther.fetch('/api/auth/signup', { method: 'POST', body: JSON.stringify({ orgName: 'Profile Other Co', name: 'Pf Other', email: 'pfo@pftest.test', password: 'profilepassword2' }) });
 
       r = await pfOwner.fetch('/api/profiles/schema');
-      check('schema lists the three forms and says encryption is configured', r.status === 200 && r.body.spec.consultants && r.body.spec.clients && r.body.spec.programs && r.body.spec.programs.singular === 'Sub-vendor' && r.body.encryptionConfigured === true && r.body.canEditSecrets === true, r.body);
+      check('schema lists the three forms and says encryption is configured', r.status === 200 && r.body.spec.consultants && r.body.spec.clients && r.body.spec.programs && r.body.spec.programs.singular === 'Vendor' && r.body.encryptionConfigured === true && r.body.canEditSecrets === true, r.body);
       const allKeys = (e) => r.body.spec[e].sections.flatMap((x) => x.fields.map((f2) => f2.key));
       check('consultant form has the SSN and bank secret fields', ['ssn', 'bank_routing', 'bank_account'].every((k) => allKeys('consultants').includes(k)), allKeys('consultants'));
 
@@ -1593,16 +1593,16 @@ async function main() {
       check('the full tax ID never appears in the response', !JSON.stringify(r.body).includes('123456789') && !JSON.stringify(r.body).includes('12-3456789'), r.body);
 
       r = await pfOwner.fetch('/api/profiles/programs', { method: 'POST', body: JSON.stringify({ values: { name: 'Prime Staffing', client_id: String(pfClient), payment_terms: 'Net 45', contact_name: 'Raj Rao' }, secrets: { bank_routing: '021000021', bank_account: '000123456789' } }) });
-      check('creating a sub-vendor under the client returns 201', r.status === 201, r);
+      check('creating a vendor under the client returns 201', r.status === 201, r);
       const pfSub = r.body.id;
       r = await pfOwner.fetch('/api/profiles/programs', { method: 'POST', body: JSON.stringify({ values: { name: 'Prime Staffing', client_id: String(pfClient) } }) });
-      check('a duplicate sub-vendor under the same client returns 409', r.status === 409, r);
+      check('a duplicate vendor under the same client returns 409', r.status === 409, r);
       r = await pfOwner.fetch('/api/profiles/programs', { method: 'POST', body: JSON.stringify({ values: { name: 'No Client' } }) });
-      check('a sub-vendor needs a client', r.status === 400, r);
+      check('a vendor needs a client', r.status === 400, r);
       r = await pfOwner.fetch('/api/profiles/programs/' + pfSub);
-      check('sub-vendor bank numbers are masked to last 4', r.body.secrets.bank_routing.last4 === '0021' && r.body.secrets.bank_account.last4 === '6789' && !JSON.stringify(r.body).includes('000123456789'), r.body.secrets);
+      check('vendor bank numbers are masked to last 4', r.body.secrets.bank_routing.last4 === '0021' && r.body.secrets.bank_account.last4 === '6789' && !JSON.stringify(r.body).includes('000123456789'), r.body.secrets);
       r = await pfOwner.fetch('/api/directory/programs');
-      check('the sub-vendor shows in the existing Directory list (same table)', r.body.programs.some((p) => p.id === pfSub && p.client_name === 'Acme Health'), r.body);
+      check('the vendor shows in the existing Directory list (same table)', r.body.programs.some((p) => p.id === pfSub && p.client_name === 'Acme Health'), r.body);
 
       r = await pfOwner.fetch('/api/profiles/consultants', { method: 'POST', body: JSON.stringify({ values: { name: 'Priya Nair', worker_type: 'W2', work_authorization: 'H-1B', date_of_birth: '1990-04-12', phone: '555-010-2000', pay_rate: '55.5', i9_verified: 'true' }, secrets: { ssn: '123-45-6789', bank_account: '9876543210' } }) });
       check('creating a consultant returns 201', r.status === 201, r);
@@ -1654,7 +1654,7 @@ async function main() {
       r = await pfOther.fetch('/api/profiles/consultants/' + pfCons, { method: 'PATCH', body: JSON.stringify({ values: { job_title: 'Hacked' } }) });
       check('another organisation cannot edit it', r.status === 404, r);
       r = await pfOther.fetch('/api/profiles/programs', { method: 'POST', body: JSON.stringify({ values: { name: 'X', client_id: String(pfClient) } }) });
-      check('another organisation cannot create a sub-vendor under this client', r.status === 400, r);
+      check('another organisation cannot create a vendor under this client', r.status === 400, r);
       const anon = makeJar();
       r = await anon.fetch('/api/profiles/consultants/' + pfCons);
       check('profile API needs sign-in', r.status === 401 || r.status === 403, r);
@@ -1675,7 +1675,7 @@ async function main() {
 
       // Client page links
       r = await pfOwner.fetch('/api/profiles/clients/' + pfClient);
-      check('the client profile lists its sub-vendors', r.body.related.subVendors.some((x) => x.id === pfSub), r.body.related);
+      check('the client profile lists its vendors', r.body.related.subVendors.some((x) => x.id === pfSub), r.body.related);
 
       // Every field the form can write maps to a real column
       const [clientCols] = await dbConn.query(`SELECT column_name AS c FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = 'clients'`);
@@ -1688,15 +1688,15 @@ async function main() {
       }
       check('every "core" form field is a real column in its table', coreMissing.length === 0 && clientCols.length > 0, coreMissing);
 
-      // 36. Fillable forms: W-9 (sub-vendors), W-4 and I-9 (consultants).
+      // 36. Fillable forms: W-9 (vendors), W-4 and I-9 (consultants).
       r = await pfOwner.fetch('/api/forms/consultants/' + pfCons);
       check('consultant has W-4 and I-9 forms listed, none started', r.status === 200 && r.body.forms.map((x) => x.form).sort().join() === 'i9,w4' && r.body.forms.every((x) => x.status === 'not started'), r.body);
       r = await pfOwner.fetch('/api/forms/programs/' + pfSub);
-      check('sub-vendor has only a W-9', r.body.forms.length === 1 && r.body.forms[0].form === 'w9', r.body);
+      check('vendor has only a W-9', r.body.forms.length === 1 && r.body.forms[0].form === 'w9', r.body);
       r = await pfOwner.fetch('/api/forms/clients/' + pfClient);
       check('client has no forms', r.status === 200 && r.body.forms.length === 0, r.body);
       r = await pfOwner.fetch('/api/forms/programs/' + pfSub + '/w4');
-      check('a W-4 does not apply to a sub-vendor (404)', r.status === 404, r);
+      check('a W-4 does not apply to a vendor (404)', r.status === 404, r);
 
       r = await pfOwner.fetch('/api/forms/programs/' + pfSub + '/w9');
       check('W-9 is pre-filled from the directory (name, no saved row yet)', r.status === 200 && r.body.values.name === 'Prime Staffing' && r.body.prefilled.includes('name') && r.body.status === 'not started', r.body);
@@ -1781,6 +1781,28 @@ async function main() {
       r = await pfOwner.fetch('/api/directory/duplicates/' + fl2[0].id + '/merge', { method: 'POST', body: JSON.stringify({ keep: 'matched' }) });
       r = await pfOwner.fetch('/api/forms/consultants/' + fkKeep + '/w4');
       check('a W-4 draft moves to the surviving record on merge', r.status === 200 && r.body.values.last_name === 'Keepr' && r.body.status === 'draft', r.body);
+
+      // 37. Supplier companies get the same profile form.
+      r = await pfOwner.fetch('/api/profiles/schema');
+      check('schema includes supplier companies and vendors are labelled Vendor', !!r.body.spec.subvendors && r.body.spec.subvendors.singular === 'Supplier company' && r.body.spec.programs.singular === 'Vendor' && r.body.spec.programs.plural === 'Vendors', r.body.spec && Object.keys(r.body.spec));
+      r = await pfOwner.fetch('/api/profiles/subvendors', { method: 'POST', body: JSON.stringify({ values: { name: 'Zenith Staffing', supplier_type: 'Staffing agency', payment_terms: 'Net 30', contact_name: 'Meera Shah', email: 'ap@zenith.test', w9_on_file: 'true' }, secrets: { tax_id: '45-6789012', bank_routing: '011000015', bank_account: '55501234' } }) });
+      check('creating a supplier company returns 201', r.status === 201, r);
+      const sup = r.body.id;
+      r = await pfOwner.fetch('/api/profiles/subvendors', { method: 'POST', body: JSON.stringify({ values: { name: 'zenith staffing' } }) });
+      check('duplicate supplier company name returns 409', r.status === 409, r);
+      r = await pfOwner.fetch('/api/profiles/subvendors/' + sup);
+      check('supplier profile returns fields and last-4 secrets only', r.body.values.supplier_type === 'Staffing agency' && r.body.values.w9_on_file === true && r.body.secrets.tax_id.masked === '****9012' && r.body.secrets.bank_account.last4 === '1234' && !JSON.stringify(r.body).includes('456789012') && !JSON.stringify(r.body).includes('55501234'), r.body);
+      r = await pfOwner.fetch('/api/directory/subvendors');
+      check('the supplier company shows in the Directory list', r.body.subvendors.some((x) => x.id === sup && x.email === 'ap@zenith.test'), r.body);
+      r = await pfOwner.fetch('/api/profiles/consultants/' + pfCons, { method: 'PATCH', body: JSON.stringify({ values: { supplier_id: String(sup) } }) });
+      r = await pfOwner.fetch('/api/profiles/subvendors/' + sup);
+      check('the supplier profile lists consultants linked to it', r.body.related.supplierConsultants.some((x) => x.id === pfCons), r.body.related);
+      r = await pfOther.fetch('/api/profiles/subvendors/' + sup);
+      check('another organisation cannot see the supplier profile', r.status === 404, r);
+      r = await pfOwner.fetch('/api/forms/subvendors/' + sup);
+      check('supplier companies have no tax forms listed', r.status === 200 && r.body.forms.length === 0, r.body);
+      const [secRow] = await dbConn.query(`SELECT cipher FROM record_secrets WHERE entity = 'subvendors' AND record_id = ? AND field = 'tax_id'`, [sup]);
+      check('supplier tax ID is encrypted in the database', secRow.length === 1 && /^v1:/.test(secRow[0].cipher), secRow);
     } finally {
       await dbConn.end();
     }

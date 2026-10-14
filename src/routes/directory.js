@@ -21,7 +21,7 @@ const { aliasKey, splitClientText, isMissingTable, SCHEMA_NEEDED_MESSAGE } = req
 // fields the survivor leaves blank are filled from the removed record, secrets
 // and notes are carried over (optional: tables exist once schema.sql has run).
 async function mergeProfileRecords(conn, tableName, keepId, loseId, orgId) {
-  if (!['consultants', 'clients', 'programs'].includes(tableName)) return;
+  if (!['consultants', 'clients', 'programs', 'subvendors'].includes(tableName)) return;
   try {
     const [rows] = await conn.query(
       `SELECT record_id, data FROM record_profiles WHERE organization_id = ? AND entity = ? AND record_id IN (?, ?)`,
@@ -250,7 +250,7 @@ router.post('/consultants/:id/assignments', async (req, res, next) => {
         'SELECT id FROM programs WHERE id = ? AND organization_id = ? AND client_id <=> ?',
         [programId, req.user.organization_id, clientId]
       );
-      if (!programRows.length) return res.status(400).json({ error: 'Unknown sub-vendor, or it doesn’t belong to that client.' });
+      if (!programRows.length) return res.status(400).json({ error: 'Unknown vendor, or it doesn’t belong to that client.' });
     }
 
     const assignmentId = await upsertAssignmentBilling(pool, {
@@ -321,7 +321,7 @@ router.post('/consultants/:id/assignments/from-text', async (req, res, next) => 
     if (!consultant) return res.status(404).json({ error: 'Not found.' });
     const body = req.body || {};
     const { clientName, programName } = splitClientText(body.clientText);
-    if (!clientName) return res.status(400).json({ error: 'clientText must name a client (e.g. "Sub-vendor/Client" or "Client").' });
+    if (!clientName) return res.status(400).json({ error: 'clientText must name a client (e.g. "Vendor/Client" or "Client").' });
     const billing = body.billing === null || body.billing === undefined || body.billing === '' ? null : Number(body.billing);
     if (billing !== null && (!Number.isFinite(billing) || billing < 0)) return res.status(400).json({ error: 'Billing must be a number.' });
 
@@ -519,7 +519,7 @@ router.get('/:table/:id/usage', async (req, res, next) => {
   try {
     const tableName = req.params.table;
     if (!DIRECTORY_TABLES.includes(tableName)) {
-      return res.status(400).json({ error: 'Unknown table. Use consultants, supplier companies, clients, or sub-vendors.' });
+      return res.status(400).json({ error: 'Unknown table. Use consultants, supplier companies, clients, or vendors.' });
     }
 
     const [recordRows] = await pool.query(
@@ -575,7 +575,7 @@ router.get('/duplicates', async (req, res, next) => {
   try {
     const requested = req.query.table;
     if (requested && !DIRECTORY_TABLES.includes(requested)) {
-      return res.status(400).json({ error: 'Unknown table. Use consultants, supplier companies, clients, or sub-vendors.' });
+      return res.status(400).json({ error: 'Unknown table. Use consultants, supplier companies, clients, or vendors.' });
     }
     const tables = requested ? [requested] : DIRECTORY_TABLES;
     const out = {};
@@ -712,7 +712,7 @@ router.post('/duplicates/:id/merge', async (req, res, next) => {
     await conn.rollback();
     if (err && err.code === 'ER_DUP_ENTRY') {
       return res.status(409).json({
-        error: 'Could not merge: the two records have a conflicting child record (e.g. a sub-vendor with the same name under both clients). Resolve that by hand first.',
+        error: 'Could not merge: the two records have a conflicting child record (e.g. a vendor with the same name under both clients). Resolve that by hand first.',
       });
     }
     next(err);

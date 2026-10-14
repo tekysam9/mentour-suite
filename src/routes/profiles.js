@@ -1,5 +1,5 @@
 // Record profiles: the full CRM-style form for a consultant, client or
-// sub-vendor (programs table), plus the blank intake form for new records.
+// vendor (programs table), plus the blank intake form for new records.
 // Everything is scoped to req.user.organization_id.
 //
 // Sensitive values (SSN, tax IDs, bank routing/account numbers) are
@@ -161,6 +161,16 @@ async function related(entity, id, orgId) {
     const [cnt] = await pool.query(
       `SELECT COUNT(DISTINCT consultant_id) AS n FROM consultant_assignments WHERE client_id = ? AND status = 'active' AND organization_id = ?`, [id, orgId]);
     return { subVendors: subs, activeConsultants: cnt[0].n };
+  }
+  if (entity === 'subvendors') {
+    const [cons] = await pool.query(
+      `SELECT DISTINCT co.id, co.name FROM consultants co
+        WHERE co.organization_id = ? AND (
+          co.id IN (SELECT consultant_id FROM subvendor_invoices WHERE subvendor_id = ? AND organization_id = ?)
+          OR co.id IN (SELECT record_id FROM record_profiles WHERE organization_id = ? AND entity = 'consultants'
+                         AND JSON_UNQUOTE(JSON_EXTRACT(data, '$.supplier_id')) = ?))
+        ORDER BY co.name`, [orgId, id, orgId, orgId, String(id)]);
+    return { supplierConsultants: cons };
   }
   const [rows] = await pool.query(
     `SELECT DISTINCT co.id, co.name FROM consultant_assignments a JOIN consultants co ON co.id = a.consultant_id

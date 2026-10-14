@@ -417,7 +417,7 @@
   var COLUMNS = [
     { key: 'name', label: 'Consultant' },
     { key: 'client', label: 'Client / Account' },
-    { key: 'program', label: 'Sub-vendor' },
+    { key: 'program', label: 'Vendor' },
     { key: 'subvendorText', label: 'Supplier / Employment' },
     { key: 'cost', label: 'Cost $/hr' },
     { key: 'billing', label: 'Billing $/hr' },
@@ -573,7 +573,7 @@
           renderHBars(d.topMargins, function (v) { return '$' + Math.round(v * 100) / 100; }) +
         '</div>' +
         '<div class="cl-chart-card">' +
-          '<div class="cl-chart-title">Sub-vendor / prime vendor<span class="cl-chart-title-sub">by headcount</span></div>' +
+          '<div class="cl-chart-title">Vendor / prime vendor<span class="cl-chart-title-sub">by headcount</span></div>' +
           renderProgramDonut(d.programTotals) +
         '</div>' +
         '<div class="cl-chart-card">' +
@@ -653,7 +653,7 @@
           '<input type="text" id="search-input" placeholder="Search consultant, client, or subvendor\u2026" value="' + escapeHtml(f.search) + '">' +
         '</div>' +
         '<select data-filter="status">' + opt('All', 'All statuses', f.status) + opt('Active', 'Active', f.status) + opt('Left', 'Left', f.status) + '</select>' +
-        '<select data-filter="program">' + opt('All', 'All sub-vendors', f.program) + programs.map(function (p) { return opt(p, p, f.program); }).join('') + '</select>' +
+        '<select data-filter="program">' + opt('All', 'All vendors', f.program) + programs.map(function (p) { return opt(p, p, f.program); }).join('') + '</select>' +
         '<select data-filter="employment">' + opt('All', 'All employment types', f.employment) + employments.map(function (e) { return opt(e, e, f.employment); }).join('') + '</select>' +
         '<div class="cl-filter-count">' + resultCount + ' of ' + d.records.length + '</div>' +
         '<button class="cl-reset" data-action="reset-filters" type="button">Reset</button>' +
@@ -793,7 +793,7 @@
   }
 
   function exportCSV(list) {
-    var header = ['Consultant', 'Client / Account', 'Sub-vendor', 'Supplier / Employment', 'Cost $/hr', 'Billing $/hr', 'Margin $/hr', 'Status', 'Joined', 'Recruiter'];
+    var header = ['Consultant', 'Client / Account', 'Vendor', 'Supplier / Employment', 'Cost $/hr', 'Billing $/hr', 'Margin $/hr', 'Status', 'Joined', 'Recruiter'];
     var rows = list.map(function (x) {
       var r = x.r;
       return [r.name, r.client, r.program, r.subvendorText, r.cost, r.billing, r.margin, r.status, r.joined, r.recruiter];

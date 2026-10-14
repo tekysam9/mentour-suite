@@ -445,19 +445,19 @@ ALTER TABLE subvendor_invoices MODIFY COLUMN amount DECIMAL(12,2) NULL;
 -- this automatically, but it's listed here for visibility). No action needed.
 
 -- ---------------------------------------------------------------------------
--- Record profiles (Consultant / Client / Sub-vendor forms). Added October 2026;
+-- Record profiles (Consultant / Client / Vendor forms). Added October 2026;
 -- additive and safe to re-run.
 --   record_profiles : the extra CRM fields for a directory record (JSON text)
 --   record_secrets  : SSN / tax ID / bank numbers, AES-256-GCM encrypted
 --                     (key = FIELD_ENCRYPTION_KEY env var, never in the DB);
 --                     last4 is the only readable part
 --   record_notes    : internal notes + a change log (field names only)
--- entity is the directory table name; "programs" are shown as "Sub-vendors".
+-- entity is the directory table name; "programs" are shown as "Vendors".
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS record_profiles (
   id              INT AUTO_INCREMENT PRIMARY KEY,
   organization_id INT NOT NULL,
-  entity          ENUM('consultants', 'clients', 'programs') NOT NULL,
+  entity          ENUM('consultants', 'clients', 'programs', 'subvendors') NOT NULL,
   record_id       INT NOT NULL,
   data            MEDIUMTEXT NULL,
   created_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -469,7 +469,7 @@ CREATE TABLE IF NOT EXISTS record_profiles (
 CREATE TABLE IF NOT EXISTS record_secrets (
   id              INT AUTO_INCREMENT PRIMARY KEY,
   organization_id INT NOT NULL,
-  entity          ENUM('consultants', 'clients', 'programs') NOT NULL,
+  entity          ENUM('consultants', 'clients', 'programs', 'subvendors') NOT NULL,
   record_id       INT NOT NULL,
   field           VARCHAR(40) NOT NULL,
   cipher          TEXT NOT NULL,
@@ -482,7 +482,7 @@ CREATE TABLE IF NOT EXISTS record_secrets (
 CREATE TABLE IF NOT EXISTS record_notes (
   id              INT AUTO_INCREMENT PRIMARY KEY,
   organization_id INT NOT NULL,
-  entity          ENUM('consultants', 'clients', 'programs') NOT NULL,
+  entity          ENUM('consultants', 'clients', 'programs', 'subvendors') NOT NULL,
   record_id       INT NOT NULL,
   kind            ENUM('note', 'log') NOT NULL DEFAULT 'note',
   body            TEXT NOT NULL,
@@ -492,14 +492,14 @@ CREATE TABLE IF NOT EXISTS record_notes (
   INDEX idx_record_notes (organization_id, entity, record_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
--- Fillable forms (W-9 for sub-vendors, W-4 and I-9 for consultants/employees).
+-- Fillable forms (W-9 for vendors, W-4 and I-9 for consultants/employees).
 -- Non-secret answers + electronic signatures live here (JSON text); SSN / TIN /
 -- document numbers are stored encrypted in record_secrets under "<form>.<field>".
 -- Added October 2026; additive and safe to re-run.
 CREATE TABLE IF NOT EXISTS record_forms (
   id              INT AUTO_INCREMENT PRIMARY KEY,
   organization_id INT NOT NULL,
-  entity          ENUM('consultants', 'clients', 'programs') NOT NULL,
+  entity          ENUM('consultants', 'clients', 'programs', 'subvendors') NOT NULL,
   record_id       INT NOT NULL,
   form_type       VARCHAR(16) NOT NULL,
   data            MEDIUMTEXT NULL,
@@ -509,3 +509,10 @@ CREATE TABLE IF NOT EXISTS record_forms (
   FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE,
   UNIQUE KEY uq_record_form (organization_id, entity, record_id, form_type)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Supplier companies (the subvendors table) now have profile forms too: widen the
+-- entity column on the profile tables (safe to re-run).
+ALTER TABLE record_profiles MODIFY entity ENUM('consultants', 'clients', 'programs', 'subvendors') NOT NULL;
+ALTER TABLE record_secrets  MODIFY entity ENUM('consultants', 'clients', 'programs', 'subvendors') NOT NULL;
+ALTER TABLE record_notes    MODIFY entity ENUM('consultants', 'clients', 'programs', 'subvendors') NOT NULL;
+ALTER TABLE record_forms    MODIFY entity ENUM('consultants', 'clients', 'programs', 'subvendors') NOT NULL;
