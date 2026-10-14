@@ -72,8 +72,8 @@ router.get('/', async (req, res) => {
     out.schema.clientTextAliasesTable = tbl.length > 0;
     const [en] = await pool.query(`SELECT column_type AS ct FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = 'subvendor_invoices' AND column_name = 'rate_source'`);
     out.schema.rateSourceHasHoursFile = !!en.length && /hours_file/.test(en[0].ct);
-    const [pt] = await pool.query(`SELECT COUNT(*) AS n FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name IN ('record_profiles','record_secrets','record_notes')`);
-    out.schema.profileTables = pt[0].n === 3;
+    const [pt] = await pool.query(`SELECT COUNT(*) AS n FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name IN ('record_profiles','record_secrets','record_notes','record_forms')`);
+    out.schema.profileTables = pt[0].n === 4;
     out.fieldEncryptionConfigured = require('../crypto').isConfigured();
     if (!out.schema.profileTables) out.schema.ok = false;
     if (!out.schema.clientTextAliasesTable || !out.schema.rateSourceHasHoursFile) out.schema.ok = false;

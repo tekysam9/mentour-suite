@@ -36,6 +36,14 @@ function secretClean(kind, raw) {
     const d = s.replace(/[\s-]/g, '');
     return /^\d{4,17}$/.test(d) ? d : null;
   }
+  if (kind === 'anumber') {
+    const d = s.replace(/^a[-\s]?/i, '').replace(/[\s-]/g, '');
+    return /^\d{7,9}$/.test(d) ? d : null;
+  }
+  if (kind === 'docnumber') {
+    const d = s.replace(/\s/g, '');
+    return /^[0-9A-Za-z-]{3,30}$/.test(d) ? d : null;
+  }
   if (kind === 'taxid') {
     const d = s.replace(/[\s-]/g, '');
     return /^[0-9A-Za-z]{5,15}$/.test(d) ? d : null;
@@ -51,7 +59,7 @@ function maskFor(kind, last4) {
 // Validates and normalises one submitted value. Returns { value } or { error }.
 function cleanValue(field, raw, optionsFor) {
   if (raw === null || raw === undefined) return { value: '' };
-  if (field.kind === 'bool') {
+  if (field.kind === 'bool' || field.kind === 'attest') {
     if (raw === true || raw === 'true' || raw === 1 || raw === '1') return { value: true };
     if (raw === false || raw === 'false' || raw === 0 || raw === '0' || raw === '') return { value: false };
     return { error: `${field.label} must be yes or no.` };
@@ -400,4 +408,5 @@ router.post('/:entity/:id/notes', async (req, res, next) => {
   }
 });
 
+router.helpers = { cleanValue, secretClean, maskFor };
 module.exports = router;

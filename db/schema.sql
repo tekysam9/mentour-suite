@@ -491,3 +491,21 @@ CREATE TABLE IF NOT EXISTS record_notes (
   FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE,
   INDEX idx_record_notes (organization_id, entity, record_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Fillable forms (W-9 for sub-vendors, W-4 and I-9 for consultants/employees).
+-- Non-secret answers + electronic signatures live here (JSON text); SSN / TIN /
+-- document numbers are stored encrypted in record_secrets under "<form>.<field>".
+-- Added October 2026; additive and safe to re-run.
+CREATE TABLE IF NOT EXISTS record_forms (
+  id              INT AUTO_INCREMENT PRIMARY KEY,
+  organization_id INT NOT NULL,
+  entity          ENUM('consultants', 'clients', 'programs') NOT NULL,
+  record_id       INT NOT NULL,
+  form_type       VARCHAR(16) NOT NULL,
+  data            MEDIUMTEXT NULL,
+  signatures      TEXT NULL,
+  created_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE,
+  UNIQUE KEY uq_record_form (organization_id, entity, record_id, form_type)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

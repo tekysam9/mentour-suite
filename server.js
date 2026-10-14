@@ -11,6 +11,7 @@ const directoryRoutes = require('./src/routes/directory');
 const invoiceRoutes = require('./src/routes/invoices');
 const subvendorInvoiceRoutes = require('./src/routes/subvendorInvoices');
 const profileRoutes = require('./src/routes/profiles');
+const formRoutes = require('./src/routes/forms');
 const versionRoutes = require('./src/routes/version');
 
 const app = express();
@@ -27,6 +28,7 @@ app.use('/api/ledger', createImportRouter('ledger_imports', { onSave: saveLedger
 app.use('/api/margin', createImportRouter('margin_imports', { onSave: saveMarginRoster }));
 app.use('/api/directory', directoryRoutes);
 app.use('/api/profiles', profileRoutes);
+app.use('/api/forms', formRoutes);
 app.use('/api/invoices', invoiceRoutes);
 app.use('/api/subvendor-invoices', subvendorInvoiceRoutes);
 

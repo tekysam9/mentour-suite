@@ -39,6 +39,8 @@ async function mergeProfileRecords(conn, tableName, keepId, loseId, orgId) {
     await conn.query(`DELETE FROM record_secrets WHERE organization_id = ? AND entity = ? AND record_id = ?`, [orgId, tableName, loseId]);
     await conn.query(`UPDATE record_notes SET record_id = ? WHERE organization_id = ? AND entity = ? AND record_id = ?`, [keepId, orgId, tableName, loseId]);
     await conn.query(`DELETE FROM record_profiles WHERE organization_id = ? AND entity = ? AND record_id = ?`, [orgId, tableName, loseId]);
+    await conn.query(`UPDATE IGNORE record_forms SET record_id = ? WHERE organization_id = ? AND entity = ? AND record_id = ?`, [keepId, orgId, tableName, loseId]);
+    await conn.query(`DELETE FROM record_forms WHERE organization_id = ? AND entity = ? AND record_id = ?`, [orgId, tableName, loseId]);
   } catch (err) {
     if (!(err && err.code === 'ER_NO_SUCH_TABLE')) throw err;
   }

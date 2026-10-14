@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Form — Mentour Suite</title>
+<link rel="stylesheet" href="/shared.css">
+<style>
+  .fm-body { max-width: 900px; margin: 0 auto; padding: 32px 24px 64px; }
+  .fm-back { font-size: 12.5px; color: var(--pine); text-decoration: none; font-weight: 500; }
+  .fm-back:hover { text-decoration: underline; }
+  .fm-head { margin: 14px 0 6px; display: flex; justify-content: space-between; align-items: flex-end; gap: 16px; flex-wrap: wrap; }
+  .fm-kind { font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--text-muted); font-weight: 600; }
+  .fm-title { font-family: Georgia, 'Iowan Old Style', 'Palatino Linotype', serif; font-size: 30px; font-weight: 600; color: var(--ink); margin: 0; }
+  .fm-sub { color: var(--text-muted); font-size: 14px; margin: 2px 0 0; }
+  .fm-edition { font-size: 11.5px; color: var(--text-muted); margin: 8px 0 16px; }
+  .fm-card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 18px 20px; margin-bottom: 16px; }
+  .fm-card h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--text-muted); margin: 0 0 14px; font-weight: 700; }
+  .fm-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 14px 16px; }
+  .fm-field label { display: block; font-size: 11.5px; font-weight: 600; color: var(--text-muted); margin-bottom: 4px; line-height: 1.35; }
+  .fm-field input, .fm-field select, .fm-field textarea {
+    width: 100%; box-sizing: border-box; border: 1px solid var(--line); border-radius: 5px; padding: 7px 9px;
+    font-size: 13px; font-family: inherit; color: var(--text); background: var(--paper); outline: none;
+  }
+  .fm-field textarea { min-height: 70px; resize: vertical; }
+  .fm-field input:focus, .fm-field select:focus, .fm-field textarea:focus { border-color: var(--pine); }
+  .fm-field input:disabled, .fm-field select:disabled, .fm-field textarea:disabled { background: #EFEBDD; color: var(--text-muted); }
+  .fm-field.wide { grid-column: 1 / -1; }
+  .fm-attest { display: flex; gap: 10px; align-items: flex-start; font-size: 13px; line-height: 1.5; color: var(--text); font-weight: 400 !important; }
+  .fm-attest input { width: auto; margin-top: 3px; }
+  .fm-help { font-size: 11px; color: var(--text-muted); margin-top: 3px; line-height: 1.4; }
+  .fm-req { color: var(--brick); }
+  .fm-mask { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 13px; color: var(--ink); background: #EAF3EE; border-radius: 5px; padding: 6px 9px; display: inline-block; }
+  .fm-unset { font-size: 12px; color: var(--text-muted); font-style: italic; }
+  .fm-btn { border: 1px solid var(--line); background: var(--card); border-radius: 5px; padding: 8px 15px; font-size: 12.5px; font-weight: 600; cursor: pointer; font-family: inherit; color: var(--text); }
+  .fm-btn:hover { background: var(--paper); }
+  .fm-btn-primary { background: var(--pine); border-color: var(--pine); color: #EFF3EC; }
+  .fm-btn-primary:hover { background: #275F46; }
+  .fm-btn-small { padding: 4px 10px; font-size: 11.5px; }
+  .fm-bar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin: 4px 0 18px; }
+  .fm-msg { font-size: 12.5px; font-weight: 600; }
+  .fm-msg.ok { color: var(--pine); } .fm-msg.err { color: var(--brick); }
+  .fm-badge { display: inline-block; font-size: 11px; font-weight: 700; padding: 3px 10px; border-radius: 99px; background: #F5F1E4; color: #97854A; }
+  .fm-badge.complete { background: #EAF3EE; color: #2E6F52; }
+  .fm-sign { border: 1px dashed var(--line); border-radius: 8px; padding: 14px 16px; margin: 4px 0 16px; background: var(--paper); }
+  .fm-sign h3 { margin: 0 0 8px; font-size: 13px; color: var(--ink); }
+  .fm-signed { font-size: 13px; color: var(--pine); font-weight: 600; }
+  .fm-signed .sig-name { font-family: 'Brush Script MT', 'Segoe Script', cursive; font-size: 24px; color: var(--ink); display: block; margin: 4px 0; font-weight: 400; }
+  .fm-signed small { color: var(--text-muted); font-weight: 400; display: block; }
+  .fm-banner { background: #F5F1E4; border: 1px solid #E3D9B3; color: #6E5F26; border-radius: 8px; padding: 10px 14px; font-size: 12.5px; margin-bottom: 14px; line-height: 1.5; }
+  .fm-loading { padding: 40px; text-align: center; color: var(--text-muted); }
+  @media print {
+    .landing-header, .fm-back, .fm-bar, .fm-noprint, .fm-banner { display: none !important; }
+    body { background: #fff; }
+    .fm-body { padding: 0; max-width: none; }
+    .fm-card { break-inside: avoid; border-color: #999; }
+    .fm-field input, .fm-field select, .fm-field textarea { border: none; border-bottom: 1px solid #999; border-radius: 0; background: #fff; padding: 4px 0; }
+  }
+</style>
+</head>
+<body>
+<div id="app"><div class="fm-loading">Loading…</div></div>
+<script>
+(function () {
+  var q = new URLSearchParams(location.search);
+  var TYPE = q.get('type'), ID = q.get('id'), FORM = q.get('form');
+  var appEl = document.getElementById('app');
+  var S = { user: null, d: null, can: false, enc: false, msg: '', kind: '', recName: '' };
+  function esc(s) { return s === null || s === undefined ? '' : String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;'); }
+  function api(m, u, b) {
+    return fetch(u, { method: m, headers: { 'Content-Type': 'application/json' }, body: b ? JSON.stringify(b) : undefined })
+      .then(function (r) { return r.json().catch(function () { return {}; }).then(function (j) { return { ok: r.ok, status: r.status, body: j }; }); });
+  }
+  var base = function () { return '/api/forms/' + TYPE + '/' + ID + '/' + FORM; };
+
+  function fieldHtml(d, lockedSet) {
+    var id = 'f-' + d.key, locked = lockedSet[d.key];
+    var req = d.required || d.requiredIf;
+    var label = '<label for="' + id + '">' + esc(d.label) + (req ? ' <span class="fm-req">*</span>' : '') + '</label>';
+    var help = d.help ? '<div class="fm-help">' + esc(d.help) + '</div>' : '';
+    if (d.kind === 'secret') {
+      var sec = S.d.secrets[d.key] || { set: false };
+      var shown = sec.set ? '<span class="fm-mask">' + esc(sec.masked) + '</span>' : '<span class="fm-unset">Not on file</span>';
+      var inp = (S.can && !locked) ? '<div style="margin-top:6px"><input id="' + id + '" data-secret="' + d.key + '" type="password" autocomplete="off" placeholder="' + (sec.set ? 'Type to replace' : 'Enter value') + '"></div>'
+        : '<div class="fm-help">' + (locked ? 'Locked by signature.' : 'Only the account owner can enter this.') + '</div>';
+      return '<div class="fm-field">' + label + shown + inp + help + '</div>';
+    }
+    var val = S.d.values[d.key]; if (val === undefined || val === null) val = '';
+    if (d.kind === 'attest') {
+      return '<div class="fm-field wide"><label class="fm-attest"><input type="checkbox" data-key="' + d.key + '"' + (val === true ? ' checked' : '') + (locked ? ' disabled' : '') + '><span>' + esc(d.label) + (req ? ' <span class="fm-req">*</span>' : '') + '</span></label></div>';
+    }
+    var c;
+    if (d.kind === 'select') {
+      c = '<select id="' + id + '" data-key="' + d.key + '"' + (locked ? ' disabled' : '') + '><option value="">—</option>' + d.options.map(function (o) { return '<option' + (o === val ? ' selected' : '') + ' value="' + esc(o) + '">' + esc(o) + '</option>'; }).join('') + '</select>';
+    } else if (d.kind === 'bool') {
+      c = '<select id="' + id + '" data-key="' + d.key + '"' + (locked ? ' disabled' : '') + '><option value="false"' + (!val ? ' selected' : '') + '>No</option><option value="true"' + (val ? ' selected' : '') + '>Yes</option></select>';
+    } else if (d.kind === 'textarea') {
+      c = '<textarea id="' + id + '" data-key="' + d.key + '"' + (locked ? ' disabled' : '') + '>' + esc(val) + '</textarea>';
+    } else {
+      var t = { email: 'email', date: 'date', number: 'number', phone: 'tel' }[d.kind] || 'text';
+      c = '<input id="' + id + '" data-key="' + d.key + '" type="' + t + '"' + (d.kind === 'number' ? ' step="any" min="0"' : '') + ' value="' + esc(val) + '"' + (locked ? ' disabled' : '') + '>';
+    }
+    return '<div class="fm-field' + (d.kind === 'textarea' ? ' wide' : '') + '">' + label + c + help + '</div>';
+  }
+
+  function signHtml(key) {
+    var sp = S.d.spec.signatures[key], sig = S.d.signatures[key];
+    if (sig) {
+      return '<div class="fm-sign"><h3>' + esc(sp.label) + '</h3><div class="fm-signed">Signed electronically<span class="sig-name">' + esc(sig.name) + '</span>' +
+        '<small>' + esc(String(sig.at).replace('T', ' ').slice(0, 16)) + ' UTC · recorded by ' + esc(sig.by) + '</small></div>' +
+        (S.can ? '<div class="fm-noprint" style="margin-top:10px"><input type="text" data-reopen-reason="' + key + '" placeholder="Reason to reopen (kept in the log)" style="width:260px;padding:5px 8px;border:1px solid var(--line);border-radius:5px;font:inherit;font-size:12px"> <button class="fm-btn fm-btn-small" data-reopen="' + key + '" type="button">Reopen</button></div>' : '') + '</div>';
+    }
+    return '<div class="fm-sign fm-noprint"><h3>' + esc(sp.label) + '</h3>' +
+      '<div class="fm-field"><label>Type the full legal name of the person signing</label><input type="text" data-typed="' + key + '" autocomplete="off"></div>' +
+      '<label class="fm-attest" style="margin:10px 0"><input type="checkbox" data-consent="' + key + '"><span>I agree that typing my name here is my electronic signature and has the same effect as signing by hand. I understand the sections above will be locked.</span></label>' +
+      '<button class="fm-btn fm-btn-primary" data-sign="' + key + '" type="button">Sign electronically</button></div>';
+  }
+
+  function render() {
+    var d = S.d, spec = d.spec, locked = {};
+    d.locked.forEach(function (k) { locked[k] = true; });
+    var shownSig = {};
+    var body = spec.sections.map(function (sec, i) {
+      var html = '<div class="fm-card"><h2>' + esc(sec.title) + '</h2><div class="fm-grid">' + sec.fields.map(function (f) { return fieldHtml(f, locked); }).join('') + '</div></div>';
+      var last = !spec.sections.slice(i + 1).some(function (s2) { return s2.signKey === sec.signKey; });
+      if (sec.signKey && last && !shownSig[sec.signKey]) { shownSig[sec.signKey] = 1; html += signHtml(sec.signKey); }
+      return html;
+    }).join('');
+    var pre = d.prefilled.length ? '<div class="fm-banner">Pre-filled from the directory: ' + d.prefilled.length + ' field(s). Check them, then Save draft.</div>' : '';
+    var enc = !S.enc ? '<div class="fm-banner">SSN, tax ID and document numbers can’t be saved until the server’s encryption key is set. Everything else saves normally.</div>' : '';
+    appEl.innerHTML =
+      '<div class="landing-header"><div><div class="landing-wordmark">Mentour Suite</div><div class="landing-sub">' + esc(S.user.organization.name) + '</div></div>' +
+      '<div class="landing-account">Signed in as ' + esc(S.user.name) + '<br><button class="landing-btn" id="logout-btn" type="button">Log out</button></div></div>' +
+      '<div class="fm-body"><a class="fm-back" href="/record.html?type=' + esc(TYPE) + '&id=' + esc(ID) + '">← Back to ' + esc(d.recordName) + '</a>' +
+      '<div class="fm-head"><div><div class="fm-kind">' + esc(d.recordName) + '</div><h1 class="fm-title">' + esc(spec.title) + '</h1><p class="fm-sub">' + esc(spec.subtitle) + '</p></div>' +
+      '<span class="fm-badge ' + (d.status === 'complete' ? 'complete' : '') + '">' + esc(d.status) + '</span></div>' +
+      '<div class="fm-edition">' + esc(spec.edition) + '. This is an in-app record of the form; confirm the current edition with the IRS / USCIS.</div>' +
+      pre + enc + body +
+      '<div class="fm-bar"><button class="fm-btn fm-btn-primary" id="save-btn" type="button">Save draft</button><button class="fm-btn" id="print-btn" type="button">Print / save as PDF</button>' +
+      '<span class="fm-msg ' + S.kind + '" role="status">' + esc(S.msg) + '</span></div></div>';
+    document.getElementById('logout-btn').addEventListener('click', function () { fetch('/api/auth/logout', { method: 'POST' }).then(function () { location.href = '/login.html'; }); });
+    document.getElementById('save-btn').addEventListener('click', function () { save().then(function (ok) { if (ok) setMsg('Saved.', 'ok'); }); });
+    document.getElementById('print-btn').addEventListener('click', function () { window.print(); });
+    appEl.querySelectorAll('[data-sign]').forEach(function (b) { b.addEventListener('click', function () { sign(b.getAttribute('data-sign')); }); });
+    appEl.querySelectorAll('[data-reopen]').forEach(function (b) { b.addEventListener('click', function () { reopen(b.getAttribute('data-reopen')); }); });
+  }
+  function setMsg(t, k) { S.msg = t; S.kind = k || ''; var m = document.querySelector('.fm-msg'); if (m) { m.textContent = t; m.className = 'fm-msg ' + (k || ''); } }
+
+  function collect() {
+    var values = {}, secrets = {};
+    appEl.querySelectorAll('[data-key]').forEach(function (el) {
+      if (el.disabled) return;
+      values[el.getAttribute('data-key')] = el.type === 'checkbox' ? el.checked : el.value;
+    });
+    appEl.querySelectorAll('[data-secret]').forEach(function (el) { if (el.value.trim()) secrets[el.getAttribute('data-secret')] = el.value.trim(); });
+    return { values: values, secrets: secrets };
+  }
+  function save() {
+    setMsg('Saving…');
+    return api('PUT', base(), collect()).then(function (r) {
+      if (!r.ok) { setMsg(r.body.error || 'Could not save.', 'err'); return false; }
+      return reload().then(function () { return true; });
+    });
+  }
+  function sign(key) {
+    var typed = appEl.querySelector('[data-typed="' + key + '"]').value;
+    var consent = appEl.querySelector('[data-consent="' + key + '"]').checked;
+    save().then(function (ok) {
+      if (!ok) return;
+      return api('POST', base() + '/sign', { signature: key, typedName: typed, consent: consent }).then(function (r) {
+        if (!r.ok) { setMsg(r.body.error || 'Could not sign.', 'err'); return; }
+        return reload().then(function () { setMsg('Signed.', 'ok'); });
+      });
+    });
+  }
+  function reopen(key) {
+    var reason = appEl.querySelector('[data-reopen-reason="' + key + '"]').value;
+    api('POST', base() + '/reopen', { signature: key, reason: reason }).then(function (r) {
+      if (!r.ok) { setMsg(r.body.error || 'Could not reopen.', 'err'); return; }
+      reload().then(function () { setMsg('Reopened. The change is in the activity log.', 'ok'); });
+    });
+  }
+  function reload() {
+    return api('GET', base()).then(function (r) {
+      if (!r.ok) { appEl.innerHTML = '<div class="fm-loading">' + esc(r.body.error || 'Could not load this form.') + ' <a href="/directory.html">Back to directory</a></div>'; return; }
+      S.d = r.body; var m = S.msg, k = S.kind; render(); if (m) setMsg(m, k);
+    });
+  }
+
+  fetch('/api/auth/me').then(function (r) { if (!r.ok) { location.href = '/login.html'; return null; } return r.json(); }).then(function (u) {
+    if (!u) return; S.user = u.user;
+    return api('GET', '/api/forms/schema').then(function (r) {
+      if (r.ok) { S.can = r.body.canEditSecrets; S.enc = r.body.encryptionConfigured; }
+      document.title = ({ w9: 'Form W-9', w4: 'Form W-4', i9: 'Form I-9' }[FORM] || 'Form') + ' — Mentour Suite';
+      return reload();
+    });
+  });
+})();
+</script>
+</body>
+</html>

@@ -63,7 +63,7 @@
   var ID = q.get('id');
   var IS_NEW = q.get('new') === '1';
   var appEl = document.getElementById('app');
-  var S = { user: null, schema: null, rec: null, msg: null, msgKind: '', saving: false };
+  var S = { forms: [], user: null, schema: null, rec: null, msg: null, msgKind: '', saving: false };
 
   function esc(s) {
     if (s === null || s === undefined) return '';
@@ -140,6 +140,11 @@
       var c = r.activeConsultantsList || [];
       html += c.length ? '<ul>' + c.map(function (x) { return '<li><a href="/record.html?type=consultants&id=' + x.id + '">' + esc(x.name) + '</a></li>'; }).join('') + '</ul>' : '<p class="rec-muted">None right now.</p>';
       html += '</div>';
+    }
+    if (S.forms && S.forms.length) {
+      html += '<div class="rec-card rec-side"><h2>Forms &amp; documents</h2><ul>' + S.forms.map(function (fm) {
+        return '<li><a href="/form.html?type=' + TYPE + '&id=' + ID + '&form=' + fm.form + '">' + esc(fm.title) + '</a> <span class="rec-muted">— ' + esc(fm.status) + '</span><br><span class="rec-muted">' + esc(fm.subtitle) + '</span></li>';
+      }).join('') + '</ul></div>';
     }
     var notes = S.rec.notes || [];
     html += '<div class="rec-card rec-side"><h2>Notes &amp; activity</h2>' +
@@ -223,7 +228,8 @@
   function load() {
     return api('GET', '/api/profiles/' + TYPE + '/' + ID).then(function (r) {
       if (!r.ok) { appEl.innerHTML = '<div class="rec-loading">' + esc(r.body.error || 'Could not load this record.') + ' <a href="/directory.html">Back to directory</a></div>'; return; }
-      S.rec = r.body; render();
+      S.rec = r.body;
+      return api('GET', '/api/forms/' + TYPE + '/' + ID).then(function (fr) { S.forms = fr.ok ? (fr.body.forms || []) : []; render(); });
     });
   }
 

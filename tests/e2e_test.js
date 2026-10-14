@@ -1687,6 +1687,100 @@ async function main() {
         specAll.fieldsOf(ent).filter((x) => x.core).forEach((x) => { if (!names.includes(x.key)) coreMissing.push(ent + '.' + x.key); });
       }
       check('every "core" form field is a real column in its table', coreMissing.length === 0 && clientCols.length > 0, coreMissing);
+
+      // 36. Fillable forms: W-9 (sub-vendors), W-4 and I-9 (consultants).
+      r = await pfOwner.fetch('/api/forms/consultants/' + pfCons);
+      check('consultant has W-4 and I-9 forms listed, none started', r.status === 200 && r.body.forms.map((x) => x.form).sort().join() === 'i9,w4' && r.body.forms.every((x) => x.status === 'not started'), r.body);
+      r = await pfOwner.fetch('/api/forms/programs/' + pfSub);
+      check('sub-vendor has only a W-9', r.body.forms.length === 1 && r.body.forms[0].form === 'w9', r.body);
+      r = await pfOwner.fetch('/api/forms/clients/' + pfClient);
+      check('client has no forms', r.status === 200 && r.body.forms.length === 0, r.body);
+      r = await pfOwner.fetch('/api/forms/programs/' + pfSub + '/w4');
+      check('a W-4 does not apply to a sub-vendor (404)', r.status === 404, r);
+
+      r = await pfOwner.fetch('/api/forms/programs/' + pfSub + '/w9');
+      check('W-9 is pre-filled from the directory (name, no saved row yet)', r.status === 200 && r.body.values.name === 'Prime Staffing' && r.body.prefilled.includes('name') && r.body.status === 'not started', r.body);
+      r = await pfOwner.fetch('/api/forms/programs/' + pfSub + '/w9/sign', { method: 'POST', body: JSON.stringify({ signature: 'payee', typedName: 'Raj Rao', consent: true }) });
+      check('signing an incomplete W-9 is refused and lists what is missing', r.status === 400 && /Federal tax classification/.test(r.body.error), r);
+      r = await pfOwner.fetch('/api/forms/programs/' + pfSub + '/w9', { method: 'PUT', body: JSON.stringify({ values: { name: 'Prime Staffing LLC', tax_class: 'Limited liability company', llc_class: 'S', address: '1 Main St', city: 'Edison', state: 'NJ', zip: '08817', tin_type: 'Employer identification number', cert1: true, cert3: true, cert4: true }, secrets: { tin: '98-7654321' } }) });
+      check('W-9 draft saves', r.status === 200, r);
+      r = await pfOwner.fetch('/api/forms/programs/' + pfSub + '/w9');
+      check('W-9 TIN shows last 4 only and never the full number', r.body.secrets.tin.masked === '****4321' && !JSON.stringify(r.body).includes('987654321') && !JSON.stringify(r.body).includes('98-7654321') && r.body.status === 'draft', r.body.secrets);
+      const [w9s] = await dbConn.query(`SELECT cipher FROM record_secrets WHERE entity = 'programs' AND record_id = ? AND field = 'w9.tin'`, [pfSub]);
+      check('W-9 TIN is encrypted in the database', w9s.length === 1 && /^v1:/.test(w9s[0].cipher) && !w9s[0].cipher.includes('987654321'), w9s);
+      r = await pfOwner.fetch('/api/forms/programs/' + pfSub + '/w9/sign', { method: 'POST', body: JSON.stringify({ signature: 'payee', typedName: 'Raj Rao', consent: false }) });
+      check('signing needs the e-sign consent box', r.status === 400, r);
+      r = await pfOwner.fetch('/api/forms/programs/' + pfSub + '/w9/sign', { method: 'POST', body: JSON.stringify({ signature: 'payee', typedName: 'Raj Rao', consent: true }) });
+      check('signing the complete W-9 succeeds and the form is complete', r.status === 200 && r.body.status === 'complete' && r.body.signature.name === 'Raj Rao', r);
+      r = await pfOwner.fetch('/api/forms/programs/' + pfSub + '/w9', { method: 'PUT', body: JSON.stringify({ values: { city: 'Newark' } }) });
+      check('a signed W-9 cannot be edited', r.status === 400 && /signed/.test(r.body.error), r);
+      r = await pfOwner.fetch('/api/forms/programs/' + pfSub + '/w9', { method: 'PUT', body: JSON.stringify({ values: {}, secrets: { tin: '111223333' } }) });
+      check('a signed W-9 TIN cannot be replaced', r.status === 400, r);
+      r = await pfOwner.fetch('/api/forms/programs/' + pfSub + '/w9/sign', { method: 'POST', body: JSON.stringify({ signature: 'payee', typedName: 'Raj Rao', consent: true }) });
+      check('signing twice returns 409', r.status === 409, r);
+      r = await pfOwner.fetch('/api/forms/programs/' + pfSub + '/w9/reopen', { method: 'POST', body: JSON.stringify({ signature: 'payee', reason: '' }) });
+      check('reopening needs a reason', r.status === 400, r);
+      r = await pfOwner.fetch('/api/forms/programs/' + pfSub + '/w9/reopen', { method: 'POST', body: JSON.stringify({ signature: 'payee', reason: 'Address changed' }) });
+      check('owner can reopen with a reason', r.status === 200, r);
+      r = await pfOwner.fetch('/api/profiles/programs/' + pfSub);
+      check('signing and reopening are in the activity log', r.body.notes.some((n) => /signed electronically by "Raj Rao"/.test(n.body)) && r.body.notes.some((n) => /reopened.*Address changed/.test(n.body)), r.body.notes);
+
+      // W-4
+      r = await pfOwner.fetch('/api/forms/consultants/' + pfCons + '/w4');
+      check('W-4 pre-fills first/last name from the consultant', r.body.values.first_name === 'Priya' && r.body.values.last_name === 'Nair', r.body.values);
+      r = await pfOwner.fetch('/api/forms/consultants/' + pfCons + '/w4', { method: 'PUT', body: JSON.stringify({ values: { filing_status: 'Head of household', address: '5 Oak Ave', city: 'Iselin', state: 'NJ', zip: '08830', first_name: 'Priya', last_name: 'Nair', qualifying_children: '2', step3_total: '4000', employee_attest: true }, secrets: { ssn: '123-45-6789' } }) });
+      check('W-4 saves', r.status === 200, r);
+      r = await pfOwner.fetch('/api/forms/consultants/' + pfCons + '/w4/sign', { method: 'POST', body: JSON.stringify({ signature: 'employer', typedName: 'Pf Owner', consent: true }) });
+      check('employer cannot sign the W-4 before the employee', r.status === 409, r);
+      r = await pfOwner.fetch('/api/forms/consultants/' + pfCons + '/w4/sign', { method: 'POST', body: JSON.stringify({ signature: 'employee', typedName: 'Priya Nair', consent: true }) });
+      check('employee signs the W-4', r.status === 200 && r.body.status === 'partly signed', r);
+      r = await pfOwner.fetch('/api/forms/consultants/' + pfCons + '/w4/sign', { method: 'POST', body: JSON.stringify({ signature: 'employer', typedName: 'Pf Owner', consent: true }) });
+      check('employer section needs its own required fields', r.status === 400 && /Employer/.test(r.body.error), r);
+      r = await pfOwner.fetch('/api/forms/consultants/' + pfCons + '/w4', { method: 'PUT', body: JSON.stringify({ values: { employer_name: 'Profile Co', employer_address: '9 Biz Rd, Edison NJ', first_date_employment: '2026-10-01' } }) });
+      check('employer section can still be edited after the employee signs', r.status === 200, r);
+      r = await pfOwner.fetch('/api/forms/consultants/' + pfCons + '/w4/sign', { method: 'POST', body: JSON.stringify({ signature: 'employer', typedName: 'Pf Owner', consent: true }) });
+      check('employer signs and the W-4 is complete', r.status === 200 && r.body.status === 'complete', r);
+      r = await pfOwner.fetch('/api/forms/consultants/' + pfCons + '/w4/reopen', { method: 'POST', body: JSON.stringify({ signature: 'employee', reason: 'Wrong filing status' }) });
+      check('reopening the employee signature also clears the employer sign-off', r.status === 200 && r.body.removed.includes('employer'), r);
+
+      // I-9
+      r = await pfOwner.fetch('/api/forms/consultants/' + pfCons + '/i9', { method: 'PUT', body: JSON.stringify({ values: { last_name: 'Nair', first_name: 'Priya', address: '5 Oak Ave', city: 'Iselin', state: 'NJ', zip: '08830', dob: '1990-04-12', citizenship: 'A noncitizen authorized to work', employee_attest: true }, secrets: { auth_a_number: 'A-123456789' } }) });
+      check('I-9 Section 1 saves', r.status === 200, r);
+      r = await pfOwner.fetch('/api/forms/consultants/' + pfCons + '/i9/sign', { method: 'POST', body: JSON.stringify({ signature: 'employee', typedName: 'Priya Nair', consent: true }) });
+      check('I-9 needs the work-authorization expiry for a noncitizen authorized to work', r.status === 400 && /Authorized to work until/.test(r.body.error), r);
+      r = await pfOwner.fetch('/api/forms/consultants/' + pfCons + '/i9', { method: 'PUT', body: JSON.stringify({ values: { work_until: '2028-09-30' } }) });
+      r = await pfOwner.fetch('/api/forms/consultants/' + pfCons + '/i9/sign', { method: 'POST', body: JSON.stringify({ signature: 'employee', typedName: 'Priya Nair', consent: true }) });
+      check('I-9 Section 1 signs', r.status === 200, r);
+      r = await pfOwner.fetch('/api/forms/consultants/' + pfCons + '/i9', { method: 'PUT', body: JSON.stringify({ values: { first_day: '2026-10-01', doc_route: 'One List B and one List C document', b_title: 'Driver’s license', b_authority: 'NJ MVC', c_title: 'Social Security card', c_authority: 'SSA', docs_in_person: true, employer_attest: true, employer_title: 'HR', employer_business: 'Profile Co', employer_address: '9 Biz Rd' }, secrets: { b_number: 'D1234-56789-01234', c_number: '123456789' } }) });
+      check('I-9 Section 2 saves with List B + C and encrypted document numbers', r.status === 200, r);
+      r = await pfOwner.fetch('/api/forms/consultants/' + pfCons + '/i9');
+      check('I-9 shows A-Number and document numbers as last 4 only', r.body.secrets.auth_a_number.masked === '****6789' && r.body.secrets.b_number.last4 === '1234' && !JSON.stringify(r.body).includes('D1234-56789-01234') && !JSON.stringify(r.body).includes('A-123456789'), r.body.secrets);
+      r = await pfOwner.fetch('/api/forms/consultants/' + pfCons + '/i9', { method: 'PUT', body: JSON.stringify({ values: { first_name: 'Changed' } }) });
+      check('I-9 Section 1 is locked after the employee signs', r.status === 400, r);
+      r = await pfOwner.fetch('/api/forms/consultants/' + pfCons + '/i9/sign', { method: 'POST', body: JSON.stringify({ signature: 'employer', typedName: 'Pf Owner', consent: true }) });
+      check('I-9 Section 2 signs and the I-9 is complete (Section 3 is optional)', r.status === 200 && r.body.status === 'complete', r);
+      r = await pfOwner.fetch('/api/forms/consultants/' + pfCons + '/i9', { method: 'PUT', body: JSON.stringify({ values: { city: 'x' } }) });
+      r = await pfOwner.fetch('/api/forms/consultants/' + pfCons + '/i9', { method: 'PUT', body: JSON.stringify({ values: { dob: '12/04/1990' } }) });
+      check('an invalid date is rejected', r.status === 400, r);
+
+      r = await pfOther.fetch('/api/forms/consultants/' + pfCons + '/i9');
+      check('another organisation cannot read the I-9 (404)', r.status === 404, r);
+      r = await pfOther.fetch('/api/forms/consultants/' + pfCons + '/i9/sign', { method: 'POST', body: JSON.stringify({ signature: 'reverify', typedName: 'X Y', consent: true }) });
+      check('another organisation cannot sign it', r.status === 404, r);
+      r = await anon.fetch('/api/forms/consultants/' + pfCons + '/i9');
+      check('forms API needs sign-in', r.status === 401 || r.status === 403, r);
+
+      // forms follow a merged record
+      r = await pfOwner.fetch('/api/profiles/consultants', { method: 'POST', body: JSON.stringify({ values: { name: 'Form Keeper' } }) });
+      const fkKeep = r.body.id;
+      r = await pfOwner.fetch('/api/profiles/consultants', { method: 'POST', body: JSON.stringify({ values: { name: 'Form Keepr' } }) });
+      const fkLose = r.body.id;
+      await pfOwner.fetch('/api/forms/consultants/' + fkLose + '/w4', { method: 'PUT', body: JSON.stringify({ values: { first_name: 'Form', last_name: 'Keepr' } }) });
+      await dbConn.query(`INSERT INTO directory_duplicate_candidates (organization_id, table_name, record_id, matched_record_id, similarity, status) SELECT organization_id, 'consultants', ?, ?, 0.95, 'open' FROM consultants WHERE id = ?`, [fkLose, fkKeep, fkKeep]);
+      const [fl2] = await dbConn.query(`SELECT id FROM directory_duplicate_candidates WHERE table_name = 'consultants' AND record_id = ?`, [fkLose]);
+      r = await pfOwner.fetch('/api/directory/duplicates/' + fl2[0].id + '/merge', { method: 'POST', body: JSON.stringify({ keep: 'matched' }) });
+      r = await pfOwner.fetch('/api/forms/consultants/' + fkKeep + '/w4');
+      check('a W-4 draft moves to the surviving record on merge', r.status === 200 && r.body.values.last_name === 'Keepr' && r.body.status === 'draft', r.body);
     } finally {
       await dbConn.end();
     }

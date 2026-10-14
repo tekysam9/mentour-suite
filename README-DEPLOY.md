@@ -357,3 +357,12 @@ nothing is stored):
 
 SSN, tax ID, routing and account numbers are AES-256-GCM encrypted, write-only, and only ever shown as the last 4
 characters. Only the account owner can set or change them. `/api/version` reports `fieldEncryptionConfigured`.
+
+## Fillable forms (W-9, W-4, I-9)
+
+Open a record's profile → **Forms & documents**. Sub-vendors get a W-9; consultants get a W-4 and an I-9.
+Fields are pre-filled from the directory, SSN / TIN / A-number / document numbers are encrypted (last 4 shown),
+and each signature section is signed with a typed name + consent (name, time, user and IP are recorded) and then
+locked. Only the owner can reopen a signature (a reason is required and logged). Re-run `db/schema.sql` once
+(adds `record_forms`). The forms follow the IRS / USCIS field layout but are an in-app record: confirm the
+current editions at irs.gov and uscis.gov.
