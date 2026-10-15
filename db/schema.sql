@@ -516,3 +516,9 @@ ALTER TABLE record_profiles MODIFY entity ENUM('consultants', 'clients', 'progra
 ALTER TABLE record_secrets  MODIFY entity ENUM('consultants', 'clients', 'programs', 'subvendors') NOT NULL;
 ALTER TABLE record_notes    MODIFY entity ENUM('consultants', 'clients', 'programs', 'subvendors') NOT NULL;
 ALTER TABLE record_forms    MODIFY entity ENUM('consultants', 'clients', 'programs', 'subvendors') NOT NULL;
+
+-- Supplier payments are now fully editable: a payment date, a manual rate source, and a flag for
+-- edited copies of payments-file rows (they replace the file's row in the list). Safe to re-run.
+ALTER TABLE subvendor_invoices ADD COLUMN IF NOT EXISTS paid_date DATE NULL;
+ALTER TABLE subvendor_invoices ADD COLUMN IF NOT EXISTS overrides_ledger TINYINT(1) NOT NULL DEFAULT 0;
+ALTER TABLE subvendor_invoices MODIFY rate_source ENUM('ledger', 'margin', 'hours_file', 'manual') NOT NULL;

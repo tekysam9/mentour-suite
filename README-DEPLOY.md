@@ -369,3 +369,8 @@ current editions at irs.gov and uscis.gov.
 
 **Update:** "Sub-vendors" are now labelled **Vendors**; Supplier companies have the same profile form (re-run
 `db/schema.sql` to allow them); Directory tabs open filtered to **Active**.
+
+**Supplier payments:** every field is editable (supplier, month, rate, hours, amount, dates, paid date, invoice no., notes);
+payments-file rows get an **Edit** button (makes a copy that replaces the file's row; **Revert** restores it); payments can be
+added by hand; generating invoices now asks "Yes, generate / Cancel" first. Re-run `db/schema.sql` (adds `paid_date`,
+`overrides_ledger`, and the `manual` rate source).

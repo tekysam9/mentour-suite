@@ -1562,6 +1562,48 @@ async function main() {
       r = await svOwner.fetch('/api/subvendor-invoices/' + samJan27.id, { method: 'DELETE' });
       check('deleting it again returns 404', r.status === 404, r);
 
+      // 34b. Supplier payments are fully editable (rate, supplier, month, dates), payments-file rows can be
+      // copied for editing (and reverted), and payments can be added by hand.
+      r = await svOwner.fetch('/api/subvendor-invoices?kind=paid');
+      const paidRow = r.body.invoices.find((i) => i.subvendor_id && i.consultant_id);
+      check('there is a payments-file row to edit', !!paidRow, r.body.invoices.slice(0, 2));
+      r = await svOwner.fetch('/api/subvendor-invoices/from-ledger', { method: 'POST', body: JSON.stringify({ subvendorId: paidRow.subvendor_id, consultantId: paidRow.consultant_id, periodMonth: paidRow.period_month.slice(0, 7) }) });
+      check('Edit makes an editable copy of a payments-file row', (r.status === 201 || r.status === 200) && r.body.id > 0, r);
+      const ovId = r.body.id;
+      r = await svOwner.fetch('/api/subvendor-invoices?periodMonth=' + paidRow.period_month.slice(0, 7));
+      const ovRows = r.body.invoices.filter((i) => i.subvendor_id === paidRow.subvendor_id && i.consultant_id === paidRow.consultant_id);
+      check('the copy replaces the file row (one row, editable, marked as an edited copy)', ovRows.length === 1 && ovRows[0].kind === 'generated' && ovRows[0].overrides_ledger === true && ovRows[0].status === 'paid' && Number(ovRows[0].amount) === Number(paidRow.amount), ovRows);
+      r = await svOwner.fetch('/api/subvendor-invoices/' + ovId, { method: 'PATCH', body: JSON.stringify({ rate: 70 }) });
+      check('changing the rate re-prices the hours', r.status === 200 && Number(r.body.invoice.rate) === 70 && (r.body.invoice.hours === null || Number(r.body.invoice.amount) === Math.round(70 * Number(r.body.invoice.hours) * 100) / 100), r.body);
+      r = await svOwner.fetch('/api/subvendor-invoices/' + ovId, { method: 'PATCH', body: JSON.stringify({ issueDate: '2026-02-01', dueDate: '2026-03-15', paidDate: '2026-03-10', notes: 'Corrected by finance', invoiceNumber: 'SVI-EDIT-1' }) });
+      check('dates, notes and invoice number can be edited', r.status === 200 && String(r.body.invoice.invoice_number) === 'SVI-EDIT-1' && String(r.body.invoice.paid_date).slice(0, 10) === '2026-03-10' || (r.status === 200 && /2026-03-10/.test(JSON.stringify(r.body.invoice.paid_date))), r.body);
+      r = await svOwner.fetch('/api/subvendor-invoices/' + ovId, { method: 'PATCH', body: JSON.stringify({ rate: 'abc' }) });
+      check('a non-numeric rate is rejected', r.status === 400, r);
+      r = await svOwner.fetch('/api/subvendor-invoices/' + ovId, { method: 'PATCH', body: JSON.stringify({ subvendorId: 999999 }) });
+      check('an unknown supplier is rejected', r.status === 400, r);
+      r = await svOwner.fetch('/api/subvendor-invoices/' + ovId, { method: 'DELETE' });
+      check('reverting (deleting) the copy returns ok', r.status === 200, r);
+      r = await svOwner.fetch('/api/subvendor-invoices?kind=paid&periodMonth=' + paidRow.period_month.slice(0, 7));
+      check('the payments-file row is back after reverting', r.body.invoices.some((i) => i.subvendor_id === paidRow.subvendor_id && i.consultant_id === paidRow.consultant_id), r.body.invoices.length);
+
+      r = await svOwner.fetch('/api/directory/subvendors'); const dirSubs = r.body.subvendors;
+      r = await svOwner.fetch('/api/directory/consultants'); const dirCons = r.body.consultants;
+      r = await svOwner.fetch('/api/subvendor-invoices', { method: 'POST', body: JSON.stringify({ subvendorId: dirSubs[0].id, consultantId: dirCons[0].id, periodMonth: '2031-05', rate: 40, hours: 10, netTerms: 'NET45', paymentStatus: 'paid' }) });
+      check('adding a supplier payment by hand returns 201', r.status === 201 && r.body.id > 0, r);
+      const manId = r.body.id;
+      r = await svOwner.fetch('/api/subvendor-invoices?periodMonth=2031-05');
+      const manRow = r.body.invoices.find((i) => i.id === manId);
+      check('the manual payment is priced (40 x 10 = 400), paid and marked as added by hand', !!manRow && Number(manRow.amount) === 400 && manRow.status === 'paid' && manRow.rate_source === 'manual' && !!manRow.paid_date && manRow.net_terms === 'NET45', manRow);
+      r = await svOwner.fetch('/api/subvendor-invoices', { method: 'POST', body: JSON.stringify({ subvendorId: dirSubs[0].id, consultantId: dirCons[0].id, periodMonth: '2031-05', rate: 41 }) });
+      check('adding the same supplier/consultant/month twice returns 409', r.status === 409, r);
+      r = await svOwner.fetch('/api/subvendor-invoices', { method: 'POST', body: JSON.stringify({ subvendorId: dirSubs[0].id, consultantId: dirCons[0].id, periodMonth: '2031-06' }) });
+      check('a payment needs a rate', r.status === 400, r);
+      r = await svOwner.fetch('/api/subvendor-invoices/' + manId, { method: 'PATCH', body: JSON.stringify({ periodMonth: '2031-07', subvendorId: dirSubs[dirSubs.length - 1].id }) });
+      check('month and supplier of a payment can be changed', r.status === 200 && String(r.body.invoice.period_month).startsWith('2031-07') || (r.status === 200 && /2031-07/.test(JSON.stringify(r.body.invoice.period_month))), r.body);
+      const svOther = makeJar(); await svOther.fetch('/api/auth/signup', { method: 'POST', body: JSON.stringify({ orgName: 'Sv Other Co', name: 'Sv Other', email: 'svo@svtest.test', password: 'svotherpassword1' }) });
+      r = await svOther.fetch('/api/subvendor-invoices/' + manId, { method: 'PATCH', body: JSON.stringify({ rate: 1 }) });
+      check('another organisation cannot edit it (404)', r.status === 404, r);
+
       // 35. Record profiles (Consultant / Client / Vendor forms): CRM fields,
       // encrypted SSN / tax ID / bank numbers shown as last 4 only, org isolation.
       const pfOwner = makeJar();

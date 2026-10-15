@@ -10,7 +10,9 @@
 //   * kind 'paid'      -- months already paid, derived live from the latest
 //                         Ledger upload's ledger_roster_entries (the "2026 sub
 //                         vendor payments" file). Never copied anywhere, so it
-//                         can't drift from the file; there's nothing to edit.
+//                         can't drift from the file. To edit one, POST /from-ledger
+//                         makes an editable override copy that replaces it in the list
+//                         (deleting the copy brings the file's row back).
 //   * kind 'generated' -- months after a consultant's last month on the payments file, created
 //                         by POST /generate from the $/hr rate on the Ledger
 //                         file, or (no Ledger rate for the pairing) the Margin
@@ -209,7 +211,6 @@ router.get('/', async (req, res, next) => {
     const subvendorId = req.query.subvendorId ? Number(req.query.subvendorId) : null;
 
     const { imp, records, unreadable } = await ledgerMonthlyRecords(pool, organizationId);
-    const paid = records.map(paidInvoice);
     const paidKeys = new Set(records.filter((r) => r.subvendor_id && r.consultant_id)
       .map((r) => r.subvendor_id + '|' + r.consultant_id + '|' + r.period_month));
 
@@ -223,6 +224,10 @@ router.get('/', async (req, res, next) => {
     );
     // Once the real payment for a generated month shows up on the Ledger
     // file, that payment replaces the projection.
+    const keyOf = (sv, co, pm) => sv + '|' + co + '|' + pm;
+    // A payments-file row the user edited is stored as an override and replaces the file's row.
+    const overrideKeys = new Set(genRows.filter((g) => g.overrides_ledger).map((g) => keyOf(g.subvendor_id, g.consultant_id, dateStr(g.period_month))));
+    const paid = records.map(paidInvoice).filter((p) => !overrideKeys.has(keyOf(p.subvendor_id, p.consultant_id, p.period_month)));
     const generated = genRows
       .map((g) => ({
         kind: 'generated', id: g.id, invoice_number: g.invoice_number,
@@ -232,10 +237,11 @@ router.get('/', async (req, res, next) => {
         rate: Number(g.rate), hours: Number(g.hours), amount: Number(g.amount),
         rate_source: g.rate_source, net_terms: g.net_terms,
         issue_date: dateStr(g.issue_date), due_date: dateStr(g.due_date),
-        paid_date: null, status: g.payment_status, payment_status: g.payment_status,
+        paid_date: g.paid_date ? dateStr(g.paid_date) : null, overrides_ledger: !!g.overrides_ledger,
+        status: g.payment_status, payment_status: g.payment_status,
         timesheet_submitted: g.timesheet_submitted, notes: g.notes,
       }))
-      .filter((g) => !paidKeys.has(g.subvendor_id + '|' + g.consultant_id + '|' + g.period_month));
+      .filter((g) => g.overrides_ledger || !paidKeys.has(keyOf(g.subvendor_id, g.consultant_id, g.period_month)));
 
     let invoices = paid.concat(generated);
     if (periodMonth) invoices = invoices.filter((i) => i.period_month === periodMonth);
@@ -418,6 +424,34 @@ router.patch('/:id', async (req, res, next) => {
       sets.push('amount = ?');
       params.push(hours !== null ? Math.round(Number(existing.rate) * hours * 100) / 100 : null);
     }
+    if (has('rate')) {
+      const rate = toNullableNumber(body.rate);
+      if (rate === null || rate < 0) return res.status(400).json({ error: 'rate must be a number.' });
+      sets.push('rate = ?'); params.push(rate);
+      // A new rate re-prices the hours unless an amount was typed in the same change.
+      if (!has('amount') && !has('hours') && existing.hours !== null) {
+        sets.push('amount = ?'); params.push(Math.round(rate * Number(existing.hours) * 100) / 100);
+      }
+    }
+    if (has('subvendorId')) {
+      const [sv] = await pool.query('SELECT id FROM subvendors WHERE id = ? AND organization_id = ?', [body.subvendorId, req.user.organization_id]);
+      if (!sv.length) return res.status(400).json({ error: 'Unknown supplier company.' });
+      sets.push('subvendor_id = ?'); params.push(sv[0].id);
+    }
+    if (has('periodMonth')) {
+      const pm = normalizePeriodMonth(body.periodMonth);
+      if (!pm) return res.status(400).json({ error: 'periodMonth must look like YYYY-MM.' });
+      sets.push('period_month = ?'); params.push(pm);
+    }
+    if (has('invoiceNumber')) {
+      const no = String(body.invoiceNumber || '').trim();
+      if (!no || no.length > 64) return res.status(400).json({ error: 'Invoice number is required (64 characters at most).' });
+      sets.push('invoice_number = ?'); params.push(no);
+    }
+    if (has('paidDate')) {
+      if (body.paidDate !== null && body.paidDate !== '' && !/^\d{4}-\d{2}-\d{2}$/.test(String(body.paidDate))) return res.status(400).json({ error: 'paidDate must look like YYYY-MM-DD.' });
+      sets.push('paid_date = ?'); params.push(body.paidDate || null);
+    }
     if (has('netTerms')) {
       const netTerms = normalizeNetTerms(body.netTerms);
       if (!netTerms) return res.status(400).json({ error: 'netTerms must look like NET30.' });
@@ -432,6 +466,7 @@ router.patch('/:id', async (req, res, next) => {
     if (has('paymentStatus')) {
       if (!['paid', 'unpaid'].includes(body.paymentStatus)) return res.status(400).json({ error: 'paymentStatus must be paid or unpaid.' });
       sets.push('payment_status = ?'); params.push(body.paymentStatus);
+      if (!has('paidDate')) { sets.push('paid_date = ?'); params.push(body.paymentStatus === 'paid' ? (existing.paid_date || toDateOnly(new Date())) : null); }
     }
     if (has('timesheetSubmitted')) {
       if (!['yes', 'no'].includes(body.timesheetSubmitted)) return res.status(400).json({ error: 'timesheetSubmitted must be yes or no.' });
@@ -444,12 +479,99 @@ router.patch('/:id', async (req, res, next) => {
     if (!sets.length) return res.json({ invoice: existing });
 
     params.push(req.params.id, req.user.organization_id);
-    await pool.query(`UPDATE subvendor_invoices SET ${sets.join(', ')} WHERE id = ? AND organization_id = ?`, params);
-    const [rows] = await pool.query('SELECT * FROM subvendor_invoices WHERE id = ?', [req.params.id]);
+    try {
+      await pool.query(`UPDATE subvendor_invoices SET ${sets.join(', ')} WHERE id = ? AND organization_id = ?`, params);
+    } catch (err) {
+      if (err && err.code === 'ER_DUP_ENTRY') return res.status(409).json({ error: 'Another payment already exists for that supplier, consultant and month (or that invoice number is taken).' });
+      throw err;
+    }
+    const [rows] = await pool.query('SELECT i.*, s.name AS subvendor_name FROM subvendor_invoices i JOIN subvendors s ON s.id = i.subvendor_id WHERE i.id = ?', [req.params.id]);
     res.json({ invoice: rows[0] });
   } catch (err) {
     next(err);
   }
+});
+
+
+// POST /api/subvendor-invoices -- add a supplier payment by hand.
+// body: { subvendorId, consultantId, periodMonth 'YYYY-MM', rate, hours?, amount?, netTerms?, issueDate?, dueDate?, paymentStatus?, notes? }
+router.post('/', async (req, res, next) => {
+  try {
+    const orgId = req.user.organization_id;
+    const b = req.body || {};
+    const periodMonth = normalizePeriodMonth(b.periodMonth);
+    if (!periodMonth) return res.status(400).json({ error: 'Choose the month.' });
+    const rate = toNullableNumber(b.rate);
+    if (rate === null || rate < 0) return res.status(400).json({ error: 'Enter the $/hr rate.' });
+    const hours = b.hours === undefined || b.hours === null || b.hours === '' ? null : toNullableNumber(b.hours);
+    if (b.hours !== undefined && b.hours !== null && b.hours !== '' && hours === null) return res.status(400).json({ error: 'hours must be a number.' });
+    let amount = b.amount === undefined || b.amount === null || b.amount === '' ? null : toNullableNumber(b.amount);
+    if (b.amount !== undefined && b.amount !== null && b.amount !== '' && amount === null) return res.status(400).json({ error: 'amount must be a number.' });
+    if (amount === null && hours !== null) amount = Math.round(rate * hours * 100) / 100;
+    const netTerms = normalizeNetTerms(b.netTerms);
+    if (!netTerms) return res.status(400).json({ error: 'netTerms must look like NET30.' });
+    const issueDate = /^\d{4}-\d{2}-\d{2}$/.test(String(b.issueDate || '')) ? b.issueDate : lastDayOfMonth(periodMonth);
+    const dueDate = /^\d{4}-\d{2}-\d{2}$/.test(String(b.dueDate || '')) ? b.dueDate : addDays(issueDate, Number(netTerms.slice(3)));
+    const status = b.paymentStatus === 'paid' ? 'paid' : 'unpaid';
+    const [sv] = await pool.query('SELECT id FROM subvendors WHERE id = ? AND organization_id = ?', [b.subvendorId, orgId]);
+    if (!sv.length) return res.status(400).json({ error: 'Choose a supplier company.' });
+    const [co] = await pool.query('SELECT id FROM consultants WHERE id = ? AND organization_id = ?', [b.consultantId, orgId]);
+    if (!co.length) return res.status(400).json({ error: 'Choose a consultant.' });
+    let result;
+    try {
+      [result] = await pool.query(
+        `INSERT INTO subvendor_invoices (organization_id, invoice_number, subvendor_id, consultant_id, period_month, rate, hours, amount,
+           rate_source, net_terms, issue_date, due_date, payment_status, paid_date, notes)
+         VALUES (?, '', ?, ?, ?, ?, ?, ?, 'manual', ?, ?, ?, ?, ?, ?)`,
+        [orgId, sv[0].id, co[0].id, periodMonth, rate, hours, amount, netTerms, issueDate, dueDate, status,
+          status === 'paid' ? toDateOnly(new Date()) : null, b.notes ? String(b.notes).slice(0, 1000) : null]);
+    } catch (err) {
+      if (err && err.code === 'ER_DUP_ENTRY') return res.status(409).json({ error: 'A payment for that supplier, consultant and month already exists. Edit it instead.' });
+      throw err;
+    }
+    await pool.query('UPDATE subvendor_invoices SET invoice_number = ? WHERE id = ?',
+      ['SVI-' + periodMonth.slice(0, 7).replace('-', '') + '-' + String(result.insertId).padStart(5, '0'), result.insertId]);
+    res.status(201).json({ id: result.insertId });
+  } catch (err) { next(err); }
+});
+
+// POST /api/subvendor-invoices/from-ledger -- make an editable copy of a payments-file month.
+// body: { subvendorId, consultantId, periodMonth }. The copy replaces the file's row(s) in the list;
+// deleting it brings the file's row back. The uploaded file itself is never changed.
+router.post('/from-ledger', async (req, res, next) => {
+  try {
+    const orgId = req.user.organization_id;
+    const b = req.body || {};
+    const periodMonth = normalizePeriodMonth(b.periodMonth);
+    if (!periodMonth) return res.status(400).json({ error: 'periodMonth must look like YYYY-MM.' });
+    const { records } = await ledgerMonthlyRecords(pool, orgId);
+    const hits = records.filter((r) => String(r.subvendor_id) === String(b.subvendorId) && String(r.consultant_id) === String(b.consultantId) && r.period_month === periodMonth.slice(0, 7) + '-01');
+    if (!hits.length) return res.status(404).json({ error: 'That month is not on the payments file.' });
+    const [dup] = await pool.query(
+      'SELECT id FROM subvendor_invoices WHERE organization_id = ? AND subvendor_id = ? AND consultant_id = ? AND period_month = ?',
+      [orgId, hits[0].subvendor_id, hits[0].consultant_id, periodMonth]);
+    const sum = (k) => hits.reduce((t, r) => t + (Number(r[k]) || 0), 0);
+    const hrs = hits.some((r) => r.hours !== null && r.hours !== undefined) ? Math.round(sum('hours') * 100) / 100 : null;
+    const amt = Math.round(sum('amount') * 100) / 100;
+    const issue = lastDayOfMonth(periodMonth);
+    const paidDate = hits[0].paid_date ? String(hits[0].paid_date).slice(0, 10) : null;
+    if (dup.length) {
+      // A generated projection already sits on this month (the file's payment hides it): adopt the file's figures.
+      await pool.query(
+        `UPDATE subvendor_invoices SET overrides_ledger = 1, payment_status = 'paid', rate = ?, hours = ?, amount = ?, paid_date = ?, rate_source = 'ledger'
+          WHERE id = ? AND organization_id = ?`, [Number(hits[0].rate) || 0, hrs, amt, paidDate, dup[0].id, orgId]);
+      return res.json({ id: dup[0].id, existing: true });
+    }
+    const [result] = await pool.query(
+      `INSERT INTO subvendor_invoices (organization_id, invoice_number, subvendor_id, consultant_id, period_month, rate, hours, amount,
+         rate_source, net_terms, issue_date, due_date, payment_status, paid_date, notes, overrides_ledger)
+       VALUES (?, '', ?, ?, ?, ?, ?, ?, 'ledger', 'NET30', ?, ?, 'paid', ?, ?, 1)`,
+      [orgId, hits[0].subvendor_id, hits[0].consultant_id, periodMonth, Number(hits[0].rate) || 0, hrs, amt, issue, addDays(issue, 30), paidDate,
+        hits.length > 1 ? `Edited copy of ${hits.length} payments-file rows (amounts and hours added together).` : 'Edited copy of the payments-file row.']);
+    await pool.query('UPDATE subvendor_invoices SET invoice_number = ? WHERE id = ?',
+      ['SVI-' + periodMonth.slice(0, 7).replace('-', '') + '-' + String(result.insertId).padStart(5, '0'), result.insertId]);
+    res.status(201).json({ id: result.insertId });
+  } catch (err) { next(err); }
 });
 
 router.delete('/:id', async (req, res, next) => {
