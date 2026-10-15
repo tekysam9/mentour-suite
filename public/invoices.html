@@ -1,20 +1,3 @@
-    if (inv.kind === 'paid') {
-      // From the Ledger payments file: shown as filed; "Edit" makes an editable copy that replaces it.
-      var canEdit = inv.subvendor_id && inv.consultant_id;
-      return (
-        '<tr>' + head +
-          '<td class="fin-num">' + (inv.hours !== null && inv.hours !== undefined ? money(inv.hours) : '<span class="fin-muted">—</span>') + '</td>' +
-          '<td class="fin-num">' + (inv.amount !== null && inv.amount !== undefined ? '$' + money(inv.amount) : '<span class="fin-muted">—</span>') + '</td>' +
-          '<td><span class="fin-muted">—</span></td><td><span class="fin-muted">—</span></td><td><span class="fin-muted">—</span></td>' +
-          '<td><span class="fin-status-badge fin-badge-static fin-status-paid">Paid</span></td>' +
-          '<td>' + (inv.paid_date ? escapeHtml(fmtDate(inv.paid_date)) : '<span class="fin-muted">—</span>') + '</td>' +
-          '<td><span class="fin-muted">—</span></td><td><span class="fin-muted">—</span></td>' +
-          '<td class="fin-src">' + escapeHtml(src) + '</td>' +
-          '<td>' + (canEdit ? '<button type="button" class="fin-btn fin-btn-small" data-action="sv-edit-paid" data-sv="' + inv.subvendor_id + '" data-co="' + inv.consultant_id + '" data-pm="' + escapeHtml(inv.period_month) + '" title="Make an editable copy of this payment">Edit</button>' : '') + '</td>' +
-        '</tr>'
-      );
-    }
-
 <!DOCTYPE html>
 <html lang="en">
 <head>

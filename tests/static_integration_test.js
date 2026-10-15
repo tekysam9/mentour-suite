@@ -11,6 +11,14 @@ function check(label, cond, extra) {
 async function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
 
 async function main() {
+  // Every page must start with a doctype and declare UTF-8 in the first 1KB (stray text before it shows as code and garbles characters)
+  const fs = require('fs');
+  const pubDir = path.join(__dirname, '..', 'public');
+  for (const f of fs.readdirSync(pubDir).filter((n) => n.endsWith('.html'))) {
+    const t = fs.readFileSync(path.join(pubDir, f), 'utf8');
+    check('page starts with doctype: ' + f, /^<!doctype html>/i.test(t));
+    check('charset in first 1KB: ' + f, /<meta charset="utf-8"/i.test(t.slice(0, 1024)));
+  }
   const server = spawn('node', ['server.js'], { cwd: path.join(__dirname, '..'), env: process.env, stdio: 'pipe' });
   let out = '';
   server.stdout.on('data', (d) => out += d.toString());
