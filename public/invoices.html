@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Fin-Module — Mentour Suite</title>
 <link rel="stylesheet" href="/shared.css">
+<link rel="stylesheet" href="/shell.css">
 <style>
   .fin-body { max-width: 1180px; margin: 0 auto; padding: 40px 24px 64px; }
   .fin-back { font-size: 12.5px; color: var(--pine); text-decoration: none; font-weight: 500; }
@@ -140,6 +141,19 @@
   .hist-norate { color: var(--brick); font-size: 11.5px; font-weight: 600; }
   .hist-pager { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 10px; margin-top: 12px; font-size: 12.5px; color: var(--text-muted); }
   .hist-pager-btns { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .per-bar { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; margin-bottom: 14px; }
+  .per-head { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-bottom: 10px; font-size: 13px; }
+  .per-label { font-size: 11px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--text-muted); }
+  .per-custom { margin-left: auto; font-size: 12px; color: var(--text-muted); display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+  .per-custom input { border: 1px solid var(--line); border-radius: 6px; padding: 5px 7px; font: inherit; font-size: 12.5px; background: var(--paper); color: var(--text); }
+  .per-years, .per-months { display: flex; flex-wrap: wrap; gap: 6px; }
+  .per-months { margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--line); }
+  .per-chip { border: 1px solid var(--line); background: var(--paper); border-radius: 99px; padding: 5px 12px; font: inherit; font-size: 12.5px; font-weight: 600; color: var(--ink); cursor: pointer; display: inline-flex; gap: 7px; align-items: center; }
+  .per-chip span { font-size: 10.5px; font-weight: 600; color: var(--text-muted); }
+  .per-chip:hover { border-color: var(--pine); }
+  .per-chip.on { background: var(--pine); border-color: var(--pine); color: #EFF3EC; }
+  .per-chip.on span { color: #D5E3D8; }
+  .per-chip.empty:not(.on) { opacity: .5; }
   .imp-details { margin: 10px 0; }
   .imp-details > summary { cursor: pointer; font-size: 13.5px; font-weight: 600; color: var(--ink); padding: 6px 0; }
   .imp-details .fin-table-wrap { max-height: 360px; overflow: auto; }
@@ -171,6 +185,7 @@
 </head>
 <body>
 <div id="app"></div>
+<script src="/shell.js"></script>
 <script src="/fin-import.js"></script>
 <script src="/fin-history.js"></script>
 <script>
@@ -197,6 +212,7 @@
     user: null,
     loading: true,
     invoices: [],
+    periodYear: null, perFrom: '', perTo: '', periodReady: false,
     selectedMonths: [],   // invoice months ('YYYY-MM') to show; empty = all months
     months: [],           // [{ month, count }] from GET /api/invoices/months
     monthsOpen: false,
@@ -336,6 +352,54 @@
     return sorted.length + ' months selected';
   }
 
+  // ---- Period bar: pick a year, then a month (or the whole year), or any custom range ----
+  var MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  function periodYears() {
+    var y = {};
+    state.months.forEach(function (m) { y[m.month.slice(0, 4)] = (y[m.month.slice(0, 4)] || 0) + m.count; });
+    return Object.keys(y).sort().reverse().map(function (k) { return { year: k, count: y[k] }; });
+  }
+  function currentPeriodYear() {
+    if (state.periodYear) return state.periodYear;
+    if (state.selectedMonths.length) return state.selectedMonths.slice().sort().pop().slice(0, 4);
+    return null;
+  }
+  function periodSummary() {
+    var sel = state.selectedMonths.slice().sort();
+    if (!sel.length) return 'All periods';
+    if (sel.length === 1) return ImportHours.monthKeyLabel(sel[0]);
+    return ImportHours.monthKeyLabel(sel[0]) + ' – ' + ImportHours.monthKeyLabel(sel[sel.length - 1]) + ' (' + sel.length + ' months)';
+  }
+  function renderPeriodBar() {
+    var years = periodYears();
+    var yr = currentPeriodYear();
+    var counts = {};
+    state.months.forEach(function (m) { counts[m.month] = m.count; });
+    var yearChips = '<button type="button" class="per-chip' + (!state.selectedMonths.length ? ' on' : '') + '" data-per-all>All periods</button>' +
+      years.map(function (y) {
+        return '<button type="button" class="per-chip' + (yr === y.year ? ' on' : '') + '" data-per-year="' + y.year + '">' + y.year + '<span>' + y.count + '</span></button>';
+      }).join('');
+    var monthChips = '';
+    if (yr) {
+      var wholeOn = state.selectedMonths.length > 1 && state.selectedMonths.every(function (k) { return k.slice(0, 4) === yr; });
+      monthChips = '<div class="per-months"><button type="button" class="per-chip per-whole' + (wholeOn ? ' on' : '') + '" data-per-whole="' + yr + '">Whole ' + yr + '</button>' +
+        MONTH_NAMES.map(function (n, i) {
+          var key = yr + '-' + (i < 9 ? '0' : '') + (i + 1);
+          var c = counts[key] || 0;
+          return '<button type="button" class="per-chip per-m' + (state.selectedMonths.indexOf(key) > -1 ? ' on' : '') + (c ? '' : ' empty') + '" data-per-month="' + key + '" title="Click to view; Ctrl/Cmd-click to add or remove a month">' + n + '<span>' + (c || '–') + '</span></button>';
+        }).join('') + '</div>';
+    }
+    return '<div class="per-bar"><div class="per-head"><span class="per-label">Period</span><strong>' + escapeHtml(periodSummary()) + '</strong>' +
+      '<span class="per-custom">Custom: <input type="month" id="per-from" value="' + escapeHtml(state.perFrom || '') + '" aria-label="From month"> to <input type="month" id="per-to" value="' + escapeHtml(state.perTo || '') + '" aria-label="To month"> <button type="button" class="fin-btn fin-btn-small" data-per-apply>Show</button></span></div>' +
+      '<div class="per-years">' + yearChips + '</div>' + monthChips + '</div>';
+  }
+
+  function setPeriod(keys, year) {
+    state.selectedMonths = keys;
+    state.periodYear = year || (keys.length ? keys[keys.length - 1].slice(0, 4) : null);
+    loadInvoices();
+  }
+
   function renderMonthsPicker() {
     var sel = state.selectedMonths;
     var known = {};
@@ -406,9 +470,9 @@
         '</button>' +
       '</div>' +
       renderGenerateResult() +
+      renderPeriodBar() +
       '<div class="fin-controls">' +
         '<label class="fin-check"><input type="checkbox" id="filter-show-inactive"' + (state.showInactive ? ' checked' : '') + '>Show inactive consultants</label>' +
-        renderMonthsPicker() +
         '<select id="filter-payment">' +
           '<option value="all"' + (state.paymentFilter === 'all' ? ' selected' : '') + '>All payment statuses</option>' +
           '<option value="unpaid"' + (state.paymentFilter === 'unpaid' ? ' selected' : '') + '>Unpaid</option>' +
@@ -929,6 +993,45 @@
   }
 
   appEl.addEventListener('click', function (e) {
+    var perAll = e.target.closest('[data-per-all]');
+    if (perAll) { state.periodYear = null; setPeriod([], null); return; }
+    var perYear = e.target.closest('[data-per-year]');
+    if (perYear) {
+      var yy = perYear.getAttribute('data-per-year');
+      var ym = state.months.filter(function (m) { return m.month.slice(0, 4) === yy; }).map(function (m) { return m.month; }).sort();
+      // Opening a year shows its latest month; "Whole year" shows all of it.
+      state.periodYear = yy;
+      setPeriod(ym.length ? [ym[ym.length - 1]] : [], yy);
+      return;
+    }
+    var perWhole = e.target.closest('[data-per-whole]');
+    if (perWhole) {
+      var wy = perWhole.getAttribute('data-per-whole');
+      setPeriod(state.months.filter(function (m) { return m.month.slice(0, 4) === wy; }).map(function (m) { return m.month; }).sort(), wy);
+      return;
+    }
+    var perMonth = e.target.closest('[data-per-month]');
+    if (perMonth) {
+      var pk = perMonth.getAttribute('data-per-month');
+      if (e.ctrlKey || e.metaKey) {
+        var cur = state.selectedMonths.slice(); var at2 = cur.indexOf(pk);
+        if (at2 > -1) cur.splice(at2, 1); else cur.push(pk);
+        setPeriod(cur.sort(), pk.slice(0, 4));
+      } else setPeriod([pk], pk.slice(0, 4));
+      return;
+    }
+    if (e.target.closest('[data-per-apply]')) {
+      var f = document.getElementById('per-from').value, t = document.getElementById('per-to').value;
+      state.perFrom = f; state.perTo = t;
+      if (!f && !t) { setPeriod([], null); return; }
+      var lo = f || t, hi = t || f; if (lo > hi) { var sw = lo; lo = hi; hi = sw; }
+      var inRange = state.months.map(function (m) { return m.month; }).filter(function (k) { return k >= lo && k <= hi; }).sort();
+      state.selectedMonths = inRange; state.periodYear = hi.slice(0, 4);
+      state.customEmpty = !inRange.length;
+      if (!inRange.length) { state.invoices = []; state.loading = false; render(); return; }
+      loadInvoices();
+      return;
+    }
     if (e.target.closest('[data-action="months-toggle"]')) { state.monthsOpen = !state.monthsOpen; render(); return; }
     if (e.target.closest('[data-action="months-all"], [data-action="months-clear"]')) {
       // Both show every month again: an empty selection means "All months".
@@ -1010,10 +1113,7 @@
 
     var tabBtn = e.target.closest('[data-tab]');
     if (tabBtn) {
-      state.tab = tabBtn.getAttribute('data-tab');
-      if (state.tab === 'subvendor' && !state.sv.loaded) loadSubvendor();
-      else if (state.tab === 'history') histLoad();
-      else render();
+      switchTab(tabBtn.getAttribute('data-tab'), true);
       return;
     }
 
@@ -1208,15 +1308,41 @@
     }
   });
 
+  // The side menu links to /invoices.html#client etc.; keep the URL in step with the tab.
+  var FIN_TABS = ['client', 'subvendor', 'history', 'import', 'hximport'];
+  function switchTab(tab, fromClick) {
+    if (FIN_TABS.indexOf(tab) === -1) return;
+    state.tab = tab;
+    if (fromClick) { try { history.replaceState(null, '', '#' + tab); } catch (e) { /* ignore */ } window.dispatchEvent(new Event('shell-nav')); }
+    if (tab === 'subvendor' && !state.sv.loaded) loadSubvendor();
+    else if (tab === 'history') histLoad();
+    else render();
+  }
+  window.addEventListener('hashchange', function () {
+    var t = location.hash.replace('#', '');
+    if (state.user && t !== state.tab) switchTab(t, false);
+  });
+  (function () {
+    var t = location.hash.replace('#', '');
+    if (FIN_TABS.indexOf(t) !== -1) state.tab = t;
+  })();
+
   fetch('/api/auth/me').then(function (res) {
     if (res.status !== 200) { window.location.href = '/login.html'; return null; }
     return res.json();
   }).then(function (data) {
     if (!data) return;
     state.user = data.user;
-    // Default view: every invoice month, grouped (the selector narrows it).
-    loadMonths();
-    loadInvoices();
+    // Default view: the latest invoice month (use the period bar for other months, years or a custom range).
+    state.loading = true;
+    fetch('/api/invoices/months' + (state.showInactive ? '?includeInactive=1' : '')).then(function (r) { return r.ok ? r.json() : { months: [] }; }).catch(function () { return { months: [] }; }).then(function (b) {
+      state.months = b.months || [];
+      var latest = state.months.map(function (m) { return m.month; }).sort().pop();
+      if (latest && !state.selectedMonths.length) { state.selectedMonths = [latest]; state.periodYear = latest.slice(0, 4); }
+      loadInvoices();
+    });
+    if (state.tab === 'subvendor' && !state.sv.loaded) loadSubvendor();
+    else if (state.tab === 'history') histLoad();
   }).catch(function () {
     window.location.href = '/login.html';
   });

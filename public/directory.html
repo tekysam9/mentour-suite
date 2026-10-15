@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Directory — Mentour Suite</title>
 <link rel="stylesheet" href="/shared.css">
+<link rel="stylesheet" href="/shell.css">
 <style>
   .dir-body { max-width: 1040px; margin: 0 auto; padding: 40px 24px 64px; }
   .dir-back { font-size: 12.5px; color: var(--pine); text-decoration: none; font-weight: 500; }
@@ -111,6 +112,7 @@
 </head>
 <body>
 <div id="app"></div>
+<script src="/shell.js"></script>
 <script>
   function escapeHtml(s) {
     if (s === null || s === undefined) return '';
@@ -573,11 +575,7 @@
   appEl.addEventListener('click', function (e) {
     var tabBtn = e.target.closest('[data-tab]');
     if (tabBtn && tabBtn.classList.contains('dir-tab')) {
-      state.activeTab = tabBtn.getAttribute('data-tab');
-      state.editingId = null;
-      state.saveStatus = null;
-      state.statusFilter = 'active';
-      loadTab(state.activeTab);
+      switchTab(tabBtn.getAttribute('data-tab'), true);
       return;
     }
 
@@ -854,6 +852,25 @@
       render();
     }
   });
+
+  // The side menu links to /directory.html#consultants etc.; keep the URL in step with the tab.
+  function switchTab(key, fromClick) {
+    if (!TABS.some(function (t) { return t.key === key; })) return;
+    state.activeTab = key;
+    state.editingId = null;
+    state.saveStatus = null;
+    state.statusFilter = 'active';
+    if (fromClick) { try { history.replaceState(null, '', '#' + key); } catch (e) { /* ignore */ } window.dispatchEvent(new Event('shell-nav')); }
+    loadTab(key);
+  }
+  window.addEventListener('hashchange', function () {
+    var key = location.hash.replace('#', '');
+    if (state.user && key !== state.activeTab) switchTab(key, false);
+  });
+  (function () {
+    var key = location.hash.replace('#', '');
+    if (TABS.some(function (t) { return t.key === key; })) state.activeTab = key;
+  })();
 
   fetch('/api/auth/me').then(function (res) {
     if (res.status !== 200) { window.location.href = '/login.html'; return null; }
