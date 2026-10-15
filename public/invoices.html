@@ -520,7 +520,8 @@
       '<td>' + escapeHtml(inv.consultant_name) + '</td>' +
       '<td' + (inv.label ? ' title="' + escapeHtml(inv.label) + '"' : '') + '>' + escapeHtml(monthLabel(inv.period_month)) + '</td>' +
       '<td class="fin-num">' + (inv.rate !== null && inv.rate !== undefined ? '$' + money(inv.rate) + '/hr' : '<span class="fin-muted">—</span>') + '</td>';
-    if (inv.kind !== 'paid') {
+    var isFile = inv.kind === 'paid' && !!(inv.subvendor_id && inv.consultant_id);
+    if (inv.kind !== 'paid' || isFile) {
       var suppliers = state.sv.allSuppliers && state.sv.allSuppliers.length ? state.sv.allSuppliers : state.sv.subvendors;
       head =
         '<td class="fin-sno">' + (idx + 1) + '</td>' +
@@ -533,8 +534,8 @@
         '<td><input class="fin-num-input" type="number" step="0.01" min="0" data-svfield="rate" value="' + (inv.rate !== null && inv.rate !== undefined ? inv.rate : '') + '" aria-label="Rate per hour"></td>';
     }
 
-    if (inv.kind === 'paid') {
-      // Already paid on the Ledger file: read-only, no inputs.
+    if (inv.kind === 'paid' && !isFile) {
+      // Payments-file row we cannot match to a supplier/consultant: shown as filed.
       return (
         '<tr>' + head +
           '<td class="fin-num">' + (inv.hours !== null && inv.hours !== undefined ? money(inv.hours) : '<span class="fin-muted">—</span>') + '</td>' +
@@ -549,24 +550,29 @@
 
     var savedTick = state.sv.savedId === inv.id ? '<span class="fin-saved-tick">Saved</span>' : '';
     var netKnown = NET_OPTIONS.indexOf((inv.net_terms || '').toUpperCase()) !== -1;
+    var trAttr = isFile
+      ? 'data-file-sv="' + inv.subvendor_id + '" data-file-co="' + inv.consultant_id + '" data-file-pm="' + escapeHtml(String(inv.period_month).slice(0, 7)) + '"'
+      : 'data-sv-id="' + inv.id + '"';
+    var netCur = (inv.net_terms || '').toUpperCase();
     return (
-      '<tr data-sv-id="' + inv.id + '">' + head +
+      '<tr ' + trAttr + '>' + head +
         '<td><input class="fin-num-input" type="number" step="0.25" data-svfield="hours" value="' + (inv.hours !== null && inv.hours !== undefined ? inv.hours : '') + '" placeholder="—"></td>' +
         '<td><input class="fin-num-input" type="number" step="0.01" data-svfield="amount" value="' + (inv.amount !== null && inv.amount !== undefined ? inv.amount : '') + '" placeholder="—"></td>' +
         '<td><select class="fin-select-input" data-svfield="netTerms">' +
+          (isFile && !netCur ? '<option value="" selected>—</option>' : '') +
           NET_OPTIONS.map(function (nt) {
-            return '<option value="' + nt + '"' + ((inv.net_terms || 'NET30').toUpperCase() === nt ? ' selected' : '') + '>' + nt + '</option>';
+            return '<option value="' + nt + '"' + ((netCur || (isFile ? '' : 'NET30')) === nt ? ' selected' : '') + '>' + nt + '</option>';
           }).join('') +
-          (netKnown ? '' : '<option value="' + escapeHtml(inv.net_terms) + '" selected>' + escapeHtml(inv.net_terms) + '</option>') +
+          (netKnown || !netCur ? '' : '<option value="' + escapeHtml(inv.net_terms) + '" selected>' + escapeHtml(inv.net_terms) + '</option>') +
         '</select></td>' +
         '<td><input class="fin-date-input" type="date" data-svfield="issueDate" value="' + (inv.issue_date ? String(inv.issue_date).slice(0, 10) : '') + '" aria-label="Issue date"></td>' +
         '<td><input class="fin-date-input" type="date" data-svfield="dueDate" value="' + (inv.due_date ? String(inv.due_date).slice(0, 10) : '') + '"></td>' +
-        '<td><button type="button" class="fin-status-badge fin-status-' + inv.payment_status + '" data-action="sv-toggle-payment">' + (inv.payment_status === 'paid' ? 'Paid' : 'Unpaid') + '</button></td>' +
+        '<td><button type="button" class="fin-status-badge fin-status-' + inv.payment_status + '" data-action="sv-toggle-payment">' + ((isFile || inv.payment_status === 'paid') ? 'Paid' : 'Unpaid') + '</button></td>' +
         '<td><input class="fin-date-input" type="date" data-svfield="paidDate" value="' + (inv.paid_date ? String(inv.paid_date).slice(0, 10) : '') + '" aria-label="Paid on"></td>' +
         '<td><button type="button" class="fin-status-badge fin-status-' + inv.timesheet_submitted + '" data-action="sv-toggle-timesheet">' + (inv.timesheet_submitted === 'yes' ? 'Submitted' : 'Not yet') + '</button></td>' +
         '<td><input class="fin-notes-input" type="text" data-svfield="notes" value="' + escapeHtml(inv.notes || '') + '" placeholder="Notes"></td>' +
         '<td class="fin-src">' + escapeHtml(src) + '</td>' +
-        '<td><button type="button" class="fin-btn fin-btn-small fin-btn-danger" data-action="sv-delete" data-override="' + (inv.overrides_ledger ? '1' : '') + '">' + (inv.overrides_ledger ? 'Revert' : 'Delete') + '</button>' + savedTick + '</td>' +
+        '<td>' + (isFile ? '<span class="fin-muted" title="Edit any field to keep your own copy of this payment">Edit any field</span>' : '<button type="button" class="fin-btn fin-btn-small fin-btn-danger" data-action="sv-delete" data-override="' + (inv.overrides_ledger ? '1' : '') + '">' + (inv.overrides_ledger ? 'Revert' : 'Delete') + '</button>') + savedTick + '</td>' +
       '</tr>'
     );
   }
@@ -651,9 +657,9 @@
       : '';
     return (
       '<h2 class="fin-subtitle">Supplier payments.</h2>' +
-      '<p class="fin-copy">What each subvendor invoices Mentour for each consultant, month by month. Months already paid are read straight from your supplier payments file (the month is the hours month in the label plus the Year column; unpaid red rows are left out) and can be edited with the Edit button (it makes a copy that replaces the file’s row; Revert brings the file’s row back). For every month after a consultant’s last month on the file, generate invoices at each consultant’s rate on the Ledger file — or, if Ledger has none, the cost rate on the Gross Margin file — then enter the actual hours (amount recalculates) and track NET terms, payment and timesheet just like client invoices. ' + file + '</p>' +
+      '<p class="fin-copy">What each subvendor invoices Mentour for each consultant, month by month. Months already paid are read straight from your supplier payments file (the month is the hours month in the label plus the Year column; unpaid red rows are left out) and can be edited right in the row (it keeps a copy that replaces the file’s row; Revert brings the file’s row back). For every month after a consultant’s last month on the file, generate invoices at each consultant’s rate on the Ledger file — or, if Ledger has none, the cost rate on the Gross Margin file — then enter the actual hours (amount recalculates) and track NET terms, payment and timesheet just like client invoices. ' + file + '</p>' +
       unread +
-      '<div class="fin-readonly-note">Every field on a supplier payment can be changed: supplier, month, rate, hours, amount, dates, payment and notes. Rows marked “Payments file” come from your uploaded file — click Edit to make an editable copy. Changing the rate re-prices the hours.</div>' +
+      '<div class="fin-readonly-note">Every field on a supplier payment can be changed: supplier, month, rate, hours, amount, dates, payment and notes. Just type in any cell, like on Client invoices — it saves as you go. Rows from your payments file keep an editable copy the first time you change them (Revert on that row restores the original). Changing the rate re-prices the hours.</div>' +
       svAddForm() +
       '<div class="fin-generate-card">' +
         '<label>Month' + (sv.generationStart ? ' (' + escapeHtml(monthLabel(sv.generationStart)) + ' or later)' : '') + '<input type="month" id="svgen-period"' + (sv.generationStart ? ' min="' + escapeHtml(sv.generationStart) + '"' : '') + ' value="' + escapeHtml(gf.periodMonth) + '"></label>' +
@@ -1015,6 +1021,19 @@
     });
   }
 
+  // A payments-file row is edited in place like any other: the first change keeps an editable copy, then applies the change to it.
+  function svEditFileRow(tr, patch) {
+    return fetch('/api/subvendor-invoices/from-ledger', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ subvendorId: tr.getAttribute('data-file-sv'), consultantId: tr.getAttribute('data-file-co'), periodMonth: tr.getAttribute('data-file-pm') }) })
+      .then(function (r) { return r.json().catch(function () { return {}; }).then(function (b) { if (!r.ok) throw new Error(b.error || 'Could not open that payment for editing.'); return b; }); })
+      .then(function (b) {
+        return fetch('/api/subvendor-invoices/' + b.id, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch) })
+          .then(function (r) { return r.json().catch(function () { return {}; }).then(function (x) { if (!r.ok) throw new Error(x.error || 'Could not save that change.'); state.sv.savedId = b.id; }); });
+      })
+      .then(function () { loadSubvendor(); })
+      .catch(function (err) { alert(err.message); loadSubvendor(); });
+  }
+
   function patchSv(id, patch) {
     return fetch('/api/subvendor-invoices/' + id, {
       method: 'PATCH',
@@ -1150,6 +1169,11 @@
       }
     }
     var svAct = e.target.closest('[data-action="sv-toggle-payment"], [data-action="sv-toggle-timesheet"], [data-action="sv-delete"]');
+    if (svAct && svAct.closest('[data-file-sv]')) {
+      var tgl = svAct.getAttribute('data-action') === 'sv-toggle-payment' ? { paymentStatus: 'unpaid' } : { timesheetSubmitted: 'yes' };
+      svEditFileRow(svAct.closest('[data-file-sv]'), tgl);
+      return;
+    }
     if (svAct) {
       var svId = Number(svAct.closest('[data-sv-id]').getAttribute('data-sv-id'));
       var svInv = state.sv.invoices.filter(function (i) { return i.kind === 'generated' && i.id === svId; })[0];
@@ -1361,6 +1385,11 @@
       return;
     }
     var svField = e.target.closest('[data-svfield]');
+    if (svField && svField.closest('[data-file-sv]')) {
+      var fp = {}; fp[svField.getAttribute('data-svfield')] = svField.value === '' ? null : svField.value;
+      svEditFileRow(svField.closest('[data-file-sv]'), fp);
+      return;
+    }
     if (svField) {
       var fid = Number(svField.closest('[data-sv-id]').getAttribute('data-sv-id'));
       var fpatch = {};
