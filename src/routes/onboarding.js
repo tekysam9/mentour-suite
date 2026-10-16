@@ -13,6 +13,7 @@ const forms = require('./forms');
 const { FORMS } = require('./formSpecs');
 const { splitClientText } = require('./clientAliases');
 const spec = require('./onboardingSpec');
+const { isConfigured, encryptBuffer, decryptBuffer } = require('../crypto');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -40,6 +41,15 @@ const isHr = (req) => req.user.role === 'owner' || req.user.role === 'hr';
 // Money figures are for HR only: a recruiter can type them in, but never reads them back.
 const SENSITIVE = ['bill_rate', 'pay_rate', 'final_cost'];
 const withoutMoney = (data) => { const d = Object.assign({}, data); SENSITIVE.forEach((k) => { delete d[k]; }); return d; };
+// Checklist documents: PDF / JPG / PNG / DOCX up to 10 MB, encrypted in the database.
+const DOC_MAX = 10 * 1024 * 1024;
+const DOC_TYPES = {
+  pdf: { mime: 'application/pdf', magic: (b) => b.subarray(0, 5).toString('latin1') === '%PDF-' },
+  jpg: { mime: 'image/jpeg', magic: (b) => b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff },
+  jpeg: { mime: 'image/jpeg', magic: (b) => b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff },
+  png: { mime: 'image/png', magic: (b) => b.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])) },
+  docx: { mime: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', magic: (b) => b[0] === 0x50 && b[1] === 0x4b && b[2] === 0x03 && b[3] === 0x04 },
+};
 const denyHr = (res) => res.status(403).json({ error: 'Only an HR admin can do that.' });
 
 // ------------------------------------------------------------ validation
@@ -141,24 +151,49 @@ async function formStates(orgId, rows) {
   return out;
 }
 
-function checklistView(row, data, stored, states) {
+function checklistView(row, data, storedRaw, states, docs) {
   const meta = data._meta || {};
+  const stored = spec.migrateChecklist(storedRaw);
+  const docsFor = (k) => (docs || []).filter((d) => d.onboarding_id === row.id && d.item_key === k).map((d) => ({
+    id: d.id, filename: d.filename, mime: d.mime, size: d.size, uploadedBy: d.uploaded_by, uploadedAt: d.uploaded_at,
+  }));
   return spec.checklistFor(row.worker_type, data).map((c) => {
     const st = stored[c.key] || {};
-    const out = { key: c.key, label: c.label, group: c.group, hint: c.hint || null, manualDone: !!st.done, na: !!st.na, note: st.note || '', at: st.at || null, by: st.by || null };
+    const out = { key: c.key, label: c.label, group: c.group, hint: c.hint || null, optional: !!c.optional, manualDone: !!st.done, na: !!st.na, note: st.note || '', at: st.at || null, by: st.by || null };
+    if (c.future) out.future = c.future;
+    if (c.upload) { out.upload = c.upload; out.documents = docsFor(c.key); }
+    if (c.answer) {
+      out.answer = c.answer;
+      // before Yes/No existed, ticking the item meant "yes"
+      out.value = st.answer === 'Yes' || st.answer === 'No' ? st.answer : (st.done ? 'Yes' : null);
+    }
     if (c.form) {
       const entity = c.on === 'supplier' ? 'subvendors' : 'consultants';
       const rid = c.on === 'supplier' ? row.supplier_id : row.consultant_id;
       out.form = { form: c.form, entity, recordId: rid || null, title: FORMS[c.form].title, status: rid ? (states.get(`${entity}:${rid}:${c.form}`) || 'not started') : null };
       out.autoDone = out.form.status === 'complete';
+      if (c.formOnly) { out.formOnly = true; out.legacyDone = !!st.done && !out.autoDone; }
     } else if (c.auto === 'records') {
       out.autoDone = !!(row.consultant_id && meta.assignmentId && (row.worker_type !== 'C2C' || !data.employer_name || row.supplier_id));
     }
-    out.done = !out.na && (out.manualDone || !!out.autoDone);
+    if (c.answer) out.done = !out.na && !!out.value;
+    else if (c.formOnly) out.done = !out.na && (!!out.autoDone || !!st.done); // st.done only from before the form existed
+    else if (c.upload === 'required') {
+      out.legacyDone = !!st.done && !out.documents.length; // ticked by hand before uploads existed: still counts
+      out.done = !out.na && (out.documents.length > 0 || !!st.done);
+    } else out.done = !out.na && (out.manualDone || !!out.autoDone);
     return out;
   });
 }
-const progress = (items) => { const live = items.filter((i) => !i.na); return { done: live.filter((i) => i.done).length, total: live.length }; };
+const progress = (items) => { const live = items.filter((i) => !i.na && !i.optional); return { done: live.filter((i) => i.done).length, total: live.length }; };
+
+async function docList(orgId, ids) {
+  if (!ids.length) return [];
+  try {
+    const [r] = await pool.query(`SELECT id, onboarding_id, item_key, filename, mime, size, uploaded_by, uploaded_at FROM onboarding_documents WHERE organization_id = ? AND onboarding_id IN (?) ORDER BY id`, [orgId, ids]);
+    return r;
+  } catch (e) { if (missingTable(e)) return []; throw e; }
+}
 
 // ----------------------------------------------------------------- serialise
 async function present(row, extra, req) {
@@ -167,7 +202,7 @@ async function present(row, extra, req) {
   const data = hide ? withoutMoney(full) : full;
   const stored = parse(row.checklist, {});
   const states = await formStates(row.organization_id, [row]);
-  const items = checklistView(row, data, stored, states);
+  const items = checklistView(row, data, stored, states, await docList(row.organization_id, [row.id]));
   const pub = Object.assign({}, data); delete pub._meta;
   return Object.assign({
     id: row.id, workerType: row.worker_type, status: row.status, consultantName: row.consultant_name,
@@ -218,27 +253,62 @@ router.get('/people', async (req, res, next) => {
 
 // Role-specific invite codes: the role is fixed by the code, so a recruiter who signs up with a
 // "Recruiter" code lands in Onboarding only and never has to be demoted by hand.
+// Personal invites (email set): one person, one use, the role chosen when sending. The owner can
+// invite any role; an HR admin can invite Recruiters and Team members (not other HR admins).
+const canInvite = (req, role) => req.user.role === 'owner' || (req.user.role === 'hr' && ['recruiter', 'member'].includes(role));
+const inviteLink = (req, code, email) => `${req.protocol}://${req.get('host')}/signup.html?code=${encodeURIComponent(code)}${email ? '&email=' + encodeURIComponent(email) : ''}`;
 router.get('/invites', async (req, res, next) => {
   try {
-    if (req.user.role !== 'owner') return res.status(403).json({ error: 'Only the account owner can manage invite codes.' });
-    const [rows] = await pool.query('SELECT id, code, role, label, created_at FROM invite_codes WHERE organization_id = ? AND revoked = 0 ORDER BY id DESC', [req.user.organization_id]);
-    res.json({ invites: rows, legacyCode: req.user.invite_code });
-  } catch (err) { if (missingTable(err)) return res.status(503).json({ error: SCHEMA_MSG }); next(err); }
+    if (!isHr(req)) return res.status(403).json({ error: 'Only the owner or an HR admin can manage invites.' });
+    const owner = req.user.role === 'owner';
+    const [rows] = await pool.query(
+      `SELECT i.id, i.code, i.role, i.label, i.email, i.invitee_name, i.revoked, i.used_at, i.revoked_at, i.created_at, u.name AS used_by_name
+       FROM invite_codes i LEFT JOIN users u ON u.id = i.used_by_user_id WHERE i.organization_id = ? ORDER BY i.id DESC LIMIT 300`, [req.user.organization_id]);
+    const status = (r) => (r.used_at ? 'used' : r.revoked ? 'revoked' : 'pending');
+    res.json({
+      invites: owner ? rows.filter((r) => !r.email && !r.revoked) : [],
+      personal: rows.filter((r) => r.email).map((r) => ({
+        id: r.id, email: r.email, name: r.invitee_name, role: r.role, status: status(r), createdAt: r.created_at, usedAt: r.used_at, usedBy: r.used_by_name, revokedAt: r.revoked_at,
+        link: status(r) === 'pending' ? inviteLink(req, r.code, r.email) : null,
+      })),
+      legacyCode: owner ? req.user.invite_code : null,
+      canInviteRoles: owner ? ['hr', 'member', 'recruiter'] : ['member', 'recruiter'],
+      emailSending: false, // no mail server is configured; share the link (copy or open in your email app)
+    });
+  } catch (err) { if (missingTable(err) || (err && err.code === 'ER_BAD_FIELD_ERROR')) return res.status(503).json({ error: SCHEMA_MSG }); next(err); }
 });
 router.post('/invites', async (req, res, next) => {
   try {
-    if (req.user.role !== 'owner') return res.status(403).json({ error: 'Only the account owner can create invite codes.' });
     const b = req.body || {};
-    if (!['hr', 'member', 'recruiter'].includes(b.role)) return res.status(400).json({ error: 'Choose a role for this invite code.' });
-    const code = require('crypto').randomBytes(6).toString('hex');
-    await pool.query('INSERT INTO invite_codes (organization_id, code, role, label) VALUES (?, ?, ?, ?)', [req.user.organization_id, code, b.role, b.label ? String(b.label).trim().slice(0, 120) : null]);
-    res.status(201).json({ code, role: b.role });
-  } catch (err) { if (missingTable(err)) return res.status(503).json({ error: SCHEMA_MSG }); next(err); }
+    if (!['hr', 'member', 'recruiter'].includes(b.role)) return res.status(400).json({ error: 'Choose a role for this invite.' });
+    const code = require('crypto').randomBytes(b.email !== undefined ? 12 : 6).toString('hex');
+    if (b.email === undefined) { // the original shared role code (owner only)
+      if (req.user.role !== 'owner') return res.status(403).json({ error: 'Only the account owner can create invite codes.' });
+      await pool.query('INSERT INTO invite_codes (organization_id, code, role, label) VALUES (?, ?, ?, ?)', [req.user.organization_id, code, b.role, b.label ? String(b.label).trim().slice(0, 120) : null]);
+      return res.status(201).json({ code, role: b.role });
+    }
+    if (!isHr(req)) return res.status(403).json({ error: 'Only the owner or an HR admin can invite people.' });
+    if (!canInvite(req, b.role)) return res.status(403).json({ error: 'Only the account owner can invite an HR admin.' });
+    const email = String(b.email || '').trim().toLowerCase();
+    if (!EMAIL_RE.test(email) || email.length > 255) return res.status(400).json({ error: 'Enter a valid email address.' });
+    const name = b.name ? String(b.name).trim().slice(0, 255) : null;
+    const [dup] = await pool.query('SELECT id FROM users WHERE email = ? LIMIT 1', [email]);
+    if (dup.length) return res.status(409).json({ error: 'That email already has a login.' });
+    // a fresh invite replaces any still-pending one for the same email
+    await pool.query('UPDATE invite_codes SET revoked = 1, revoked_at = NOW() WHERE organization_id = ? AND email = ? AND used_at IS NULL AND revoked = 0', [req.user.organization_id, email]);
+    await pool.query('INSERT INTO invite_codes (organization_id, code, role, label, email, invitee_name, created_by_id) VALUES (?, ?, ?, ?, ?, ?, ?)',
+      [req.user.organization_id, code, b.role, name, email, name, req.user.id]);
+    res.status(201).json({ code, role: b.role, email, link: inviteLink(req, code, email), emailSending: false });
+  } catch (err) { if (missingTable(err) || (err && err.code === 'ER_BAD_FIELD_ERROR')) return res.status(503).json({ error: SCHEMA_MSG }); next(err); }
 });
 router.delete('/invites/:id', async (req, res, next) => {
   try {
-    if (req.user.role !== 'owner') return res.status(403).json({ error: 'Only the account owner can revoke invite codes.' });
-    await pool.query('UPDATE invite_codes SET revoked = 1 WHERE id = ? AND organization_id = ?', [req.params.id, req.user.organization_id]);
+    if (!isHr(req)) return res.status(403).json({ error: 'Only the account owner can revoke invite codes.' });
+    const [r] = await pool.query('SELECT id, role, email, used_at FROM invite_codes WHERE id = ? AND organization_id = ?', [req.params.id, req.user.organization_id]);
+    if (!r[0]) return res.status(404).json({ error: 'Invite not found.' });
+    if (req.user.role !== 'owner' && (!r[0].email || !canInvite(req, r[0].role))) return res.status(403).json({ error: 'Only the account owner can revoke that invite.' });
+    if (r[0].used_at) return res.status(409).json({ error: 'That invite has already been used.' });
+    await pool.query('UPDATE invite_codes SET revoked = 1, revoked_at = NOW() WHERE id = ? AND organization_id = ?', [r[0].id, req.user.organization_id]);
     res.json({ ok: true });
   } catch (err) { next(err); }
 });
@@ -277,7 +347,8 @@ router.get('/schema', (req, res) => {
   res.json({
     workerTypes: spec.WORKER_TYPES, statuses: STATUSES, next: NEXT,
     sections: spec.SECTIONS.map((s) => ({ key: s.key, title: s.title, types: s.types || null, fields: s.fields })),
-    checklists: Object.fromEntries(Object.entries(spec.CHECKLISTS).map(([t, l]) => [t, l.map((c) => ({ key: c.key, label: c.label, group: c.group, when: c.when || null }))])),
+    checklists: Object.fromEntries(Object.entries(spec.CHECKLISTS).map(([t, l]) => [t, l.map((c) => ({ key: c.key, label: c.label, group: c.group, when: c.when || null, answer: c.answer || null, upload: c.upload || null, optional: !!c.optional, form: c.form || null }))])),
+    documents: { maxBytes: DOC_MAX, types: Object.keys(DOC_TYPES) },
   });
 });
 
@@ -300,6 +371,7 @@ router.get('/', async (req, res, next) => {
     if (req.query.q) { where.push('o.consultant_name LIKE ?'); params.push('%' + String(req.query.q).slice(0, 100) + '%'); }
     const [rows] = await pool.query(`SELECT o.* FROM onboardings o WHERE ${where.join(' AND ')} ORDER BY o.updated_at DESC LIMIT 500`, params);
     const states = await formStates(req.user.organization_id, rows);
+    const docs = await docList(req.user.organization_id, rows.map((r) => r.id));
     const [counts] = await pool.query(`SELECT status, COUNT(*) n FROM onboardings WHERE organization_id = ?${isHr(req) ? '' : ' AND created_by_id = ?'} GROUP BY status`, [req.user.organization_id].concat(isHr(req) ? [] : [req.user.id]));
     res.json({
       counts: Object.fromEntries(counts.map((c) => [c.status, Number(c.n)])),
@@ -308,7 +380,7 @@ router.get('/', async (req, res, next) => {
         return {
           id: r.id, workerType: r.worker_type, status: r.status, consultantName: r.consultant_name,
           startDate: dateStr(r.start_date), endClient: data.end_client || '', recruiter: data.recruiter || '',
-          progress: progress(checklistView(r, data, parse(r.checklist, {}), states)), updatedAt: r.updated_at,
+          progress: progress(checklistView(r, data, parse(r.checklist, {}), states, docs)), updatedAt: r.updated_at,
         };
       }),
     });
@@ -392,9 +464,18 @@ router.post('/:id/checklist', async (req, res, next) => {
     const data = parse(row.data, {});
     const def = spec.checklistFor(row.worker_type, data).find((c) => c.key === b.key);
     if (!def) return res.status(404).json({ error: 'That checklist item does not apply.' });
-    const stored = parse(row.checklist, {});
+    const stored = spec.migrateChecklist(parse(row.checklist, {}));
     const cur = Object.assign({}, stored[def.key]);
     const bits = [];
+    if (b.answer !== undefined) {
+      if (!def.answer) return res.status(400).json({ error: 'That item has no Yes / No answer.' });
+      if (b.answer !== null && b.answer !== 'Yes' && b.answer !== 'No') return res.status(400).json({ error: 'Choose Yes or No.' });
+      if (b.answer === null) { delete cur.answer; cur.done = false; } else { cur.answer = b.answer; cur.na = false; cur.at = new Date().toISOString(); cur.by = who(req); }
+      bits.push(b.answer === null ? 'answer cleared' : 'answered ' + b.answer);
+    }
+    if (b.done !== undefined && (def.answer || (b.done && (def.upload === 'required' || def.formOnly)))) {
+      return res.status(400).json({ error: def.answer ? 'Choose Yes or No for this item.' : def.formOnly ? `Fill in and sign the ${FORMS[def.form].title} form to complete this item.` : 'Upload the document to complete this item.' });
+    }
     if (b.done !== undefined) { cur.done = !!b.done; if (cur.done) { cur.na = false; cur.at = new Date().toISOString(); cur.by = who(req); } bits.push(cur.done ? 'done' : 'reopened'); }
     if (b.na !== undefined) { cur.na = !!b.na; if (cur.na) { cur.done = false; cur.at = new Date().toISOString(); cur.by = who(req); } bits.push(cur.na ? 'not applicable' : 'applicable again'); }
     if (b.note !== undefined) { cur.note = String(b.note || '').slice(0, 500); bits.push('note updated'); }
@@ -427,8 +508,9 @@ router.post('/:id/status', async (req, res, next) => {
     if (to === 'submitted') f.submitted_at = new Date();
     if (to === 'complete') {
       const states = await formStates(row.organization_id, [row]);
-      const open = checklistView(row, data, parse(row.checklist, {}), states).filter((i) => !i.na && !i.done).map((i) => i.label);
-      if (open.length) return res.status(422).json({ error: `${open.length} checklist item${open.length > 1 ? 's are' : ' is'} still open (mark done or not applicable): ` + open.join('; ') + '.', open });
+      const open = checklistView(row, data, parse(row.checklist, {}), states, await docList(row.organization_id, [row.id])).filter((i) => !i.na && !i.done && !i.optional)
+        .map((i) => i.label + (i.answer ? ' (choose Yes or No)' : i.upload === 'required' ? ' (upload the document)' : ''));
+      if (open.length) return res.status(422).json({ error: `${open.length} required checklist item${open.length > 1 ? 's are' : ' is'} still open (complete them or mark not applicable): ` + open.join('; ') + '.', open });
       f.completed_at = new Date();
     }
     if (row.status === 'complete') f.completed_at = null;
@@ -446,6 +528,86 @@ router.get('/:id/email', async (req, res, next) => {
   try {
     const row = await load(req, res); if (!row) return;
     res.json({ text: spec.buildEmail(row.worker_type, isHr(req) ? parse(row.data, {}) : withoutMoney(parse(row.data, {}))) });
+  } catch (err) { next(err); }
+});
+
+
+// ------------------------------------------------------- checklist documents
+// Upload (or replace) the document for one checklist item. Body: { itemKey, filename, contentBase64, replace }.
+router.post('/:id/documents', async (req, res, next) => {
+  try {
+    if (!isHr(req)) return denyHr(res);
+    const row = await load(req, res); if (!row) return;
+    if (row.status === 'complete' || row.status === 'cancelled') return res.status(409).json({ error: 'Reopen this onboarding before changing its documents.' });
+    const b = req.body || {};
+    const def = spec.checklistFor(row.worker_type, parse(row.data, {})).find((c) => c.key === b.itemKey);
+    if (!def || !def.upload) return res.status(404).json({ error: 'That checklist item does not take a document.' });
+    const filename = String(b.filename || '').replace(/[\\/\r\n"]/g, '_').trim().slice(0, 200);
+    const ext = (/\.([a-z0-9]+)$/i.exec(filename) || [])[1];
+    const t = ext && DOC_TYPES[ext.toLowerCase()];
+    if (!t) return res.status(415).json({ error: 'Upload a PDF, JPG, PNG or Word (.docx) file.' });
+    if (typeof b.contentBase64 !== 'string' || !b.contentBase64) return res.status(400).json({ error: 'Choose a file to upload.' });
+    if (b.contentBase64.length > Math.ceil(DOC_MAX / 3) * 4 + 8) return res.status(413).json({ error: 'That file is larger than 10 MB.' });
+    const buf = Buffer.from(b.contentBase64, 'base64');
+    if (!buf.length) return res.status(400).json({ error: 'That file is empty.' });
+    if (buf.length > DOC_MAX) return res.status(413).json({ error: 'That file is larger than 10 MB.' });
+    if (!t.magic(buf)) return res.status(415).json({ error: `That file does not look like a real .${ext.toLowerCase()} file.` });
+    if (!isConfigured()) return res.status(503).json({ error: 'Documents cannot be stored yet: the server has no encryption key (FIELD_ENCRYPTION_KEY). Nothing was saved.' });
+    const content = encryptBuffer(buf);
+    const [old] = await pool.query('SELECT id, filename FROM onboarding_documents WHERE organization_id = ? AND onboarding_id = ? AND item_key = ?', [row.organization_id, row.id, def.key]);
+    if (old.length && !b.replace) return res.status(409).json({ error: 'This item already has a document. Choose Replace to swap it.', existing: old.map((o) => o.filename) });
+    const [r] = await pool.query(
+      'INSERT INTO onboarding_documents (organization_id, onboarding_id, item_key, filename, mime, size, content, uploaded_by, uploaded_by_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      [row.organization_id, row.id, def.key, filename, t.mime, buf.length, content, who(req), req.user.id]);
+    if (old.length) await pool.query('DELETE FROM onboarding_documents WHERE organization_id = ? AND onboarding_id = ? AND item_key = ? AND id <> ?', [row.organization_id, row.id, def.key, r.insertId]);
+    addLog(row, req, `${def.label}: ${old.length ? 'document replaced' : 'document uploaded'} (${filename}, ${Math.max(1, Math.round(buf.length / 1024))} KB).`);
+    const f = { log: row.log };
+    if (row.status === 'draft') f.status = 'in_progress';
+    await save(row, f);
+    const [rows] = await pool.query('SELECT * FROM onboardings WHERE id = ?', [row.id]);
+    res.status(201).json(await present(rows[0], { allowedNext: NEXT[rows[0].status], documentId: r.insertId }, req));
+  } catch (err) {
+    if (missingTable(err)) return res.status(503).json({ error: SCHEMA_MSG });
+    if (err && (err.code === 'ER_NET_PACKET_TOO_LARGE' || err.code === 'EPIPE')) return res.status(413).json({ error: 'The database refused a file that large. Try a smaller file.' });
+    next(err);
+  }
+});
+
+async function loadDoc(req, res, row) {
+  if (!/^\d+$/.test(req.params.docId)) { res.status(404).json({ error: 'Document not found.' }); return null; }
+  const [d] = await pool.query('SELECT * FROM onboarding_documents WHERE id = ? AND onboarding_id = ? AND organization_id = ?', [req.params.docId, row.id, row.organization_id]);
+  if (!d[0]) { res.status(404).json({ error: 'Document not found.' }); return null; }
+  return d[0];
+}
+
+// View / download. HR admins and the owner, plus the recruiter who created the request (load() enforces that).
+router.get('/:id/documents/:docId', async (req, res, next) => {
+  try {
+    const row = await load(req, res); if (!row) return;
+    const d = await loadDoc(req, res, row); if (!d) return;
+    let buf;
+    try { buf = decryptBuffer(d.content); } catch (e) { return res.status(503).json({ error: 'This document cannot be decrypted with the server’s current encryption key.' }); }
+    const inline = req.query.download ? 'attachment' : 'inline';
+    res.set({
+      'Content-Type': d.mime, 'Content-Length': buf.length, 'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff',
+      'Content-Disposition': `${inline}; filename="${d.filename.replace(/[^\x20-\x7e]/g, '_')}"; filename*=UTF-8''${encodeURIComponent(d.filename)}`,
+    });
+    res.end(buf);
+  } catch (err) { if (missingTable(err)) return res.status(404).json({ error: 'Document not found.' }); next(err); }
+});
+
+router.delete('/:id/documents/:docId', async (req, res, next) => {
+  try {
+    if (!isHr(req)) return denyHr(res);
+    const row = await load(req, res); if (!row) return;
+    if (row.status === 'complete' || row.status === 'cancelled') return res.status(409).json({ error: 'Reopen this onboarding before changing its documents.' });
+    const d = await loadDoc(req, res, row); if (!d) return;
+    await pool.query('DELETE FROM onboarding_documents WHERE id = ?', [d.id]);
+    const def = spec.checklistFor(row.worker_type, parse(row.data, {})).find((c) => c.key === d.item_key);
+    addLog(row, req, `${def ? def.label : d.item_key}: document deleted (${d.filename}).`);
+    await save(row, { log: row.log });
+    const [rows] = await pool.query('SELECT * FROM onboardings WHERE id = ?', [row.id]);
+    res.json(await present(rows[0], { allowedNext: NEXT[rows[0].status] }, req));
   } catch (err) { next(err); }
 });
 

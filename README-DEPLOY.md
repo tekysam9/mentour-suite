@@ -391,3 +391,20 @@ Deploy: re-run `db/schema.sql` (new `onboardings` table, `users.role` gains `hr`
 **Invite codes carry a role.** *People and roles → Invite codes* creates a code for Recruiter, HR admin or Team member; whoever joins with it gets exactly that role (and a recruiter lands in Onboarding). Codes can be revoked. The original company-wide code still works and gives Team member (full access). Re-run `db/schema.sql` (new `invite_codes` table).
 
 **Rates are HR-only.** On an onboarding request the bill rate, pay rate, final cost and margin are visible only to HR admins (and the owner). A recruiter can type them in, but after saving they only see "Entered — only HR can see it"; they can overwrite a value but never read it back. The same applies to the list, the activity log and the "Copy as e-mail" text. No database change.
+
+### Update: personal invites, checklist documents, ACH / Wire banking form (October 2026)
+
+**Redeploying needs `db/schema.sql` re-run.** It is additive and safe to re-run: it adds
+`email`, `invitee_name`, `created_by_id`, `used_at`, `used_by_user_id` and `revoked_at` to
+`invite_codes`, and a new `onboarding_documents` table. `/api/version` reports
+`schema.personalInvites` and `schema.onboardingDocuments`.
+
+- **Personal invites** (Onboarding > People and roles): the owner (any role) or an HR admin
+  (Recruiter / Team member) enters an email and role and gets a one-time sign-up link tied to
+  that email. The app has no mail server configured, so the link is copied or opened in your
+  own mail app (`mailto:`); automatic emailing would need an SMTP provider.
+- **Checklist documents** are stored in the database (not on disk, which is replaced on
+  deploy), encrypted with `FIELD_ENCRYPTION_KEY`. PDF / JPG / PNG / DOCX, 10 MB max. The
+  database's `max_allowed_packet` must be at least 16 MB (the MariaDB default).
+- **ACH / Wire banking authorization** is a new fillable form (form type `banking`) on supplier
+  companies and consultants; bank numbers go to `record_secrets` (last 4 shown).

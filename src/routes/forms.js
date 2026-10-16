@@ -76,7 +76,9 @@ async function prefill(entity, rec, orgId, form) {
   let p = {}; try { p = (pr[0] && pr[0].data && JSON.parse(pr[0].data)) || {}; } catch (e) { p = {}; }
   const out = {};
   const base = { address: rec.address || '', city: p.city || '', state: p.state || '', zip: p.postal_code || '' };
-  if (form === 'w9') {
+  if (form === 'banking') {
+    Object.assign(out, { bank_name: '', ach_holder: p.legal_name || rec.name, wire_beneficiary: p.legal_name || rec.name, remit_email: rec.email || '' });
+  } else if (form === 'w9') {
     Object.assign(out, base, { name: p.legal_name || rec.name });
   } else {
     const parts = String(rec.name || '').replace(/-\d+$/, '').trim().split(/\s+/);
@@ -218,6 +220,16 @@ function requiredMissing(form, key, values, secretSet) {
       else if (values[d.key] === undefined || values[d.key] === '' || values[d.key] === false) out.push(d.label);
     });
   });
+  const groups = {};
+  FORMS[form].sections.filter((s) => s.signKey === key).forEach((s) => s.fields.forEach((d) => {
+    if (!d.oneOf) return;
+    const g = groups[d.oneOf] || (groups[d.oneOf] = { labels: [], ok: false });
+    g.labels.push(d.label);
+    if (d.kind === 'secret' ? secretSet[d.key] && secretSet[d.key].set : values[d.key]) g.ok = true;
+  }));
+  // a one-of group only applies when its section is showing (e.g. the wire fields when Wire is chosen)
+  if (form === 'banking' && values.method !== 'Wire') delete groups.wire_code;
+  Object.values(groups).forEach((g) => { if (!g.ok) out.push(g.labels.join(' or ')); });
   return out;
 }
 

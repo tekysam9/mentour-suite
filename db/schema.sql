@@ -568,3 +568,33 @@ CREATE TABLE IF NOT EXISTS invite_codes (
   FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE,
   UNIQUE KEY uq_invite_code (code)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Personal invites: the owner (or an HR admin, for Recruiter / Team member) invites one person by
+-- email with a chosen role. The code works once, only for that email. Added October 2026; safe to re-run.
+ALTER TABLE invite_codes ADD COLUMN IF NOT EXISTS email VARCHAR(255) NULL;
+ALTER TABLE invite_codes ADD COLUMN IF NOT EXISTS invitee_name VARCHAR(255) NULL;
+ALTER TABLE invite_codes ADD COLUMN IF NOT EXISTS created_by_id INT NULL;
+ALTER TABLE invite_codes ADD COLUMN IF NOT EXISTS used_at TIMESTAMP NULL DEFAULT NULL;
+ALTER TABLE invite_codes ADD COLUMN IF NOT EXISTS used_by_user_id INT NULL;
+ALTER TABLE invite_codes ADD COLUMN IF NOT EXISTS revoked_at TIMESTAMP NULL DEFAULT NULL;
+
+-- Onboarding checklist documents (vendor agreement, NDA, certificate of insurance, work
+-- authorization, background check ...). Stored in the database, not on disk, because the
+-- host replaces the app folder on every deploy. content is AES-256-GCM encrypted with
+-- FIELD_ENCRYPTION_KEY (iv | tag | ciphertext). Max 10 MB per file. Safe to re-run.
+CREATE TABLE IF NOT EXISTS onboarding_documents (
+  id              INT AUTO_INCREMENT PRIMARY KEY,
+  organization_id INT NOT NULL,
+  onboarding_id   INT NOT NULL,
+  item_key        VARCHAR(40) NOT NULL,
+  filename        VARCHAR(255) NOT NULL,
+  mime            VARCHAR(120) NOT NULL,
+  size            INT NOT NULL,
+  content         LONGBLOB NOT NULL,
+  uploaded_by     VARCHAR(255) NULL,
+  uploaded_by_id  INT NULL,
+  uploaded_at     TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE,
+  FOREIGN KEY (onboarding_id) REFERENCES onboardings(id) ON DELETE CASCADE,
+  INDEX idx_onboarding_docs (onboarding_id, item_key)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

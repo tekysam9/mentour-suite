@@ -72,6 +72,15 @@
     joinForm.hidden = false; newForm.hidden = true;
   });
 
+  // A personal invite link: /signup.html?code=...&email=... opens the Join tab already filled in.
+  (function () {
+    var q = new URLSearchParams(location.search);
+    if (!q.get('code')) return;
+    tabJoin.click();
+    joinForm.inviteCode.value = q.get('code');
+    if (q.get('email')) { joinForm.email.value = q.get('email'); joinForm.email.readOnly = true; }
+  })();
+
   async function submitForm(form, url, bodyFn, errorElId) {
     var errorEl = document.getElementById(errorElId);
     errorEl.hidden = true;

@@ -152,6 +152,35 @@ const FORMS = {
       ] },
     ],
   },
+  banking: {
+    title: 'ACH / Wire banking authorization', subtitle: 'Bank details for payments (ACH or wire transfer)',
+    edition: 'Mentour Corp payment authorization', entities: ['subvendors', 'consultants'],
+    signatures: { payee: { label: 'Authorized signer' } },
+    sections: [
+      { title: 'Payment method', signKey: 'payee', fields: [
+        f('method', 'How should we pay you?', 'select', { required: true, options: ['ACH', 'Wire'] }),
+        f('bank_name', 'Bank name', 'text', { required: true }),
+        f('remit_email', 'Remittance advice email (optional)', 'email'),
+      ] },
+      { title: 'ACH details', signKey: 'payee', showIf: { key: 'method', in: ['ACH'] }, fields: [
+        f('ach_holder', 'Account holder name', 'text', { requiredIf: { key: 'method', in: ['ACH'] } }),
+        f('ach_routing', 'Routing number (ABA, 9 digits)', 'secret', { secretKind: 'routing', requiredIf: { key: 'method', in: ['ACH'] }, help: 'Encrypted. Only the last 4 are ever shown.' }),
+        f('ach_account', 'Account number', 'secret', { secretKind: 'account', requiredIf: { key: 'method', in: ['ACH'] }, help: 'Encrypted. Only the last 4 are ever shown.' }),
+        f('ach_type', 'Account type', 'select', { options: ['Checking', 'Savings'], requiredIf: { key: 'method', in: ['ACH'] } }),
+      ] },
+      { title: 'Wire details', signKey: 'payee', showIf: { key: 'method', in: ['Wire'] }, fields: [
+        f('wire_beneficiary', 'Beneficiary name', 'text', { requiredIf: { key: 'method', in: ['Wire'] } }),
+        f('wire_account', 'Account number / IBAN', 'secret', { secretKind: 'wireaccount', requiredIf: { key: 'method', in: ['Wire'] }, help: 'Encrypted. Only the last 4 are ever shown.' }),
+        f('wire_aba', 'ABA / routing number (US banks)', 'secret', { secretKind: 'routing', oneOf: 'wire_code', help: 'Give the ABA number or the SWIFT/BIC (or both). Encrypted.' }),
+        f('wire_swift', 'SWIFT / BIC code', 'secret', { secretKind: 'swift', oneOf: 'wire_code', help: 'Encrypted. Only the last 4 are ever shown.' }),
+        f('wire_bank_address', 'Bank address', 'textarea', { requiredIf: { key: 'method', in: ['Wire'] } }),
+        f('wire_intermediary', 'Intermediary bank (optional: name, SWIFT/ABA)', 'textarea'),
+      ] },
+      { title: 'Authorization', signKey: 'payee', fields: [
+        f('payee_attest', 'I authorize Mentour Corp to send payments to the account above and confirm I am authorized on this account. This stays in effect until I give written notice of a change.', 'attest', { required: true }),
+      ] },
+    ],
+  },
 };
 
 const fieldsOfForm = (form) => FORMS[form].sections.flatMap((s) => s.fields.map((x) => Object.assign({}, x, { signKey: s.signKey })));

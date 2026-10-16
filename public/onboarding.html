@@ -186,7 +186,7 @@
     }
     h += '</div>';
 
-    if (S.me.isOwner) h += peopleCard();
+    if (S.me.isHr) h += peopleCard();
     h += '</div>';
     appEl.innerHTML = h;
   }
@@ -198,12 +198,30 @@
       h += '<p class="ob-muted" style="margin:12px 0"><b>Recruiter</b>: sees only the Onboarding module and only their own requests. <b>HR admin</b>: sees every request, approves them and can change any detail. <b>Team member</b>: the whole suite, with their own onboarding requests.</p><table class="ob-table"><tbody>';
       S.people.forEach(function (p) {
         h += '<tr><td><b>' + esc(p.name) + '</b></td><td class="ob-muted">' + esc(p.email) + '</td><td>' +
-          (p.role === 'owner' ? '<span class="ob-muted">Owner (always HR)</span>' :
+          (p.role === 'owner' ? '<span class="ob-muted">Owner (always HR)</span>' : !S.me.isOwner ? '<span>' + esc({ recruiter: 'Recruiter (Onboarding only)', hr: 'HR admin', member: 'Team member (full access)' }[p.role] || p.role) + '</span>' :
             '<select data-act="role" data-id="' + p.id + '"><option value="recruiter"' + (p.role === 'recruiter' ? ' selected' : '') + '>Recruiter (Onboarding only)</option><option value="hr"' + (p.role === 'hr' ? ' selected' : '') + '>HR admin</option><option value="member"' + (p.role === 'member' ? ' selected' : '') + '>Team member (full access)</option></select>') + '</td></tr>';
       });
       h += '</tbody></table>';
       var ROLE_NAME = { recruiter: 'Recruiter (Onboarding only)', hr: 'HR admin', member: 'Team member (full access)' };
-      h += '<div class="ob-addperson"><b style="font-size:12.5px">Invite codes</b><p class="ob-muted" style="margin:6px 0 10px">Send someone a code and they join with the role it carries. Sign-up is at the “Join with invite code” tab of the sign-in page.</p>' +
+      var IV = S.inviteInfo || {}, ivRoles = IV.canInviteRoles || ['recruiter', 'member'];
+      h += '<div class="ob-addperson"><b style="font-size:12.5px">Invite people to register</b><p class="ob-muted" style="margin:6px 0 10px">Enter their email and choose their role. They get a personal sign-up link that works once, only for that email, and gives them the role you picked. ' +
+        'The app does not send email yet: copy the link, or use <b>Open in email</b> to send it from your own mail app.</p>' +
+        '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center"><input type="email" id="pi-email" placeholder="Their email" style="max-width:240px"><input type="text" id="pi-name" placeholder="Name (optional)" style="max-width:200px">' +
+        '<select id="pi-role" style="max-width:230px">' + ivRoles.map(function (r) { return '<option value="' + r + '">' + esc(ROLE_NAME[r]) + '</option>'; }).join('') + '</select>' +
+        '<button class="ob-btn primary" data-act="pinvite-new">Create invite</button></div>';
+      if (S.lastInvite) h += '<div class="ob-msg ok" style="margin-top:10px">Invite for <b>' + esc(S.lastInvite.email) + '</b> (' + esc(ROLE_NAME[S.lastInvite.role]) + '): <input type="text" readonly value="' + esc(S.lastInvite.link) + '" style="width:100%;margin-top:6px" onclick="this.select()"></div>';
+      var pers = IV.personal || [];
+      if (pers.length) {
+        h += '<table class="ob-table" style="margin-top:10px"><tbody>' + pers.map(function (i) {
+          var st = i.status === 'used' ? 'Used' + (i.usedBy ? ' by ' + esc(i.usedBy) : '') + (i.usedAt ? ', ' + fmtWhen(i.usedAt) : '') : i.status === 'revoked' ? 'Revoked' : 'Pending';
+          var mail = i.link ? 'mailto:' + encodeURIComponent(i.email) + '?subject=' + encodeURIComponent('Your Mentour Suite invite') + '&body=' + encodeURIComponent('Hi' + (i.name ? ' ' + i.name : '') + ',\n\nYou have been invited to Mentour Suite as ' + ROLE_NAME[i.role] + '. Create your login here (use this email address):\n\n' + i.link + '\n\nThe link works once.') : '';
+          return '<tr><td><b>' + esc(i.name || '') + '</b> <span class="ob-muted">' + esc(i.email) + '</span></td><td>' + esc(ROLE_NAME[i.role]) + '</td><td>' + st + '</td><td style="white-space:nowrap">' +
+            (i.link ? '<button class="ob-link" data-act="pinvite-copy" data-link="' + esc(i.link) + '">Copy link</button> <a class="ob-link" href="' + esc(mail) + '">Open in email</a> <button class="ob-link" data-act="invite-revoke" data-id="' + i.id + '">Revoke</button>' : '') + '</td></tr>';
+        }).join('') + '</tbody></table>';
+      }
+      h += '</div>';
+      if (S.me.isOwner) {
+      h += '<div class="ob-addperson"><b style="font-size:12.5px">Shared invite codes</b><p class="ob-muted" style="margin:6px 0 10px">A reusable code anyone can join with; they get the role it carries. Sign-up is at the “Join with invite code” tab of the sign-in page.</p>' +
         (S.invites || []).map(function (i) { return '<div style="display:flex;gap:10px;align-items:center;margin-bottom:6px;font-size:13px"><code style="background:#EAF3EE;padding:3px 8px;border-radius:4px">' + esc(i.code) + '</code><span>' + esc(ROLE_NAME[i.role]) + '</span><button class="ob-btn" data-act="invite-revoke" data-id="' + i.id + '">Revoke</button></div>'; }).join('') +
         '<div style="display:flex;gap:8px;align-items:center;margin-top:8px"><select id="inv-role" style="max-width:260px"><option value="recruiter">Recruiter (Onboarding only)</option><option value="hr">HR admin</option><option value="member">Team member (full access)</option></select><button class="ob-btn primary" data-act="invite-new">Create invite code</button></div>' +
         (S.legacyCode ? '<p class="ob-muted" style="margin:10px 0 0">The older company-wide code <code>' + esc(S.legacyCode) + '</code> still works and gives <b>Team member (full access)</b>. Share role-specific codes instead.</p>' : '') + '</div>';
@@ -212,6 +230,7 @@
         '<input type="text" id="np-pass" placeholder="Temporary password (8+ characters)" autocomplete="off">' +
         '<select id="np-role"><option value="recruiter">Recruiter (Onboarding only)</option><option value="hr">HR admin</option><option value="member">Team member (full access)</option></select></div>' +
         '<div style="margin-top:8px"><button class="ob-btn primary" data-act="add-person">Add person</button></div></div>';
+      }
     }
     return h + '</details>';
   }
@@ -371,12 +390,23 @@
     var grp = '';
     cl.forEach(function (c) {
       if (c.group !== grp) { grp = c.group; h += '<div class="ob-grp">' + esc(grp) + '</div>'; }
-      h += '<div class="ob-item' + (c.na ? ' na' : '') + '"><input type="checkbox" data-act="tick" data-k="' + c.key + '"' + (c.done ? ' checked' : '') + (live && !(c.autoDone && !c.manualDone) ? '' : ' disabled') + '>' +
-        '<div class="lbl">' + esc(c.label) + (c.autoDone && !c.manualDone ? ' <span class="ob-chipf complete">automatic</span>' : '') + '</div><div class="more">';
-      if (c.form) {
-        h += '<span class="ob-chipf ' + (c.form.status === 'complete' ? 'complete' : '') + '">' + esc(c.form.title) + ': ' + esc(c.form.status || 'needs records') + '</span>';
-        if (c.form.recordId && hr) h += '<a class="ob-link" href="/form.html?type=' + c.form.entity + '&id=' + c.form.recordId + '&form=' + c.form.form + '">Open form</a>';
-        else h += '<span>Create the directory records first</span>';
+      var manual = !c.answer && !c.formOnly && c.upload !== 'required';
+      var tickable = live && manual && !(c.autoDone && !c.manualDone);
+      h += '<div class="ob-item' + (c.na ? ' na' : '') + '"><input type="checkbox" data-act="tick" data-k="' + c.key + '"' + (c.done ? ' checked' : '') + (tickable || (live && c.legacyDone) ? '' : ' disabled') + (manual ? '' : ' title="Completes itself: ' + (c.answer ? 'choose Yes or No' : c.formOnly ? 'fill in and sign the form' : 'upload the document') + '"') + '>' +
+        '<div class="lbl">' + esc(c.label) + (c.optional ? ' <span class="ob-chipf">optional</span>' : '') + (c.autoDone && !c.manualDone ? ' <span class="ob-chipf complete">automatic</span>' : '') + (c.legacyDone ? ' <span class="ob-chipf">ticked before uploads</span>' : '') + '</div><div class="more">';
+      if (c.answer) {
+        h += '<span class="ob-yn">' + ['Yes', 'No'].map(function (v) { return '<button class="ob-btn' + (c.value === v ? ' primary' : '') + '" data-act="answer" data-k="' + c.key + '" data-v="' + v + '"' + (live ? '' : ' disabled') + '>' + v + '</button>'; }).join(' ') + '</span>';
+        if (c.value === 'No' && c.key === 'background_check') h += '<span style="color:#9a3b1f">Answered No: check before completing.</span>';
+      }
+      if (c.upload) {
+        (c.documents || []).forEach(function (d) {
+          var u = '/api/onboarding/' + o.id + '/documents/' + d.id;
+          h += '<span>📄 <a class="ob-link" href="' + u + '" target="_blank" rel="noopener">' + esc(d.filename) + '</a> (' + Math.max(1, Math.round(d.size / 1024)) + ' KB, ' + esc(d.uploadedBy || '') + ', ' + fmtWhen(d.uploadedAt) + ') <a class="ob-link" href="' + u + '?download=1">Download</a>' +
+            (live ? ' <button class="ob-link" data-act="doc-del" data-id="' + d.id + '">Delete</button>' : '') + '</span>';
+        });
+        if (live) h += '<label class="ob-link" style="cursor:pointer">' + ((c.documents || []).length ? 'Replace document' : (c.upload === 'optional' ? 'Attach document (optional)' : 'Upload document')) +
+          '<input type="file" data-act="doc-up" data-k="' + c.key + '" data-replace="' + ((c.documents || []).length ? '1' : '') + '" accept=".pdf,.jpg,.jpeg,.png,.docx" hidden></label><span class="ob-muted">PDF, JPG, PNG or Word, up to 10 MB</span>';
+        if (c.future === 'fillable-pdf') h += '<span class="ob-muted">Upload for now; a fillable, e-signable version is coming.</span>';
       }
       if (c.hint) h += '<span>' + esc(c.hint) + '</span>';
       if (live) {
@@ -444,9 +474,19 @@
   appEl.addEventListener('click', function (e) {
     var b = e.target.closest('[data-act]'); if (!b) return;
     var act = b.getAttribute('data-act'), v = b.getAttribute('data-v'), id = b.getAttribute('data-id');
-    if (['tick', 'cnote', 'role'].indexOf(act) !== -1) return; // handled on change
+    if (['tick', 'cnote', 'role', 'doc-up'].indexOf(act) !== -1) return; // handled on change
     if (act === 'invite-new') { api('POST', '/api/onboarding/invites', { role: document.getElementById('inv-role').value }).then(function (r) { note(r.ok ? 'Invite code created.' : (r.body.error || 'Could not create it.'), r.ok ? 'ok' : 'err'); loadPeople(); }); return; }
-    if (act === 'invite-revoke') { api('DELETE', '/api/onboarding/invites/' + id).then(function () { note('Invite code revoked.'); loadPeople(); }); return; }
+    if (act === 'invite-revoke') { if (!confirm('Revoke this invite? The link will stop working.')) return; api('DELETE', '/api/onboarding/invites/' + id).then(function (r) { note(r.ok ? 'Invite revoked.' : (r.body.error || 'Could not revoke it.'), r.ok ? 'ok' : 'err'); loadPeople(); }); return; }
+    if (act === 'pinvite-new') {
+      api('POST', '/api/onboarding/invites', { email: document.getElementById('pi-email').value, name: document.getElementById('pi-name').value, role: document.getElementById('pi-role').value }).then(function (r) {
+        if (!r.ok) { note(r.body.error || 'Could not create the invite.', 'err'); renderList(); return; }
+        S.lastInvite = r.body;
+        try { navigator.clipboard.writeText(r.body.link); } catch (x) { /* shown below to copy by hand */ }
+        note('Invite created and the link copied. Send it to ' + r.body.email + '.', 'ok'); loadPeople();
+      });
+      return;
+    }
+    if (act === 'pinvite-copy') { var lk = b.getAttribute('data-link'); try { navigator.clipboard.writeText(lk).then(function () { note('Link copied.', 'ok'); renderList(); }); } catch (x) { prompt('Copy this link:', lk); } return; }
     if (act === 'add-person') {
       api('POST', '/api/onboarding/people', { name: document.getElementById('np-name').value, email: document.getElementById('np-email').value, password: document.getElementById('np-pass').value, role: document.getElementById('np-role').value })
         .then(function (r) { note(r.ok ? 'Added. Share their email and the temporary password with them.' : (r.body.error || 'Could not add that person.'), r.ok ? 'ok' : 'err'); S.people = null; loadPeople(); if (!r.ok) renderList(); });
@@ -473,6 +513,8 @@
       });
       return;
     }
+    if (act === 'answer') { api('POST', '/api/onboarding/' + S.ob.id + '/checklist', { key: b.getAttribute('data-k'), answer: v }).then(afterChecklist); return; }
+    if (act === 'doc-del') { if (!confirm('Delete this document?')) return; api('DELETE', '/api/onboarding/' + S.ob.id + '/documents/' + id).then(afterChecklist); return; }
     if (act === 'na') { api('POST', '/api/onboarding/' + S.ob.id + '/checklist', { key: b.getAttribute('data-k'), na: v === '1' }).then(afterChecklist); return; }
     if (act === 'delete') {
       if (!confirm('Delete this onboarding request? This cannot be undone.')) return;
@@ -514,6 +556,18 @@
 
   appEl.addEventListener('change', function (e) {
     var t = e.target, act = t.getAttribute('data-act');
+    if (act === 'doc-up') {
+      var file = t.files && t.files[0]; if (!file) return;
+      if (file.size > 10 * 1024 * 1024) { note('That file is larger than 10 MB.', 'err'); renderDetail(); return; }
+      var rd = new FileReader();
+      note('Uploading ' + file.name + '…'); 
+      rd.onload = function () {
+        var b64 = String(rd.result).split(',')[1] || '';
+        api('POST', '/api/onboarding/' + S.ob.id + '/documents', { itemKey: t.getAttribute('data-k'), filename: file.name, contentBase64: b64, replace: !!t.getAttribute('data-replace') }).then(function (r) { if (r.ok) note('Uploaded ' + file.name + '.', 'ok'); afterChecklist(r); });
+      };
+      rd.readAsDataURL(file);
+      return;
+    }
     if (act === 'tick') { api('POST', '/api/onboarding/' + S.ob.id + '/checklist', { key: t.getAttribute('data-k'), done: t.checked }).then(afterChecklist); return; }
     if (act === 'cnote') { api('POST', '/api/onboarding/' + S.ob.id + '/checklist', { key: t.getAttribute('data-k'), note: t.value }).then(function (r) { if (!r.ok) { note(r.body.error, 'err'); renderDetail(); } }); return; }
     if (act === 'role') { api('PUT', '/api/onboarding/people/' + t.getAttribute('data-id'), { role: t.value }).then(function (r) { note(r.ok ? 'Role updated.' : (r.body.error || 'Could not change the role.'), r.ok ? 'ok' : 'err'); loadPeople(); }); return; }
@@ -545,7 +599,7 @@
   }
   function loadPeople() {
     Promise.all([api('GET', '/api/onboarding/people'), api('GET', '/api/onboarding/invites')]).then(function (rs) {
-      S.people = rs[0].ok ? rs[0].body.people : null; S.invites = rs[1].ok ? rs[1].body.invites : []; S.legacyCode = rs[1].ok ? rs[1].body.legacyCode : '';
+      S.people = rs[0].ok ? rs[0].body.people : null; S.invites = rs[1].ok ? rs[1].body.invites : []; S.inviteInfo = rs[1].ok ? rs[1].body : {}; S.legacyCode = rs[1].ok ? rs[1].body.legacyCode : '';
       if (!S.ob && !S.draft) renderList();
     });
   }

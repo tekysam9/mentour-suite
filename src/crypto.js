@@ -46,4 +46,25 @@ function decrypt(stored) {
   return Buffer.concat([d.update(Buffer.from(ct, 'base64')), d.final()]).toString('utf8');
 }
 
-module.exports = { encrypt, decrypt, isConfigured };
+// Binary files (onboarding documents): raw iv(12) | tag(16) | ciphertext, so a 10 MB file stays ~10 MB.
+function needKey() {
+  const key = loadKey();
+  if (!key) { const e = new Error('FIELD_ENCRYPTION_KEY is not set (or is not 32 bytes).'); e.code = 'NO_KEY'; throw e; }
+  return key;
+}
+function encryptBuffer(buf) {
+  const key = needKey();
+  const iv = crypto.randomBytes(12);
+  const c = crypto.createCipheriv('aes-256-gcm', key, iv);
+  const ct = Buffer.concat([c.update(buf), c.final()]);
+  return Buffer.concat([iv, c.getAuthTag(), ct]);
+}
+function decryptBuffer(stored) {
+  const key = needKey();
+  const b = Buffer.from(stored);
+  const d = crypto.createDecipheriv('aes-256-gcm', key, b.subarray(0, 12));
+  d.setAuthTag(b.subarray(12, 28));
+  return Buffer.concat([d.update(b.subarray(28)), d.final()]);
+}
+
+module.exports = { encrypt, decrypt, isConfigured, encryptBuffer, decryptBuffer };

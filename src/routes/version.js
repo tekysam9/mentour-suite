@@ -82,6 +82,11 @@ router.get('/', async (req, res) => {
     out.schema.onboardingTable = ob[0].n === 1;
     const [ur] = await pool.query(`SELECT column_type AS ct FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = 'users' AND column_name = 'role'`);
     out.schema.hrRole = !!ur.length && /'hr'/.test(ur[0].ct);
+    const [pi] = await pool.query(`SELECT COUNT(*) AS n FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = 'invite_codes' AND column_name IN ('email','used_at','revoked_at')`);
+    out.schema.personalInvites = pi[0].n === 3;
+    const [od] = await pool.query(`SELECT COUNT(*) AS n FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = 'onboarding_documents'`);
+    out.schema.onboardingDocuments = od[0].n === 1;
+    if (!out.schema.personalInvites || !out.schema.onboardingDocuments) out.schema.ok = false;
     if (!out.schema.onboardingTable || !out.schema.hrRole) out.schema.ok = false;
     if (!out.schema.profileTables || !out.schema.supplierProfiles) out.schema.ok = false;
     if (!out.schema.clientTextAliasesTable || !out.schema.rateSourceHasHoursFile) out.schema.ok = false;

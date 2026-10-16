@@ -36,6 +36,8 @@ function secretClean(kind, raw) {
     const d = s.replace(/[\s-]/g, '');
     return /^\d{4,17}$/.test(d) ? d : null;
   }
+  if (kind === 'swift') { const d = s.replace(/\s/g, '').toUpperCase(); return /^[A-Z]{6}[A-Z0-9]{2}([A-Z0-9]{3})?$/.test(d) ? d : null; }
+  if (kind === 'wireaccount') { const d = s.replace(/[\s-]/g, '').toUpperCase(); return /^[A-Z0-9]{4,34}$/.test(d) ? d : null; }
   if (kind === 'anumber') {
     const d = s.replace(/^a[-\s]?/i, '').replace(/[\s-]/g, '');
     return /^\d{7,9}$/.test(d) ? d : null;

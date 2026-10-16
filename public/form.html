@@ -124,7 +124,8 @@
     d.locked.forEach(function (k) { locked[k] = true; });
     var shownSig = {};
     var body = spec.sections.map(function (sec, i) {
-      var html = '<div class="fm-card"><h2>' + esc(sec.title) + '</h2><div class="fm-grid">' + sec.fields.map(function (f) { return fieldHtml(f, locked); }).join('') + '</div></div>';
+      var show = sec.showIf ? ' data-showif="' + esc(sec.showIf.key) + '" data-showin="' + esc(sec.showIf.in.join('|')) + '"' : '';
+      var html = '<div class="fm-card"' + show + '><h2>' + esc(sec.title) + '</h2><div class="fm-grid">' + sec.fields.map(function (f) { return fieldHtml(f, locked); }).join('') + '</div></div>';
       var last = !spec.sections.slice(i + 1).some(function (s2) { return s2.signKey === sec.signKey; });
       if (sec.signKey && last && !shownSig[sec.signKey]) { shownSig[sec.signKey] = 1; html += signHtml(sec.signKey); }
       return html;
@@ -137,15 +138,25 @@
       '<div class="fm-body"><a class="fm-back" href="/record.html?type=' + esc(TYPE) + '&id=' + esc(ID) + '">← Back to ' + esc(d.recordName) + '</a>' +
       '<div class="fm-head"><div><div class="fm-kind">' + esc(d.recordName) + '</div><h1 class="fm-title">' + esc(spec.title) + '</h1><p class="fm-sub">' + esc(spec.subtitle) + '</p></div>' +
       '<span class="fm-badge ' + (d.status === 'complete' ? 'complete' : '') + '">' + esc(d.status) + '</span></div>' +
-      '<div class="fm-edition">' + esc(spec.edition) + '. This is an in-app record of the form; confirm the current edition with the IRS / USCIS.</div>' +
+      '<div class="fm-edition">' + esc(spec.edition) + (FORM === 'banking' ? '. Bank numbers are encrypted; only the last 4 are shown.' : '. This is an in-app record of the form; confirm the current edition with the IRS / USCIS.') + '</div>' +
       pre + enc + body +
       '<div class="fm-bar"><button class="fm-btn fm-btn-primary" id="save-btn" type="button">Save draft</button><button class="fm-btn" id="print-btn" type="button">Print / save as PDF</button>' +
       '<span class="fm-msg ' + S.kind + '" role="status">' + esc(S.msg) + '</span></div></div>';
     document.getElementById('logout-btn').addEventListener('click', function () { fetch('/api/auth/logout', { method: 'POST' }).then(function () { location.href = '/login.html'; }); });
     document.getElementById('save-btn').addEventListener('click', function () { save().then(function (ok) { if (ok) setMsg('Saved.', 'ok'); }); });
     document.getElementById('print-btn').addEventListener('click', function () { window.print(); });
+    applyShowIf();
+    appEl.querySelectorAll('[data-key]').forEach(function (el) { el.addEventListener('change', applyShowIf); });
     appEl.querySelectorAll('[data-sign]').forEach(function (b) { b.addEventListener('click', function () { sign(b.getAttribute('data-sign')); }); });
     appEl.querySelectorAll('[data-reopen]').forEach(function (b) { b.addEventListener('click', function () { reopen(b.getAttribute('data-reopen')); }); });
+  }
+  // Sections that only apply to one answer (e.g. ACH vs Wire details) are hidden for the others.
+  function applyShowIf() {
+    appEl.querySelectorAll('[data-showif]').forEach(function (card) {
+      var src = appEl.querySelector('[data-key="' + card.getAttribute('data-showif') + '"]');
+      var v = src ? src.value : (S.d.values[card.getAttribute('data-showif')] || '');
+      card.style.display = card.getAttribute('data-showin').split('|').indexOf(v) >= 0 ? '' : 'none';
+    });
   }
   function setMsg(t, k) { S.msg = t; S.kind = k || ''; var m = document.querySelector('.fm-msg'); if (m) { m.textContent = t; m.className = 'fm-msg ' + (k || ''); } }
 
@@ -194,7 +205,7 @@
     if (!u) return; S.user = u.user;
     return api('GET', '/api/forms/schema').then(function (r) {
       if (r.ok) { S.can = r.body.canEditSecrets; S.enc = r.body.encryptionConfigured; }
-      document.title = ({ w9: 'Form W-9', w4: 'Form W-4', i9: 'Form I-9' }[FORM] || 'Form') + ' — Mentour Suite';
+      document.title = ({ w9: 'Form W-9', w4: 'Form W-4', i9: 'Form I-9', banking: 'ACH / Wire banking authorization' }[FORM] || 'Form') + ' — Mentour Suite';
       return reload();
     });
   });

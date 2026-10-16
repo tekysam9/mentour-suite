@@ -79,21 +79,46 @@ router.post('/join', authLimiter, async (req, res, next) => {
     // A role-specific code (created by the owner) wins; the original organization code still gives a Team member.
     let joinRole = 'member';
     let orgs = [];
+    let personal = null;
+    const lower = String(email).toLowerCase();
     try {
-      const [ic] = await pool.query('SELECT organization_id AS id, role FROM invite_codes WHERE code = ? AND revoked = 0 LIMIT 1', [String(inviteCode).trim()]);
-      if (ic.length) { orgs = [{ id: ic[0].id }]; joinRole = ic[0].role; }
-    } catch (e) { if (!(e && e.code === 'ER_NO_SUCH_TABLE')) throw e; }
+      const [ic] = await pool.query('SELECT id, organization_id AS org, role, email, used_at FROM invite_codes WHERE code = ? AND revoked = 0 LIMIT 1', [String(inviteCode).trim()]);
+      if (ic.length) {
+        if (ic[0].email) {
+          if (ic[0].used_at) return res.status(410).json({ error: 'That invite has already been used. Ask for a new one.' });
+          if (ic[0].email.toLowerCase() !== lower) return res.status(403).json({ error: 'This invite was sent to a different email address. Sign up with the address it was sent to.' });
+          personal = ic[0];
+        }
+        orgs = [{ id: ic[0].org }]; joinRole = ic[0].role;
+      }
+    } catch (e) {
+      if (e && e.code === 'ER_BAD_FIELD_ERROR') { // schema not re-run yet: role codes still work
+        const [ic] = await pool.query('SELECT organization_id AS id, role FROM invite_codes WHERE code = ? AND revoked = 0 LIMIT 1', [String(inviteCode).trim()]);
+        if (ic.length) { orgs = [{ id: ic[0].id }]; joinRole = ic[0].role; }
+      } else if (!(e && e.code === 'ER_NO_SUCH_TABLE')) throw e;
+    }
     if (!orgs.length) [orgs] = await pool.query('SELECT id FROM organizations WHERE invite_code = ? LIMIT 1', [String(inviteCode).trim()]);
     if (!orgs.length) return res.status(404).json({ error: 'That invite code was not found.' });
 
-    const [existing] = await pool.query('SELECT id FROM users WHERE email = ? LIMIT 1', [String(email).toLowerCase()]);
+    const [existing] = await pool.query('SELECT id FROM users WHERE email = ? LIMIT 1', [lower]);
     if (existing.length) return res.status(409).json({ error: 'An account with that email already exists.' });
 
     const passwordHash = await hashPassword(password);
-    const [userResult] = await pool.query(
-      'INSERT INTO users (organization_id, email, password_hash, name, role) VALUES (?, ?, ?, ?, ?)',
-      [orgs[0].id, String(email).toLowerCase(), passwordHash, String(name).trim(), joinRole]
-    );
+    let userResult;
+    const conn = await pool.getConnection();
+    try {
+      await conn.beginTransaction();
+      if (personal) { // claim the invite first, so two sign-ups racing on one code cannot both win
+        const [u] = await conn.query('UPDATE invite_codes SET used_at = NOW() WHERE id = ? AND used_at IS NULL AND revoked = 0', [personal.id]);
+        if (!u.affectedRows) { await conn.rollback(); return res.status(410).json({ error: 'That invite has already been used. Ask for a new one.' }); }
+      }
+      [userResult] = await conn.query(
+        'INSERT INTO users (organization_id, email, password_hash, name, role) VALUES (?, ?, ?, ?, ?)',
+        [orgs[0].id, lower, passwordHash, String(name).trim(), joinRole]
+      );
+      if (personal) await conn.query('UPDATE invite_codes SET used_by_user_id = ? WHERE id = ?', [userResult.insertId, personal.id]);
+      await conn.commit();
+    } catch (e) { await conn.rollback(); throw e; } finally { conn.release(); }
 
     req.session.userId = userResult.insertId;
     const [rows] = await pool.query(

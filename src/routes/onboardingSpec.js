@@ -98,14 +98,22 @@ const fieldsFor = (type) => sectionsFor(type).flatMap((s) => s.fields);
 // on: 'consultant' | 'supplier'  -> which directory record the form lives on
 // when: item only applies when data[key] === value
 const item = (key, label, extra) => Object.assign({ key, label }, extra || {});
+// answer: 'yesno'          -> HR picks Yes / No; the item is done once answered
+// upload: 'required'       -> done once a document is uploaded
+// upload: 'optional'       -> a document can be attached but is not needed
+// optional: true           -> shown, but never blocks completion
+// future: 'fillable-pdf'   -> later becomes a fillable PDF with e-signature (upload for now)
 const COMMON_TAIL = [
-  item('background_check', 'Background check cleared', { group: 'Compliance' }),
-  item('rate_confirmation', 'Rate confirmation sent and accepted', { group: 'Commercial', hint: 'Bill rate and pay rate agreed in writing.' }),
-  item('invoicing_setup', 'Invoicing set up with the client', { group: 'Commercial', hint: 'Recipient, method (QuickBooks / portal) and PO number confirmed.' }),
-  item('timesheet_access', 'Timesheet process and access arranged', { group: 'Setup' }),
-  item('client_docs', 'Client onboarding paperwork, badge and equipment', { group: 'Setup' }),
+  item('background_check', 'Background check cleared', { group: 'Compliance', answer: 'yesno', upload: 'optional', hint: 'Choose Yes or No. Attaching the report is optional.' }),
+  item('rate_confirmation', 'Rate confirmation sent and accepted', { group: 'Commercial', answer: 'yesno', hint: 'Bill rate and pay rate agreed in writing.' }),
+  item('timesheet_access', 'Timesheet process and access arranged', { group: 'Setup', answer: 'yesno' }),
+  item('client_docs', 'Client onboarding paperwork, badge and equipment', { group: 'Setup', optional: true }),
   item('directory_records', 'Directory records created', { group: 'Setup', auto: 'records', hint: 'Use “Create directory records” on this page.' }),
 ];
+// Checklist keys that were renamed or removed; old onboardings are mapped on read.
+const RENAMED = { subcontract: 'vendor_agreement' };
+const REMOVED = ['invoicing_setup'];
+const NDA = item('nda', 'NDA / confidentiality agreement signed', { group: 'Paperwork', upload: 'required', future: 'fillable-pdf' });
 const H1B = item('h1b_petition', 'H-1B petition filed', { group: 'Compliance', when: { key: 'h1b_filing_required', value: 'Yes' } });
 
 const CHECKLISTS = {
@@ -117,7 +125,7 @@ const CHECKLISTS = {
     item('direct_deposit', 'Direct deposit details collected', { group: 'Paperwork' }),
     item('emergency_contact', 'Emergency contact collected', { group: 'Paperwork' }),
     item('handbook', 'Handbook and policies acknowledged', { group: 'Paperwork' }),
-    item('nda', 'NDA / confidentiality agreement signed', { group: 'Paperwork' }),
+    NDA,
     item('everify', 'E-Verify case created', { group: 'Compliance', hint: 'Only if the company is enrolled.' }),
     H1B,
     item('benefits', 'Benefits enrollment offered or waived', { group: 'Setup' }),
@@ -125,18 +133,18 @@ const CHECKLISTS = {
   ].concat(COMMON_TAIL.filter((x) => x.key !== 'rate_confirmation')),
   C2C: [
     item('company_w9', 'Company Form W-9', { group: 'Paperwork', form: 'w9', on: 'supplier', hint: 'The consultant’s company fills this in; it needs the company to exist as a supplier company (created for you).' }),
-    item('subcontract', 'Subcontract / vendor agreement signed', { group: 'Paperwork' }),
-    item('coi', 'Certificate of insurance on file', { group: 'Paperwork', hint: 'Record the expiry date in the note so it can be chased.' }),
-    item('employer_work_auth', 'Employer confirms the consultant’s work authorization', { group: 'Compliance', hint: 'The consultant’s own company completes the I-9 for its employee.' }),
-    item('nda', 'NDA / confidentiality agreement signed', { group: 'Paperwork' }),
-    item('remittance', 'Company banking / remittance details collected', { group: 'Paperwork' }),
+    item('vendor_agreement', 'Vendor agreement', { group: 'Paperwork', upload: 'required', future: 'fillable-pdf', hint: 'Upload the signed agreement.' }),
+    item('coi', 'Certificate of insurance on file', { group: 'Paperwork', upload: 'required', hint: 'Upload the certificate; record the expiry date in the note so it can be chased.' }),
+    item('employer_work_auth', 'Employer confirms the consultant’s work authorization', { group: 'Compliance', upload: 'required', hint: 'Upload the employer’s confirmation. The consultant’s own company completes the I-9 for its employee.' }),
+    NDA,
+    item('remittance', 'Company banking / remittance details collected', { group: 'Paperwork', form: 'banking', on: 'supplier', formOnly: true, hint: 'The ACH / Wire banking authorization form, filled in and signed. Needs the supplier company (created with the directory records).' }),
     H1B,
   ].concat(COMMON_TAIL),
   '1099': [
     item('contractor_agreement', 'Independent contractor agreement signed', { group: 'Paperwork' }),
     item('w9', 'Form W-9', { group: 'Paperwork', form: 'w9', on: 'consultant' }),
     item('i9', 'Form I-9 (employment eligibility)', { group: 'Paperwork', form: 'i9', on: 'consultant', hint: 'Kept for contractors as company practice.' }),
-    item('nda', 'NDA / confidentiality agreement signed', { group: 'Paperwork' }),
+    NDA,
     item('payment_details', 'Payment (ACH) details collected', { group: 'Paperwork' }),
     H1B,
   ].concat(COMMON_TAIL),
@@ -265,4 +273,12 @@ function parseEmail(text) {
   return { fields, worker_type: fields.worker_type || '', matched: Array.from(new Set(matched)), unmatched };
 }
 
-module.exports = { WORKER_TYPES, SECTIONS, sectionsFor, fieldsFor, CHECKLISTS, checklistFor, buildEmail, parseEmail, RATE_BASIS, US_STATES };
+// Old checklist JSON -> current keys: renamed keys move over (without overwriting newer data),
+// removed items simply stop showing (their stored state is kept, never deleted).
+function migrateChecklist(stored) {
+  const out = Object.assign({}, stored || {});
+  Object.entries(RENAMED).forEach(([from, to]) => { if (out[from] && !out[to]) out[to] = out[from]; delete out[from]; });
+  return out;
+}
+
+module.exports = { migrateChecklist, RENAMED, REMOVED, WORKER_TYPES, SECTIONS, sectionsFor, fieldsFor, CHECKLISTS, checklistFor, buildEmail, parseEmail, RATE_BASIS, US_STATES };

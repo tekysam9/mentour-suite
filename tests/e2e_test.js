@@ -26,6 +26,10 @@ function makeJar() {
       try { body = await res.json(); } catch (e) { /* no body */ }
       return { status: res.status, body };
     },
+    async raw(pathName) {
+      const res = await fetch(BASE + pathName, { headers: cookie ? { Cookie: cookie } : {} });
+      return { status: res.status, headers: res.headers, buf: Buffer.from(await res.arrayBuffer()) };
+    },
   };
 }
 
@@ -1733,7 +1737,7 @@ async function main() {
 
       // 36. Fillable forms: W-9 (vendors), W-4 and I-9 (consultants).
       r = await pfOwner.fetch('/api/forms/consultants/' + pfCons);
-      check('consultant has W-4, I-9 and W-9 (for 1099) forms listed, none started', r.status === 200 && r.body.forms.map((x) => x.form).sort().join() === 'i9,w4,w9' && r.body.forms.every((x) => x.status === 'not started'), r.body);
+      check('consultant has W-4, I-9 and W-9 (for 1099) forms listed, none started', r.status === 200 && r.body.forms.map((x) => x.form).sort().join() === 'banking,i9,w4,w9' && r.body.forms.every((x) => x.status === 'not started'), r.body);
       r = await pfOwner.fetch('/api/forms/programs/' + pfSub);
       check('vendor has only a W-9', r.body.forms.length === 1 && r.body.forms[0].form === 'w9', r.body);
       r = await pfOwner.fetch('/api/forms/clients/' + pfClient);
@@ -1843,7 +1847,7 @@ async function main() {
       r = await pfOther.fetch('/api/profiles/subvendors/' + sup);
       check('another organisation cannot see the supplier profile', r.status === 404, r);
       r = await pfOwner.fetch('/api/forms/subvendors/' + sup);
-      check('supplier companies get the W-9 form (their own company W-9)', r.status === 200 && r.body.forms.length === 1 && r.body.forms[0].form === 'w9', r.body);
+      check('supplier companies get the W-9 form (their own company W-9)', r.status === 200 && r.body.forms.map((x) => x.form).sort().join() === 'banking,w9', r.body);
       const [secRow] = await dbConn.query(`SELECT cipher FROM record_secrets WHERE entity = 'subvendors' AND record_id = ? AND field = 'tax_id'`, [sup]);
       check('supplier tax ID is encrypted in the database', secRow.length === 1 && /^v1:/.test(secRow[0].cipher), secRow);
 
@@ -1912,7 +1916,7 @@ async function main() {
       r = await pfOwner.fetch('/api/onboarding/' + obId + '/status', { method: 'POST', body: JSON.stringify({ status: 'in_progress' }) });
       check('HR approves and starts onboarding', r.status === 200 && r.body.status === 'in_progress' && /Approved/.test(r.body.log[0].text), r.body);
       const clKeys = r.body.checklist.map((c) => c.key);
-      check('C2C checklist: company W-9, subcontract, insurance; no W-4', clKeys.includes('company_w9') && clKeys.includes('subcontract') && clKeys.includes('coi') && !clKeys.includes('w4') && !clKeys.includes('h1b_petition'), clKeys);
+      check('C2C checklist: company W-9, vendor agreement, insurance; no W-4, no invoicing set-up', !clKeys.includes('invoicing_setup') && clKeys.includes('company_w9') && clKeys.includes('vendor_agreement') && clKeys.includes('coi') && !clKeys.includes('w4') && !clKeys.includes('h1b_petition'), clKeys);
 
       r = await pfOwner.fetch('/api/onboarding/' + obId + '/status', { method: 'POST', body: JSON.stringify({ status: 'complete' }) });
       check('cannot complete with open checklist items', r.status === 422 && /still open/.test(r.body.error), r.body);
@@ -1932,13 +1936,97 @@ async function main() {
       r = await pfOwner.fetch('/api/forms/subvendors/' + supId);
       check('the company’s W-9 shows as not started on the checklist', (await pfOwner.fetch('/api/onboarding/' + obId)).body.checklist.find((c) => c.key === 'company_w9').form.status === 'not started', r.body);
 
-      // tick everything (W-9 by hand: paper copy on file) and complete
+      // ---- checklist items: uploads, Yes/No answers, the banking form, optional items
       let ob = (await pfOwner.fetch('/api/onboarding/' + obId)).body;
-      for (const c of ob.checklist.filter((x) => !x.done)) {
-        r = await pfOwner.fetch('/api/onboarding/' + obId + '/checklist', { method: 'POST', body: JSON.stringify(c.key === 'coi' ? { done: true, key: c.key, note: 'expires 2027-06-30' } : { done: true, key: c.key }) });
+      const item = (key) => ob.checklist.find((c) => c.key === key);
+      check('vendor agreement / COI / work auth / NDA take a required upload', ['vendor_agreement', 'coi', 'employer_work_auth', 'nda'].every((k) => item(k).upload === 'required') && item('vendor_agreement').label === 'Vendor agreement' && item('vendor_agreement').future === 'fillable-pdf', ob.checklist);
+      check('background check: Yes/No with an optional upload; rate and timesheet are Yes/No', item('background_check').answer === 'yesno' && item('background_check').upload === 'optional' && item('rate_confirmation').answer === 'yesno' && item('timesheet_access').answer === 'yesno', ob.checklist);
+      check('client paperwork/badge is optional and not counted', item('client_docs').optional === true && ob.progress.total === ob.checklist.filter((c) => !c.optional && !c.na).length, ob.progress);
+      check('remittance links to the ACH / Wire banking form', item('remittance').form && item('remittance').form.form === 'banking' && item('remittance').form.entity === 'subvendors', item('remittance'));
+      r = await pfOwner.fetch('/api/onboarding/' + obId + '/checklist', { method: 'POST', body: JSON.stringify({ key: 'coi', done: true }) });
+      check('an upload item cannot be ticked by hand', r.status === 400, r.body);
+      r = await pfOwner.fetch('/api/onboarding/' + obId + '/checklist', { method: 'POST', body: JSON.stringify({ key: 'remittance', done: true }) });
+      check('the banking item cannot be ticked by hand', r.status === 400, r.body);
+      r = await pfOwner.fetch('/api/onboarding/' + obId + '/checklist', { method: 'POST', body: JSON.stringify({ key: 'rate_confirmation', done: true }) });
+      check('a Yes/No item needs an answer, not a tick', r.status === 400, r.body);
+      r = await pfOwner.fetch('/api/onboarding/' + obId + '/checklist', { method: 'POST', body: JSON.stringify({ key: 'rate_confirmation', answer: 'Maybe' }) });
+      check('only Yes or No is accepted', r.status === 400, r.body);
+      for (const [k, v] of [['rate_confirmation', 'Yes'], ['timesheet_access', 'Yes'], ['background_check', 'No']]) {
+        r = await pfOwner.fetch('/api/onboarding/' + obId + '/checklist', { method: 'POST', body: JSON.stringify({ key: k, answer: v }) });
       }
+      check('Yes/No answers are saved and count as done', r.status === 200 && r.body.checklist.find((c) => c.key === 'background_check').value === 'No' && r.body.checklist.find((c) => c.key === 'rate_confirmation').done === true && /answered No/.test(r.body.log[0].text), r.body.log && r.body.log[0]);
+
+      // uploads
+      const pdf = Buffer.concat([Buffer.from('%PDF-1.4\n'), require('crypto').randomBytes(2000), Buffer.from('\n%%EOF')]);
+      const up = (who, key, name, buf, extra) => who.fetch('/api/onboarding/' + obId + '/documents', { method: 'POST', body: JSON.stringify(Object.assign({ itemKey: key, filename: name, contentBase64: buf.toString('base64') }, extra || {})) });
+      r = await up(obRec, 'coi', 'coi.pdf', pdf);
+      check('a recruiter cannot upload checklist documents', r.status === 403, r.body);
+      r = await up(pfOwner, 'coi', 'coi.exe', pdf);
+      check('an .exe is refused', r.status === 415, r.body);
+      r = await up(pfOwner, 'coi', 'fake.pdf', Buffer.from('hello, not a pdf'));
+      check('a file that is not really a PDF is refused', r.status === 415, r.body);
+      r = await up(pfOwner, 'coi', 'big.pdf', Buffer.concat([Buffer.from('%PDF-'), Buffer.alloc(10 * 1024 * 1024)]));
+      check('a file over 10 MB is refused', r.status === 413, r.body);
+      r = await up(pfOwner, 'rate_confirmation', 'x.pdf', pdf);
+      check('an item without uploads refuses a document', r.status === 404, r.body);
+      r = await up(pfOwner, 'coi', 'COI 2027.pdf', pdf);
+      check('HR uploads the certificate of insurance', r.status === 201 && r.body.checklist.find((c) => c.key === 'coi').done === true && r.body.checklist.find((c) => c.key === 'coi').documents[0].filename === 'COI 2027.pdf' && /document uploaded/.test(r.body.log[0].text), r.body.log && r.body.log[0]);
+      let docId = r.body.documentId;
+      const [[stored]] = await dbConn.query('SELECT content, size FROM onboarding_documents WHERE id = ?', [docId]);
+      check('the stored file is encrypted (not the plain PDF)', stored.size === pdf.length && !Buffer.from(stored.content).includes(Buffer.from('%PDF-')), stored.size);
+      let dl = await pfOwner.raw('/api/onboarding/' + obId + '/documents/' + docId + '?download=1');
+      check('HR downloads the original bytes', dl.status === 200 && dl.buf.equals(pdf) && dl.headers.get('content-type') === 'application/pdf' && /attachment/.test(dl.headers.get('content-disposition')), dl.status);
+      dl = await obRec.raw('/api/onboarding/' + obId + '/documents/' + docId);
+      check('the recruiter who created the request can view it', dl.status === 200 && dl.buf.equals(pdf), dl.status);
+      dl = await obRec2.raw('/api/onboarding/' + obId + '/documents/' + docId);
+      check('another recruiter cannot view it', dl.status === 404, dl.status);
+      dl = await pfOther.raw('/api/onboarding/' + obId + '/documents/' + docId);
+      check('another organisation cannot view it', dl.status === 404, dl.status);
+      r = await up(pfOwner, 'coi', 'coi-v2.png', Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(100)]));
+      check('a second upload needs Replace', r.status === 409, r.body);
+      r = await up(pfOwner, 'coi', 'coi-v2.png', Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(100)]), { replace: true });
+      const coiDocs = r.body.checklist.find((c) => c.key === 'coi').documents;
+      check('Replace swaps the document', r.status === 201 && coiDocs.length === 1 && coiDocs[0].filename === 'coi-v2.png' && /replaced/.test(r.body.log[0].text), coiDocs);
+      docId = coiDocs[0].id;
+      r = await obRec.fetch('/api/onboarding/' + obId + '/documents/' + docId, { method: 'DELETE' });
+      check('a recruiter cannot delete a document', r.status === 403, r.body);
+      r = await pfOwner.fetch('/api/onboarding/' + obId + '/documents/' + docId, { method: 'DELETE' });
+      check('HR deletes it and the item reopens', r.status === 200 && r.body.checklist.find((c) => c.key === 'coi').done === false && /document deleted/.test(r.body.log[0].text), r.body.log && r.body.log[0]);
+      const docx = Buffer.concat([Buffer.from([0x50, 0x4b, 0x03, 0x04]), Buffer.alloc(200)]);
+      for (const [k, n, b] of [['coi', 'coi.pdf', pdf], ['vendor_agreement', 'Vendor Agreement.docx', docx], ['employer_work_auth', 'auth.jpg', Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.alloc(50)])], ['nda', 'nda.pdf', pdf], ['background_check', 'report.pdf', pdf]]) r = await up(pfOwner, k, n, b);
+      check('all required documents uploaded (and the optional background report)', r.status === 201 && ['coi', 'vendor_agreement', 'employer_work_auth', 'nda'].every((k) => r.body.checklist.find((c) => c.key === k).done), r.body.checklist);
+
       r = await pfOwner.fetch('/api/onboarding/' + obId + '/status', { method: 'POST', body: JSON.stringify({ status: 'complete' }) });
-      check('HR completes the onboarding', r.status === 200 && r.body.status === 'complete' && r.body.progress.done === r.body.progress.total, r.body);
+      check('still blocked until the banking form is signed (and the W-9)', r.status === 422 && /Company banking/.test(r.body.error) && !/Client onboarding paperwork/.test(r.body.error), r.body);
+
+      // the ACH / Wire banking authorization form on the supplier company
+      const bankUrl = '/api/forms/subvendors/' + supId + '/banking';
+      r = await pfOwner.fetch(bankUrl);
+      check('banking form opens, prefilled with the company name', r.status === 200 && r.body.spec.title === 'ACH / Wire banking authorization' && r.body.values.ach_holder === 'Accurate Software Consulting LLC', r.body.values);
+      r = await pfOwner.fetch(bankUrl, { method: 'PUT', body: JSON.stringify({ values: { method: 'Wire', bank_name: 'First Bank', wire_beneficiary: 'Accurate Software Consulting LLC', wire_bank_address: '1 Main St, NY', payee_attest: true }, secrets: { wire_account: 'GB29 NWBK 6016 1331 9268 19' } }) });
+      check('wire details saved', r.status === 200, r.body);
+      r = await pfOwner.fetch(bankUrl + '/sign', { method: 'POST', body: JSON.stringify({ signature: 'payee', typedName: 'Pat Payee', consent: true }) });
+      check('wire needs an ABA or SWIFT before signing', r.status === 400 && /SWIFT/.test(r.body.error), r.body);
+      r = await pfOwner.fetch(bankUrl, { method: 'PUT', body: JSON.stringify({ secrets: { wire_swift: 'bad!' } }) });
+      check('a malformed SWIFT is refused', r.status === 400, r.body);
+      r = await pfOwner.fetch(bankUrl, { method: 'PUT', body: JSON.stringify({ values: { method: 'ACH', ach_type: 'Checking', ach_holder: 'Accurate Software Consulting LLC' }, secrets: { ach_routing: '021000021', ach_account: '123456789012', wire_swift: 'NWBKGB2L' } }) });
+      check('ACH details saved', r.status === 200, r.body);
+      r = await pfOwner.fetch(bankUrl);
+      check('bank numbers come back as last 4 only', r.body.secrets.ach_account.set && r.body.secrets.ach_account.last4 === '9012' && r.body.secrets.ach_routing.masked === '****0021' && !JSON.stringify(r.body).includes('123456789012') && !JSON.stringify(r.body).includes('021000021'), r.body.secrets);
+      const [bankSec] = await dbConn.query(`SELECT field, cipher FROM record_secrets WHERE entity = 'subvendors' AND record_id = ? AND field LIKE 'banking.%'`, [supId]);
+      check('bank numbers are encrypted at rest', bankSec.length === 4 && bankSec.every((x) => /^v1:/.test(x.cipher) && !x.cipher.includes('123456789012')), bankSec.map((x) => x.field));
+      r = await pfOwner.fetch(bankUrl + '/sign', { method: 'POST', body: JSON.stringify({ signature: 'payee', typedName: 'Pat Payee', consent: true }) });
+      check('the payee signs the banking form', r.status === 200 && r.body.status === 'complete', r.body);
+      r = await pfOwner.fetch(bankUrl, { method: 'PUT', body: JSON.stringify({ values: { bank_name: 'Other' } }) });
+      check('a signed banking form is locked', r.status === 400 && /signed section/.test(r.body.error), r.body);
+      ob = (await pfOwner.fetch('/api/onboarding/' + obId)).body;
+      check('the banking checklist item ticks itself once signed', item('remittance').done === true && item('remittance').form.status === 'complete', item('remittance'));
+      // W-9 by hand (paper copy on file)
+      r = await pfOwner.fetch('/api/onboarding/' + obId + '/checklist', { method: 'POST', body: JSON.stringify({ key: 'company_w9', done: true, note: 'paper copy' }) });
+      ob = r.body;
+      check('only the optional item is still open', ob.checklist.filter((c) => !c.done && !c.na).map((c) => c.key).join() === 'client_docs', ob.checklist.filter((c) => !c.done).map((c) => c.key));
+      r = await pfOwner.fetch('/api/onboarding/' + obId + '/status', { method: 'POST', body: JSON.stringify({ status: 'complete' }) });
+      check('HR completes the onboarding with the optional item still open', r.status === 200 && r.body.status === 'complete' && r.body.progress.done === r.body.progress.total && r.body.checklist.find((c) => c.key === 'client_docs').done === false, r.body);
       r = await pfOwner.fetch('/api/onboarding/' + obId, { method: 'PUT', body: JSON.stringify({ data: { recruiter: 'x' } }) });
       check('a completed onboarding is locked until reopened', r.status === 409, r);
       r = await pfOwner.fetch('/api/onboarding/' + obId + '/status', { method: 'POST', body: JSON.stringify({ status: 'in_progress' }) });
@@ -1974,6 +2062,68 @@ async function main() {
       r = await obRec2.fetch('/api/onboarding', { method: 'GET' });
       r = await pfOther.fetch('/api/onboarding/' + obId);
       check('another organisation cannot see the onboarding', r.status === 404, r);
+
+      // ---- old checklist JSON still loads (renamed key mapped, removed item hidden but kept)
+      {
+        const [[o]] = await dbConn.query('SELECT organization_id FROM onboardings WHERE id = ?', [obId]);
+        const old = { subcontract: { done: true, note: 'signed 2025', by: 'Old HR' }, invoicing_setup: { done: true, note: 'QB' }, rate_confirmation: { done: true }, coi: { done: true }, remittance: { done: true } };
+        const [ins] = await dbConn.query(`INSERT INTO onboardings (organization_id, worker_type, status, consultant_name, data, checklist, log) VALUES (?, 'C2C', 'in_progress', 'Legacy Larry', ?, ?, '[]')`,
+          [o.organization_id, JSON.stringify({ consultant_name: 'Legacy Larry', h1b_filing_required: 'No' }), JSON.stringify(old)]);
+        r = await pfOwner.fetch('/api/onboarding/' + ins.insertId);
+        const g = (k) => r.body.checklist.find((c) => c.key === k);
+        check('old checklist: subcontract shows as the Vendor agreement with its note', r.status === 200 && g('vendor_agreement').done === true && g('vendor_agreement').note === 'signed 2025' && g('vendor_agreement').legacyDone === true, r.body.checklist && g('vendor_agreement'));
+        check('old checklist: invoicing set-up is gone, ticked rate confirmation reads as Yes, ticked COI/remittance still count', !g('invoicing_setup') && g('rate_confirmation').value === 'Yes' && g('coi').done && g('remittance').done, r.body.checklist);
+        r = await pfOwner.fetch('/api/onboarding/' + ins.insertId + '/checklist', { method: 'POST', body: JSON.stringify({ key: 'timesheet_access', answer: 'Yes' }) });
+        const [[after]] = await dbConn.query('SELECT checklist FROM onboardings WHERE id = ?', [ins.insertId]);
+        const a = JSON.parse(after.checklist);
+        check('saving an old checklist keeps every stored value (removed item preserved, renamed key moved)', a.invoicing_setup && a.invoicing_setup.note === 'QB' && a.vendor_agreement && a.vendor_agreement.note === 'signed 2025' && !a.subcontract && a.timesheet_access.answer === 'Yes', a);
+        r = await pfOwner.fetch('/api/onboarding/' + ins.insertId + '/checklist', { method: 'POST', body: JSON.stringify({ key: 'invoicing_setup', done: true }) });
+        check('the removed item can no longer be changed', r.status === 404, r.body);
+      }
+
+      // ---- personal invites: one email, one role, one use
+      {
+        r = await obRec2.fetch('/api/onboarding/invites', { method: 'POST', body: JSON.stringify({ email: 'x@inv.test', role: 'recruiter' }) });
+        check('a recruiter cannot send invites', r.status === 403, r.body);
+        r = await pfOwner.fetch('/api/onboarding/invites', { method: 'POST', body: JSON.stringify({ email: 'not-an-email', role: 'recruiter' }) });
+        check('an invalid email is refused', r.status === 400, r.body);
+        r = await pfOwner.fetch('/api/onboarding/invites', { method: 'POST', body: JSON.stringify({ email: 'Hannah@Inv.test', name: 'Hannah HR', role: 'hr' }) });
+        check('the owner invites Hannah as an HR admin and gets a link', r.status === 201 && r.body.role === 'hr' && r.body.email === 'hannah@inv.test' && /\/signup\.html\?code=[0-9a-f]{24}&email=hannah%40inv\.test$/.test(r.body.link) && r.body.emailSending === false, r.body);
+        const hCode = r.body.code;
+        r = await pfOwner.fetch('/api/onboarding/invites');
+        const hi = r.body.personal.find((x) => x.email === 'hannah@inv.test');
+        check('the invite is listed as pending with its link', hi && hi.status === 'pending' && hi.role === 'hr' && hi.name === 'Hannah HR' && !!hi.link, r.body.personal);
+        const wrong = makeJar();
+        r = await wrong.fetch('/api/auth/join', { method: 'POST', body: JSON.stringify({ inviteCode: hCode, name: 'Mallory', email: 'mallory@inv.test', password: 'password1234' }) });
+        check('the invite does not work for a different email', r.status === 403, r.body);
+        const hannah = makeJar();
+        r = await hannah.fetch('/api/auth/join', { method: 'POST', body: JSON.stringify({ inviteCode: hCode, name: 'Hannah HR', email: 'HANNAH@inv.test', password: 'password1234' }) });
+        check('Hannah signs up and gets the HR admin role', r.status === 201 && r.body.user.role === 'hr', r.body);
+        const again = makeJar();
+        r = await again.fetch('/api/auth/join', { method: 'POST', body: JSON.stringify({ inviteCode: hCode, name: 'Hannah Two', email: 'hannah@inv.test', password: 'password1234' }) });
+        check('the invite works only once', r.status === 410 || r.status === 409, r.body);
+        r = await pfOwner.fetch('/api/onboarding/invites');
+        check('the invite now shows as used, by Hannah', r.body.personal.find((x) => x.email === 'hannah@inv.test').status === 'used' && r.body.personal.find((x) => x.email === 'hannah@inv.test').usedBy === 'Hannah HR' && !r.body.personal.find((x) => x.email === 'hannah@inv.test').link, r.body.personal);
+        r = await hannah.fetch('/api/onboarding/invites', { method: 'POST', body: JSON.stringify({ email: 'otto@inv.test', role: 'hr' }) });
+        check('an HR admin cannot invite another HR admin', r.status === 403, r.body);
+        r = await hannah.fetch('/api/onboarding/invites', { method: 'POST', body: JSON.stringify({ email: 'rex@inv.test', role: 'recruiter' }) });
+        check('an HR admin can invite a recruiter', r.status === 201 && r.body.role === 'recruiter', r.body);
+        const rexCode = r.body.code;
+        const rexId = (await hannah.fetch('/api/onboarding/invites')).body.personal.find((x) => x.email === 'rex@inv.test').id;
+        r = await pfOwner.fetch('/api/onboarding/invites', { method: 'POST', body: JSON.stringify({ email: 'rita@onb.test', role: 'member' }) });
+        check('inviting an email that already has a login is refused', r.status === 409, r.body);
+        r = await hannah.fetch('/api/onboarding/invites/' + rexId, { method: 'DELETE' });
+        check('the invite is revoked', r.status === 200, r.body);
+        const rex = makeJar();
+        r = await rex.fetch('/api/auth/join', { method: 'POST', body: JSON.stringify({ inviteCode: rexCode, name: 'Rex', email: 'rex@inv.test', password: 'password1234' }) });
+        check('a revoked invite cannot be used', r.status === 404, r.body);
+        r = await pfOwner.fetch('/api/onboarding/invites');
+        check('the revoked invite is listed as revoked', r.body.personal.find((x) => x.id === rexId).status === 'revoked', r.body.personal);
+        r = await pfOwner.fetch('/api/onboarding/invites', { method: 'POST', body: JSON.stringify({ email: 'tm@inv.test', role: 'member' }) });
+        const tm = makeJar();
+        r = await tm.fetch('/api/auth/join', { method: 'POST', body: JSON.stringify({ inviteCode: r.body.code, name: 'Tina Team', email: 'tm@inv.test', password: 'password1234' }) });
+        check('a Team member invite gives the member role', r.status === 201 && r.body.user.role === 'member', r.body);
+      }
 
       // 39. A recruiter-only login: Onboarding module and nothing else.
       r = await pfOwner.fetch('/api/onboarding/people', { method: 'POST', body: JSON.stringify({ name: 'Ron Recruiter', email: 'ron@pftest.test', password: 'ronpassword123', role: 'recruiter' }) });
