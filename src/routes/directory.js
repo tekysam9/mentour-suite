@@ -61,11 +61,13 @@ const REFERENCING_COLUMNS = {
     // Generated subvendor invoices are regenerable, so a pairing both records
     // already have is simply left on the loser (and cascades away with it).
     { table: 'subvendor_invoices', column: 'consultant_id', ignore: true },
+    { table: 'onboardings', column: 'consultant_id', optional: true },
   ],
   subvendors: [
     { table: 'margin_roster_entries', column: 'subvendor_id' },
     { table: 'ledger_roster_entries', column: 'subvendor_id' },
     { table: 'subvendor_invoices', column: 'subvendor_id', ignore: true },
+    { table: 'onboardings', column: 'supplier_id', optional: true },
   ],
   clients: [
     { table: 'margin_roster_entries', column: 'client_id' },

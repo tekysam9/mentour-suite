@@ -1,0 +1,542 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Onboarding — Mentour Suite</title>
+<link rel="stylesheet" href="/shared.css">
+<link rel="stylesheet" href="/shell.css">
+<style>
+  .ob { max-width: 1240px; margin: 0 auto; padding: 28px 24px 72px; }
+  .ob h1 { font-family: Georgia, 'Iowan Old Style', 'Palatino Linotype', serif; font-size: 30px; font-weight: 600; color: var(--ink); margin: 0 0 6px; }
+  .ob-lede { color: var(--text-muted); font-size: 13.5px; line-height: 1.55; margin: 0 0 20px; max-width: 760px; }
+  .ob-top { display: flex; justify-content: space-between; align-items: flex-end; gap: 16px; flex-wrap: wrap; margin-bottom: 18px; }
+  .ob-card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 18px 20px; margin-bottom: 16px; }
+  .ob-card h2 { font-size: 12.5px; text-transform: uppercase; letter-spacing: .06em; color: var(--text-muted); margin: 0 0 14px; font-weight: 700; }
+  .ob-btn { border: 1px solid var(--line); background: var(--card); border-radius: 5px; padding: 8px 15px; font-size: 13px; font-weight: 600; cursor: pointer; font-family: inherit; color: var(--text); }
+  .ob-btn:hover { background: var(--paper); }
+  .ob-btn:disabled { opacity: .55; cursor: default; }
+  .ob-btn.primary { background: var(--pine); border-color: var(--pine); color: #EFF3EC; }
+  .ob-btn.primary:hover { background: #275F46; }
+  .ob-btn.danger { color: var(--brick); border-color: #E3C2B5; }
+  .ob-btn.small { padding: 4px 10px; font-size: 12px; }
+  .ob-link { color: var(--pine); font-weight: 600; text-decoration: none; cursor: pointer; background: none; border: none; font: inherit; padding: 0; }
+  .ob-link:hover { text-decoration: underline; }
+  .ob-muted { color: var(--text-muted); font-size: 12.5px; }
+  .ob-msg { font-size: 13px; font-weight: 600; padding: 9px 13px; border-radius: 7px; margin-bottom: 14px; }
+  .ob-msg.ok { background: #E6F0EA; color: var(--pine); }
+  .ob-msg.err { background: #F7E4DD; color: var(--brick); }
+  .ob-msg.warn { background: #F5F1E4; color: #6E5F26; font-weight: 500; }
+  .ob-badge { display: inline-block; font-size: 11px; font-weight: 700; border-radius: 999px; padding: 2px 9px; white-space: nowrap; letter-spacing: .02em; }
+  .t-W2 { background: #E3EFE8; color: #1F5A3F; } .t-C2C { background: #F6EBD3; color: #7A5410; } .t-1099 { background: #E4E8F2; color: #34456F; }
+  .s-draft { background: #ECE9DC; color: #5F5A45; } .s-submitted { background: #F8E3C4; color: #8A4A07; } .s-in_progress { background: #DCE8F6; color: #234D80; }
+  .s-complete { background: #DCEEDD; color: #1F5A3F; } .s-cancelled { background: #EFE0DA; color: #8A3B20; }
+  .ob-pending { border-color: #E6C48A; background: #FFFAF0; }
+  .ob-pending h2 { color: #8A4A07; }
+  .ob-row { display: flex; align-items: center; gap: 14px; padding: 10px 0; border-top: 1px solid #EFE6CB; flex-wrap: wrap; }
+  .ob-row:first-of-type { border-top: none; }
+  .ob-row .nm { font-weight: 600; color: var(--ink); min-width: 180px; }
+  .ob-row .sub { flex: 1; min-width: 200px; font-size: 12.5px; color: var(--text-muted); }
+  .ob-chips { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 14px; }
+  .ob-chip { border: 1px solid var(--line); background: var(--card); border-radius: 999px; padding: 5px 13px; font-size: 12.5px; font-weight: 600; cursor: pointer; font-family: inherit; color: var(--text); }
+  .ob-chip.on { background: var(--pine); border-color: var(--pine); color: #fff; }
+  .ob-chip em { font-style: normal; opacity: .75; margin-left: 4px; font-weight: 500; }
+  .ob-tools { display: flex; gap: 10px; flex-wrap: wrap; margin-left: auto; }
+  .ob input[type=text], .ob input[type=search], .ob input[type=number], .ob input[type=date], .ob input[type=email], .ob select, .ob textarea {
+    border: 1px solid var(--line); border-radius: 5px; padding: 7px 9px; font-size: 13px; font-family: inherit; color: var(--text); background: var(--paper); outline: none; box-sizing: border-box; }
+  .ob input:focus, .ob select:focus, .ob textarea:focus { border-color: var(--pine); }
+  table.ob-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .ob-table th { text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--text-muted); padding: 8px 10px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  .ob-table td { padding: 10px; border-bottom: 1px solid #EFEBDD; vertical-align: middle; }
+  .ob-table tr.click { cursor: pointer; } .ob-table tr.click:hover td { background: var(--paper); }
+  .ob-bar { height: 7px; width: 90px; background: #E7E2D0; border-radius: 99px; overflow: hidden; display: inline-block; vertical-align: middle; margin-right: 6px; }
+  .ob-bar i { display: block; height: 100%; background: var(--pine); }
+  .ob-types { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 12px; margin-bottom: 18px; }
+  .ob-type { text-align: left; border: 1.5px solid var(--line); background: var(--card); border-radius: 10px; padding: 14px 16px; cursor: pointer; font-family: inherit; color: var(--text); }
+  .ob-type b { display: block; font-size: 15px; color: var(--ink); margin-bottom: 4px; }
+  .ob-type span { font-size: 12.5px; color: var(--text-muted); line-height: 1.45; }
+  .ob-type.on { border-color: var(--pine); box-shadow: 0 0 0 3px rgba(31,90,63,.12); }
+  .ob-type[disabled] { cursor: default; opacity: .6; }
+  .ob-layout { display: grid; grid-template-columns: minmax(0, 1fr) 380px; gap: 22px; align-items: start; }
+  @media (max-width: 1000px) { .ob-layout { grid-template-columns: 1fr; } }
+  .ob-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 14px 16px; }
+  .ob-f label { display: block; font-size: 11.5px; font-weight: 600; color: var(--text-muted); margin-bottom: 4px; }
+  .ob-f input, .ob-f select, .ob-f textarea { width: 100%; }
+  .ob-f textarea { min-height: 70px; resize: vertical; }
+  .ob-f.wide { grid-column: 1 / -1; }
+  .ob-f .help { font-size: 11px; color: var(--text-muted); margin-top: 3px; line-height: 1.4; }
+  .ob-f.bad input, .ob-f.bad select { border-color: var(--brick); }
+  .ob-req { color: var(--brick); }
+  .ob-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin: 10px 0 6px; }
+  .ob-actions { display: flex; gap: 10px; flex-wrap: wrap; margin: 12px 0 18px; align-items: center; }
+  .ob-confirm { background: #F5F1E4; border: 1px solid #E3D9B3; border-radius: 8px; padding: 12px 14px; font-size: 13px; display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-bottom: 14px; }
+  .ob-confirm textarea { flex: 1 1 320px; min-height: 52px; }
+  .ob-margin { margin-top: 12px; font-size: 13px; background: #EAF3EE; color: var(--pine); border-radius: 6px; padding: 8px 12px; display: inline-block; font-weight: 600; }
+  .ob-margin.neg { background: #F7E4DD; color: var(--brick); }
+  .ob-grp { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--text-muted); font-weight: 700; margin: 14px 0 4px; }
+  .ob-item { display: grid; grid-template-columns: 22px 1fr; gap: 4px 10px; padding: 8px 0; border-bottom: 1px solid #EFEBDD; font-size: 13px; }
+  .ob-item:last-child { border-bottom: none; }
+  .ob-item.na .lbl { text-decoration: line-through; color: var(--text-muted); }
+  .ob-item .lbl { color: var(--ink); font-weight: 500; }
+  .ob-item .more { grid-column: 2; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; font-size: 12px; color: var(--text-muted); }
+  .ob-item .more input[type=text] { flex: 1 1 140px; font-size: 12px; padding: 4px 7px; }
+  .ob-chipf { font-size: 11px; font-weight: 700; border-radius: 4px; padding: 1px 6px; background: #ECE9DC; color: #5F5A45; }
+  .ob-chipf.complete { background: #DCEEDD; color: #1F5A3F; }
+  .ob-log { font-size: 12.5px; line-height: 1.5; }
+  .ob-log div { padding: 7px 0; border-bottom: 1px solid #EFEBDD; }
+  .ob-log small { display: block; color: var(--text-muted); font-size: 11px; }
+  .ob-paste textarea { width: 100%; min-height: 150px; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px; }
+  .ob-savebar { position: sticky; bottom: 0; background: var(--paper); border-top: 1px solid var(--line); padding: 12px 0; display: flex; gap: 12px; align-items: center; margin-top: 8px; flex-wrap: wrap; }
+  .ob-empty { padding: 28px; text-align: center; color: var(--text-muted); }
+</style>
+</head>
+<body>
+<div id="app"><div class="ob"><p class="ob-muted">Loading…</p></div></div>
+<script src="/shell.js"></script>
+<script>
+(function () {
+  var appEl = document.getElementById('app');
+  var S = { me: null, schema: null, list: { items: [], counts: {}, status: 'open', type: '', q: '' }, pending: [], people: null,
+            ob: null, draft: null, isNew: false, dirty: false, msg: null, errors: {}, confirm: null, parsed: null, emailText: null, recDefaults: null };
+
+  function esc(s) { return s === null || s === undefined ? '' : String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;'); }
+  function api(m, u, b) {
+    return fetch(u, { method: m, headers: { 'Content-Type': 'application/json' }, body: b ? JSON.stringify(b) : undefined })
+      .then(function (r) { return r.json().catch(function () { return {}; }).then(function (j) { return { ok: r.ok, status: r.status, body: j }; }); });
+  }
+  function fmtDate(d) { if (!d) return ''; var p = String(d).slice(0, 10).split('-'); return p.length === 3 ? p[1] + '/' + p[2] + '/' + p[0] : ''; }
+  function fmtWhen(t) { if (!t) return ''; var d = new Date(t); return isNaN(d) ? '' : d.toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }); }
+  function money(n) { return Number(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+  var STATUS_LABEL = { draft: 'Draft', submitted: 'Pending HR approval', in_progress: 'In progress', complete: 'Complete', cancelled: 'Cancelled' };
+  var TYPE_LABEL = { W2: 'W2', C2C: 'C2C', '1099': '1099' };
+  function badge(cls, text) { return '<span class="ob-badge ' + cls + '">' + esc(text) + '</span>'; }
+  function isHr() { return S.me && S.me.isHr; }
+  function typeInfo(t) { return (S.schema.workerTypes || []).filter(function (x) { return x.key === t; })[0] || {}; }
+  function note(msg, kind) { S.msg = msg ? { text: msg, kind: kind || 'ok' } : null; }
+
+  // -------------------------------------------------------------- routing
+  function route() {
+    var h = location.hash.replace('#', '');
+    S.msg = null; S.confirm = null; S.errors = {}; S.emailText = null; S.parsed = null;
+    if (h === 'new') { startNew(); return; }
+    if (/^\d+$/.test(h)) { openOb(h); return; }
+    loadList();
+  }
+  window.addEventListener('hashchange', route);
+  function go(h) { if (location.hash.replace('#', '') === h) route(); else location.hash = h; }
+
+  // ----------------------------------------------------------------- list
+  function loadList() {
+    S.ob = null; S.draft = null;
+    var q = '?status=' + encodeURIComponent(S.list.status) + (S.list.type ? '&type=' + S.list.type : '') + (S.list.q ? '&q=' + encodeURIComponent(S.list.q) : '');
+    var jobs = [api('GET', '/api/onboarding' + q)];
+    if (isHr()) jobs.push(api('GET', '/api/onboarding?status=submitted'));
+    Promise.all(jobs).then(function (rs) {
+      if (!rs[0].ok) { note(rs[0].body.error || 'Could not load onboarding.', 'err'); S.list.items = []; }
+      else { S.list.items = rs[0].body.onboardings; S.list.counts = rs[0].body.counts || {}; }
+      S.pending = rs[1] && rs[1].ok ? rs[1].body.onboardings : [];
+      window.dispatchEvent(new Event('onboarding-changed'));
+      renderList();
+    });
+  }
+  function count(st) { var c = S.list.counts; return st === 'open' ? (c.draft || 0) + (c.submitted || 0) + (c.in_progress || 0) : st === 'all' ? Object.keys(c).reduce(function (a, k) { return a + c[k]; }, 0) : (c[st] || 0); }
+
+  function progBar(p) {
+    if (!p || !p.total) return '<span class="ob-muted">—</span>';
+    return '<span class="ob-bar"><i style="width:' + Math.round(p.done / p.total * 100) + '%"></i></span><span class="ob-muted">' + p.done + '/' + p.total + '</span>';
+  }
+
+  function renderList() {
+    var hr = isHr();
+    var h = '<div class="ob"><div class="ob-top"><div><h1>Onboarding</h1><p class="ob-lede">' +
+      (hr ? 'Requests from recruiters land here for your approval. Review the placement (you can change any detail), approve it, then work the paperwork checklist for the way the person is engaged: W2, C2C or 1099.'
+          : 'Fill in the placement details and send them to HR. HR approves the request or sends it back with a note; you can follow its progress here.') +
+      '</p></div><div><button class="ob-btn primary" data-act="new">+ New onboarding request</button></div></div>';
+    if (S.msg) h += '<div class="ob-msg ' + S.msg.kind + '">' + esc(S.msg.text) + '</div>';
+
+    if (hr && S.pending.length) {
+      h += '<div class="ob-card ob-pending"><h2>Waiting for your approval (' + S.pending.length + ')</h2>';
+      S.pending.forEach(function (o) {
+        h += '<div class="ob-row"><span class="nm">' + esc(o.consultantName) + '</span>' + badge('t-' + o.workerType, TYPE_LABEL[o.workerType]) +
+          '<span class="sub">' + esc(o.endClient || 'No end client yet') + (o.startDate ? ' · starts ' + fmtDate(o.startDate) : '') + (o.recruiter ? ' · recruiter ' + esc(o.recruiter) : '') + '</span>' +
+          '<button class="ob-btn small primary" data-act="open" data-id="' + o.id + '">Review</button></div>';
+      });
+      h += '</div>';
+    }
+
+    h += '<div class="ob-chips">';
+    [['open', 'Open'], ['submitted', 'Pending approval'], ['in_progress', 'In progress'], ['draft', 'Drafts'], ['complete', 'Complete'], ['cancelled', 'Cancelled'], ['all', 'All']].forEach(function (c) {
+      h += '<button class="ob-chip' + (S.list.status === c[0] ? ' on' : '') + '" data-act="status" data-v="' + c[0] + '">' + c[1] + '<em>' + count(c[0]) + '</em></button>';
+    });
+    h += '<span class="ob-tools"><select id="f-type"><option value="">All types</option>' +
+      ['W2', 'C2C', '1099'].map(function (t) { return '<option value="' + t + '"' + (S.list.type === t ? ' selected' : '') + '>' + t + '</option>'; }).join('') +
+      '</select><input type="search" id="f-q" placeholder="Search by name" value="' + esc(S.list.q) + '"></span></div>';
+
+    h += '<div class="ob-card" style="padding:6px 10px">';
+    if (!S.list.items.length) h += '<div class="ob-empty">Nothing here yet.' + (S.list.status !== 'all' ? ' Try “All”.' : '') + '</div>';
+    else {
+      h += '<div style="overflow-x:auto"><table class="ob-table"><thead><tr><th>Consultant</th><th>Type</th><th>End client</th><th>Start</th><th>Recruiter</th><th>Status</th><th>Checklist</th><th>Updated</th></tr></thead><tbody>';
+      S.list.items.forEach(function (o) {
+        h += '<tr class="click" data-act="open" data-id="' + o.id + '"><td><b>' + esc(o.consultantName) + '</b></td><td>' + badge('t-' + o.workerType, TYPE_LABEL[o.workerType]) + '</td><td>' + esc(o.endClient) + '</td><td>' +
+          fmtDate(o.startDate) + '</td><td>' + esc(o.recruiter) + '</td><td>' + badge('s-' + o.status, STATUS_LABEL[o.status]) + '</td><td>' + progBar(o.progress) + '</td><td class="ob-muted">' + fmtWhen(o.updatedAt) + '</td></tr>';
+      });
+      h += '</tbody></table></div>';
+    }
+    h += '</div>';
+
+    if (S.me.isOwner) h += peopleCard();
+    h += '</div>';
+    appEl.innerHTML = h;
+  }
+
+  function peopleCard() {
+    var h = '<details class="ob-card" id="people-card"' + (S.people ? ' open' : '') + '><summary style="cursor:pointer;font-weight:700;font-size:12.5px;text-transform:uppercase;letter-spacing:.06em;color:var(--text-muted)">People and roles</summary>';
+    if (!S.people) h += '<p class="ob-muted" style="margin-top:12px">Loading…</p>';
+    else {
+      h += '<p class="ob-muted" style="margin:12px 0">HR admins see every onboarding request, approve them and can change any detail. Recruiters only see their own requests.</p><table class="ob-table"><tbody>';
+      S.people.forEach(function (p) {
+        h += '<tr><td><b>' + esc(p.name) + '</b></td><td class="ob-muted">' + esc(p.email) + '</td><td>' +
+          (p.role === 'owner' ? '<span class="ob-muted">Owner (always HR)</span>' :
+            '<select data-act="role" data-id="' + p.id + '"><option value="member"' + (p.role === 'member' ? ' selected' : '') + '>Recruiter</option><option value="hr"' + (p.role === 'hr' ? ' selected' : '') + '>HR admin</option></select>') + '</td></tr>';
+      });
+      h += '</tbody></table>';
+    }
+    return h + '</details>';
+  }
+
+  // --------------------------------------------------------------- detail
+  function startNew() {
+    S.ob = null; S.isNew = true; S.dirty = false;
+    S.draft = { workerType: '', data: {} };
+    renderDetail();
+  }
+  function openOb(id) {
+    api('GET', '/api/onboarding/' + id).then(function (r) {
+      if (!r.ok) { note(r.body.error || 'Could not open that onboarding.', 'err'); location.hash = ''; return; }
+      setOb(r.body); S.isNew = false; S.dirty = false; renderDetail();
+    });
+  }
+  function setOb(o) { S.ob = o; S.draft = { workerType: o.workerType, data: JSON.parse(JSON.stringify(o.data || {})) }; S.recDefaults = null; }
+
+  function canEdit() {
+    if (S.isNew) return true;
+    if (!S.ob || S.ob.status === 'complete') return false;
+    return isHr() || S.ob.status === 'draft';
+  }
+
+  function sectionsFor(type) { return S.schema.sections.filter(function (s) { return !s.types || s.types.indexOf(type) !== -1; }); }
+
+  function fieldHtml(f, ed) {
+    var v = S.draft.data[f.key]; v = v === undefined ? '' : v;
+    var id = 'f-' + f.key;
+    var inner;
+    if (!ed) inner = '<div style="padding:7px 0;font-size:13px">' + (v === '' ? '<span class="ob-muted">—</span>' : esc(f.kind === 'date' ? fmtDate(v) : v)) + '</div>';
+    else if (f.kind === 'select') inner = '<select id="' + id + '" data-f="' + f.key + '"><option value=""></option>' + f.options.map(function (o) { return '<option' + (String(v) === o ? ' selected' : '') + '>' + esc(o) + '</option>'; }).join('') + '</select>';
+    else if (f.kind === 'textarea') inner = '<textarea id="' + id + '" data-f="' + f.key + '">' + esc(v) + '</textarea>';
+    else {
+      var t = f.kind === 'date' ? 'date' : f.kind === 'number' ? 'number' : f.kind === 'email' ? 'email' : 'text';
+      inner = '<input id="' + id + '" type="' + t + '"' + (t === 'number' ? ' step="0.01" min="0"' : '') + ' data-f="' + f.key + '" value="' + esc(v) + '">';
+    }
+    return '<div class="ob-f' + (f.wide ? ' wide' : '') + (S.errors[f.key] ? ' bad' : '') + '"><label for="' + id + '">' + esc(f.label) + (f.required ? ' <span class="ob-req">*</span>' : '') + '</label>' + inner +
+      (S.errors[f.key] ? '<div class="help" style="color:var(--brick)">' + esc(S.errors[f.key]) + '</div>' : (f.help && ed ? '<div class="help">' + esc(f.help) + '</div>' : '')) + '</div>';
+  }
+
+  function marginHtml() {
+    var d = S.draft.data;
+    if (d.bill_rate === undefined || d.bill_rate === '' || (d.pay_rate === undefined && d.final_cost === undefined)) return '';
+    if ((d.bill_rate_basis || 'Hourly') !== (d.pay_rate_basis || 'Hourly')) return '';
+    var cost = d.final_cost !== undefined && d.final_cost !== '' ? Number(d.final_cost) : Number(d.pay_rate);
+    var per = Number(d.bill_rate) - cost; if (isNaN(per)) return '';
+    var pct = Number(d.bill_rate) ? per / Number(d.bill_rate) * 100 : 0;
+    return '<div id="margin" class="ob-margin' + (per < 0 ? ' neg' : '') + '">Margin: $' + money(per) + ' per ' + ({ Hourly: 'hour', Daily: 'day', Monthly: 'month', Annual: 'year' }[d.bill_rate_basis || 'Hourly']) + ' (' + pct.toFixed(1) + '%) on ' + (d.final_cost !== undefined && d.final_cost !== '' ? 'final cost' : 'pay rate') + '</div>';
+  }
+
+  function defaultsFromEndClient() {
+    var t = String(S.draft.data.end_client || '').trim(); var i = t.indexOf('/');
+    var client = i < 0 ? t : t.slice(i + 1).trim(), vendor = i < 0 ? '' : t.slice(0, i).trim();
+    return { client: client || vendor, vendor: client ? vendor : '' };
+  }
+
+  function renderDetail() {
+    var o = S.ob, d = S.draft, ed = canEdit(), hr = isHr();
+    var h = '<div class="ob"><a class="ob-link" href="#">← All onboarding</a>';
+    h += '<div class="ob-head"><h1 style="margin:0">' + esc(S.isNew ? 'New onboarding request' : (d.data.consultant_name || o.consultantName)) + '</h1>';
+    if (d.workerType) h += badge('t-' + d.workerType, TYPE_LABEL[d.workerType]);
+    if (o) h += badge('s-' + o.status, STATUS_LABEL[o.status]);
+    h += '</div>';
+    if (S.msg) h += '<div class="ob-msg ' + S.msg.kind + '">' + esc(S.msg.text) + '</div>';
+
+    // returned banner
+    if (o && o.status === 'draft') {
+      var ret = (o.log || []).filter(function (l) { return /^Returned to the recruiter/.test(l.text); })[0];
+      if (ret) h += '<div class="ob-msg warn"><b>HR sent this back.</b> ' + esc(ret.text.replace(/^Returned to the recruiter for changes\.\s*/, '')) + ' — ' + esc(ret.by) + ', ' + fmtWhen(ret.at) + '</div>';
+    }
+    if (o && o.status === 'submitted' && !hr) h += '<div class="ob-msg warn">This request is with HR for approval. You can withdraw it to make changes.</div>';
+    if (o && o.status === 'submitted' && hr) h += '<div class="ob-msg warn"><b>Waiting for your approval.</b> Check the details (you can change anything), then approve it to start onboarding, or send it back with a note.</div>';
+
+    // worker type
+    h += '<div class="ob-types">' + (S.schema.workerTypes || []).map(function (t) {
+      return '<button type="button" class="ob-type' + (d.workerType === t.key ? ' on' : '') + '" data-act="type" data-v="' + t.key + '"' + (ed ? '' : ' disabled') + '><b>' + esc(t.label) + '</b><span>' + esc(t.blurb) + '</span></button>';
+    }).join('') + '</div>';
+
+    if (!d.workerType) { h += '<p class="ob-muted">Choose how this person will be engaged to continue.</p></div>'; appEl.innerHTML = h; return; }
+
+    h += actionsHtml(o, ed, hr);
+    if (S.confirm) h += confirmHtml();
+
+    h += '<div class="ob-layout"><div>';
+    if (S.isNew) {
+      h += '<details class="ob-card ob-paste"' + (S.parsed ? ' open' : '') + '><summary style="cursor:pointer;font-weight:700">Have the placement e-mail already? Paste it here</summary>' +
+        '<p class="ob-muted" style="margin:10px 0">Paste the “PLACEMENT INFORMATION” e-mail and the form below is filled in for you. Check it over before saving.</p>' +
+        '<textarea id="paste-text" placeholder="PLACEMENT INFORMATION&#10;&#10;Consultant Name:&#10;..."></textarea>' +
+        '<div style="margin-top:10px"><button class="ob-btn" data-act="parse">Fill the form from this e-mail</button></div>' +
+        (S.parsed ? '<p class="ob-muted" style="margin-top:10px">' + S.parsed + '</p>' : '') + '</details>';
+    }
+    if (o && o.warnings && o.warnings.length || (S.liveWarn && S.liveWarn.length)) {
+      h += '<div class="ob-msg warn"><b>Worth a second look</b><ul style="margin:6px 0 0 18px;padding:0">' + (o ? o.warnings : S.liveWarn).map(function (w) { return '<li>' + esc(w.message) + '</li>'; }).join('') + '</ul></div>';
+    }
+    sectionsFor(d.workerType).forEach(function (s) {
+      h += '<div class="ob-card"><h2>' + esc(s.title) + '</h2><div class="ob-grid">' + s.fields.map(function (f) { return fieldHtml(f, ed); }).join('') + '</div>' + (s.key === 'rates' ? marginHtml() : '') + '</div>';
+    });
+    if (ed) {
+      h += '<div class="ob-savebar"><button class="ob-btn primary" data-act="save"' + (S.dirty || S.isNew ? '' : ' disabled') + '>' + (S.isNew ? 'Save draft' : 'Save changes') + '</button>' +
+        '<span class="ob-muted" id="dirty-note">' + (S.dirty ? 'You have unsaved changes.' : '') + '</span></div>';
+    }
+    h += '</div><div>' + sideHtml(o, hr) + '</div></div></div>';
+    appEl.innerHTML = h;
+  }
+
+  function actionsHtml(o, ed, hr) {
+    var h = '<div class="ob-actions">';
+    if (S.isNew) return h + '<span class="ob-muted">Save the draft first; then you can send it to HR.</span></div>';
+    var st = o.status;
+    if (st === 'draft') {
+      h += '<button class="ob-btn primary" data-act="ask" data-v="submitted">' + (hr ? 'Send to HR queue' : 'Send to HR for approval') + '</button>';
+      if (hr) h += '<button class="ob-btn" data-act="ask" data-v="in_progress">Start onboarding now</button>';
+      h += '<button class="ob-btn danger" data-act="ask" data-v="cancelled">Cancel request</button>';
+    } else if (st === 'submitted') {
+      if (hr) h += '<button class="ob-btn primary" data-act="status" data-v="in_progress">Approve &amp; start onboarding</button><button class="ob-btn" data-act="ask" data-v="draft">Send back to recruiter…</button><button class="ob-btn danger" data-act="ask" data-v="cancelled">Reject / cancel</button>';
+      else h += '<button class="ob-btn" data-act="status" data-v="draft">Withdraw to edit</button>';
+    } else if (st === 'in_progress' && hr) {
+      h += '<button class="ob-btn primary" data-act="status" data-v="complete">Mark onboarding complete</button><button class="ob-btn" data-act="ask" data-v="draft">Send back to recruiter…</button><button class="ob-btn danger" data-act="ask" data-v="cancelled">Cancel</button>';
+    } else if (st === 'complete' && hr) h += '<button class="ob-btn" data-act="status" data-v="in_progress">Reopen</button>';
+    else if (st === 'cancelled') h += '<button class="ob-btn" data-act="status" data-v="draft">Restore as draft</button>' + (hr ? '<button class="ob-btn danger" data-act="delete">Delete</button>' : '');
+    h += '<button class="ob-btn" data-act="email">Copy as e-mail</button>';
+    if (st === 'draft') h += '<button class="ob-btn danger small" data-act="delete" style="margin-left:auto">Delete draft</button>';
+    return h + '</div>' + (S.emailText ? '<div class="ob-card"><h2>E-mail text</h2><textarea readonly style="width:100%;min-height:220px;font-family:ui-monospace,Menlo,monospace;font-size:12px">' + esc(S.emailText) + '</textarea></div>' : '');
+  }
+
+  function confirmHtml() {
+    var c = S.confirm, h = '<div class="ob-confirm" role="alertdialog">';
+    if (c.type === 'status') {
+      var t = { submitted: 'Send this to HR for approval?', in_progress: 'Start onboarding now (skips the approval queue)?', cancelled: 'Cancel this onboarding request?', draft: 'Send this back to the recruiter?' }[c.to];
+      h += '<b>' + t + '</b>';
+      if (c.to === 'draft') h += '<textarea id="reason" placeholder="What should the recruiter fix?"></textarea>';
+      h += '<button class="ob-btn primary" data-act="status-go" data-v="' + c.to + '">Yes</button><button class="ob-btn" data-act="no">No</button>';
+    } else if (c.type === 'records') {
+      var df = S.recDefaults || (S.recDefaults = defaultsFromEndClient()), dd = S.draft.data;
+      h += '<div style="flex:1 1 100%"><b>Create or link these in the Directory?</b><div class="ob-muted" style="margin:6px 0">Existing records with the same name are linked, never duplicated.</div>' +
+        '<ul style="margin:0 0 8px 18px;padding:0;font-size:13px"><li>Consultant: <b>' + esc(dd.consultant_name) + '</b></li>' + (S.draft.workerType === 'C2C' && dd.employer_name ? '<li>Supplier company: <b>' + esc(dd.employer_name) + '</b> (the consultant’s company)</li>' : '') +
+        '<li>Billing: <b>' + (dd.bill_rate !== undefined ? '$' + money(dd.bill_rate) : 'not set') + '</b> per ' + ({ Hourly: 'hour', Daily: 'day', Monthly: 'month', Annual: 'year' }[dd.bill_rate_basis || 'Hourly']) + '</li></ul>' +
+        '<label class="ob-muted">Client <input type="text" id="rec-client" value="' + esc(df.client) + '"></label> <label class="ob-muted">Vendor <input type="text" id="rec-vendor" value="' + esc(df.vendor) + '" placeholder="(none)"></label></div>' +
+        '<button class="ob-btn primary" data-act="records-go">Yes, create</button><button class="ob-btn" data-act="no">Cancel</button>';
+    }
+    return h + '</div>';
+  }
+
+  function sideHtml(o, hr) {
+    var h = '';
+    if (!o) return '<div class="ob-card"><h2>What happens next</h2><p class="ob-muted" style="margin:0;line-height:1.55">Save the draft, then send it to HR. HR will review the details, approve it, and work through the ' + esc(S.draft.workerType || 'W2/C2C/1099') + ' paperwork checklist.</p></div>';
+    // checklist
+    var cl = o.checklist || [], pr = o.progress || { done: 0, total: 0 };
+    h += '<div class="ob-card"><h2>Paperwork checklist · ' + pr.done + ' of ' + pr.total + '</h2>';
+    var live = hr && o.status === 'in_progress';
+    if (o.status === 'submitted') h += '<p class="ob-muted" style="margin:0 0 8px">' + (hr ? 'Approve the request to start working the checklist.' : 'HR starts the checklist once the request is approved.') + '</p>';
+    else if (o.status === 'draft') h += '<p class="ob-muted" style="margin:0 0 8px">Starts after HR approves the request.</p>';
+    var grp = '';
+    cl.forEach(function (c) {
+      if (c.group !== grp) { grp = c.group; h += '<div class="ob-grp">' + esc(grp) + '</div>'; }
+      h += '<div class="ob-item' + (c.na ? ' na' : '') + '"><input type="checkbox" data-act="tick" data-k="' + c.key + '"' + (c.done ? ' checked' : '') + (live && !(c.autoDone && !c.manualDone) ? '' : ' disabled') + '>' +
+        '<div class="lbl">' + esc(c.label) + (c.autoDone && !c.manualDone ? ' <span class="ob-chipf complete">automatic</span>' : '') + '</div><div class="more">';
+      if (c.form) {
+        h += '<span class="ob-chipf ' + (c.form.status === 'complete' ? 'complete' : '') + '">' + esc(c.form.title) + ': ' + esc(c.form.status || 'needs records') + '</span>';
+        if (c.form.recordId) h += '<a class="ob-link" href="/form.html?type=' + c.form.entity + '&id=' + c.form.recordId + '&form=' + c.form.form + '">Open form</a>';
+        else h += '<span>Create the directory records first</span>';
+      }
+      if (c.hint) h += '<span>' + esc(c.hint) + '</span>';
+      if (live) {
+        h += '<button class="ob-link" data-act="na" data-k="' + c.key + '" data-v="' + (c.na ? '0' : '1') + '">' + (c.na ? 'Applies after all' : 'Not applicable') + '</button>' +
+          '<input type="text" data-act="cnote" data-k="' + c.key + '" placeholder="Note" value="' + esc(c.note) + '">';
+      } else if (c.note) h += '<span>Note: ' + esc(c.note) + '</span>';
+      if (c.done && c.by && !c.autoDone) h += '<span>' + esc(c.by) + ', ' + fmtWhen(c.at) + '</span>';
+      h += '</div></div>';
+    });
+    h += '</div>';
+
+    // directory records
+    h += '<div class="ob-card"><h2>Directory records</h2>';
+    if (o.consultantId) {
+      h += '<p style="margin:0 0 8px;font-size:13px">Consultant: <a class="ob-link" href="/record.html?type=consultants&id=' + o.consultantId + '">open profile</a>' +
+        (o.supplierId ? ' · Supplier company: <a class="ob-link" href="/record.html?type=subvendors&id=' + o.supplierId + '">open profile</a>' : '') + '</p>';
+    } else h += '<p class="ob-muted" style="margin:0 0 8px">' + (o.directoryMatch ? 'A consultant with this name is already in the Directory; it will be linked, not duplicated.' : 'Not created yet.') + '</p>';
+    if (hr && (o.status === 'in_progress' || o.status === 'draft')) h += '<button class="ob-btn ' + (o.consultantId ? '' : 'primary') + '" data-act="ask-records">' + (o.consultantId ? 'Update directory records' : 'Create directory records') + '</button>';
+    h += '</div>';
+
+    // activity
+    h += '<div class="ob-card"><h2>Activity</h2><div class="ob-log">' + (o.log || []).map(function (l) { return '<div>' + esc(l.text) + '<small>' + esc(l.by) + ' · ' + fmtWhen(l.at) + '</small></div>'; }).join('') + '</div></div>';
+    return h;
+  }
+
+  // -------------------------------------------------------------- actions
+  function collectFields() {
+    // inputs write straight into S.draft.data on change; return a plain copy for the API
+    var out = {};
+    sectionsFor(S.draft.workerType).forEach(function (s) { s.fields.forEach(function (f) { out[f.key] = S.draft.data[f.key] === undefined ? '' : S.draft.data[f.key]; }); });
+    return out;
+  }
+  function showErrors(body) {
+    S.errors = {};
+    (body.errors || []).forEach(function (e) { S.errors[e.key] = e.message; });
+    note(body.error || 'Could not save.', 'err');
+  }
+  function save(then) {
+    var payload = { workerType: S.draft.workerType, data: collectFields() };
+    var p = S.isNew ? api('POST', '/api/onboarding', payload) : api('PUT', '/api/onboarding/' + S.ob.id, payload);
+    return p.then(function (r) {
+      if (!r.ok) { showErrors(r.body); renderDetail(); return false; }
+      S.errors = {}; S.dirty = false;
+      if (S.isNew) { S.isNew = false; setOb(r.body); history.replaceState(null, '', '#' + r.body.id); note('Draft saved.'); }
+      else { setOb(r.body); note('Saved.'); }
+      window.dispatchEvent(new Event('onboarding-changed'));
+      if (!then) renderDetail();
+      return true;
+    });
+  }
+  function setStatus(to, reason) {
+    var run = function () {
+      return api('POST', '/api/onboarding/' + S.ob.id + '/status', { status: to, reason: reason }).then(function (r) {
+        S.confirm = null;
+        if (!r.ok) { note(r.body.error || 'Could not change the status.', 'err'); renderDetail(); return; }
+        setOb(r.body); S.dirty = false;
+        note({ submitted: 'Sent to HR. They will see it under “Waiting for your approval”.', in_progress: 'Onboarding started.', complete: 'Onboarding marked complete.', cancelled: 'Cancelled.', draft: 'Done.' }[to]);
+        window.dispatchEvent(new Event('onboarding-changed'));
+        renderDetail();
+      });
+    };
+    return S.dirty && canEdit() ? save(true).then(function (ok) { if (ok) return run(); }) : run();
+  }
+
+  appEl.addEventListener('click', function (e) {
+    var b = e.target.closest('[data-act]'); if (!b) return;
+    var act = b.getAttribute('data-act'), v = b.getAttribute('data-v'), id = b.getAttribute('data-id');
+    if (['tick', 'cnote', 'role'].indexOf(act) !== -1) return; // handled on change
+    if (act === 'new') { location.hash = 'new'; return; }
+    if (act === 'open') { location.hash = id; return; }
+    if (act === 'status' && S.ob) { setStatus(v); return; }
+    if (act === 'status') { S.list.status = v; loadList(); return; }
+    if (act === 'type') { if (!canEdit()) return; S.draft.workerType = v; S.dirty = true; renderDetail(); return; }
+    if (act === 'save') { save(); return; }
+    if (act === 'ask') { S.confirm = { type: 'status', to: v }; renderDetail(); return; }
+    if (act === 'no') { S.confirm = null; renderDetail(); return; }
+    if (act === 'status-go') {
+      var reason = document.getElementById('reason'); reason = reason ? reason.value : undefined;
+      setStatus(v, reason); return;
+    }
+    if (act === 'ask-records') { if (S.dirty) { save(true).then(function (ok) { if (ok) { S.confirm = { type: 'records' }; renderDetail(); } }); } else { S.confirm = { type: 'records' }; renderDetail(); } return; }
+    if (act === 'records-go') {
+      api('POST', '/api/onboarding/' + S.ob.id + '/create-records', { clientName: document.getElementById('rec-client').value, vendorName: document.getElementById('rec-vendor').value }).then(function (r) {
+        S.confirm = null;
+        if (!r.ok) { note(r.body.error || 'Could not create the records.', 'err'); renderDetail(); return; }
+        setOb(r.body); note('Directory records done: ' + (r.body.made || []).join(', ') + '.'); window.dispatchEvent(new Event('onboarding-changed')); renderDetail();
+      });
+      return;
+    }
+    if (act === 'na') { api('POST', '/api/onboarding/' + S.ob.id + '/checklist', { key: b.getAttribute('data-k'), na: v === '1' }).then(afterChecklist); return; }
+    if (act === 'delete') {
+      if (!confirm('Delete this onboarding request? This cannot be undone.')) return;
+      api('DELETE', '/api/onboarding/' + S.ob.id).then(function (r) { if (!r.ok) { note(r.body.error, 'err'); renderDetail(); return; } note('Deleted.'); location.hash = ''; });
+      return;
+    }
+    if (act === 'email') {
+      var go2 = function () {
+        api('GET', '/api/onboarding/' + S.ob.id + '/email').then(function (r) {
+          if (!r.ok) { note(r.body.error, 'err'); renderDetail(); return; }
+          S.emailText = r.body.text;
+          try { navigator.clipboard.writeText(r.body.text).then(function () { note('Copied to the clipboard.'); renderDetail(); }, function () { renderDetail(); }); } catch (x) { renderDetail(); }
+        });
+      };
+      if (S.dirty) save(true).then(function (ok) { if (ok) go2(); }); else go2();
+      return;
+    }
+    if (act === 'parse') {
+      var txt = document.getElementById('paste-text').value;
+      api('POST', '/api/onboarding/parse-email', { text: txt }).then(function (r) {
+        if (!r.ok) { S.parsed = esc(r.body.error || 'Could not read that.'); renderDetail(); return; }
+        var f = r.body.fields;
+        if (f.worker_type) S.draft.workerType = f.worker_type;
+        Object.keys(f).forEach(function (k) { if (k !== 'worker_type') S.draft.data[k] = f[k]; });
+        S.dirty = true;
+        S.parsed = 'Filled in ' + r.body.matched.length + ' fields' + (f.worker_type ? ' (worker type ' + f.worker_type + ')' : '') + '.' + (r.body.unmatched.length ? ' Could not place: ' + esc(r.body.unmatched.join(' / ')) : '') +
+          (!f.invoicing_method ? ' Invoicing method was not in the e-mail, so please choose it below.' : '');
+        liveWarnings();
+        renderDetail();
+      });
+    }
+  });
+  function afterChecklist(r) {
+    if (!r.ok) { note(r.body.error || 'Could not save.', 'err'); renderDetail(); return; }
+    var keepDraft = S.dirty ? S.draft : null;
+    setOb(r.body); if (keepDraft) { S.draft = keepDraft; }
+    S.msg = null; window.dispatchEvent(new Event('onboarding-changed')); renderDetail();
+  }
+
+  appEl.addEventListener('change', function (e) {
+    var t = e.target, act = t.getAttribute('data-act');
+    if (act === 'tick') { api('POST', '/api/onboarding/' + S.ob.id + '/checklist', { key: t.getAttribute('data-k'), done: t.checked }).then(afterChecklist); return; }
+    if (act === 'cnote') { api('POST', '/api/onboarding/' + S.ob.id + '/checklist', { key: t.getAttribute('data-k'), note: t.value }).then(function (r) { if (!r.ok) { note(r.body.error, 'err'); renderDetail(); } }); return; }
+    if (act === 'role') { api('PUT', '/api/onboarding/people/' + t.getAttribute('data-id'), { role: t.value }).then(function (r) { note(r.ok ? 'Role updated.' : (r.body.error || 'Could not change the role.'), r.ok ? 'ok' : 'err'); loadPeople(); }); return; }
+    if (t.id === 'f-type') { S.list.type = t.value; loadList(); return; }
+  });
+  appEl.addEventListener('input', function (e) {
+    var t = e.target;
+    if (t.id === 'f-q') { S.list.q = t.value; clearTimeout(S.qt); S.qt = setTimeout(function () { loadList(); setTimeout(function () { var q = document.getElementById('f-q'); if (q) { q.focus(); q.setSelectionRange(q.value.length, q.value.length); } }, 80); }, 350); return; }
+    var k = t.getAttribute('data-f'); if (!k) return;
+    S.draft.data[k] = t.value;
+    if (!S.dirty) { S.dirty = true; var sb = appEl.querySelector('[data-act="save"]'); if (sb) sb.disabled = false; }
+    var dn = document.getElementById('dirty-note'); if (dn) dn.textContent = 'You have unsaved changes.';
+    if (['bill_rate', 'pay_rate', 'final_cost', 'bill_rate_basis', 'pay_rate_basis'].indexOf(k) !== -1) {
+      var m = document.getElementById('margin'), nh = marginHtml();
+      if (m && nh) m.outerHTML = nh; else if (m && !nh) m.remove(); else if (!m && nh) { var card = t.closest('.ob-card'); if (card) card.insertAdjacentHTML('beforeend', nh); }
+    }
+  });
+
+  var TYPO = ['gmail.com', 'yahoo.com', 'outlook.com', 'hotmail.com', 'icloud.com', 'aol.com'];
+  function lev(a, b) { var m = [], i, j; for (i = 0; i <= a.length; i++) m[i] = [i]; for (j = 1; j <= b.length; j++) m[0][j] = j;
+    for (i = 1; i <= a.length; i++) for (j = 1; j <= b.length; j++) m[i][j] = Math.min(m[i - 1][j] + 1, m[i][j - 1] + 1, m[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1)); return m[a.length][b.length]; }
+  function liveWarnings() {
+    S.liveWarn = [];
+    ['email', 'invoice_to_email', 'employer_email'].forEach(function (k) {
+      var v = S.draft.data[k]; if (!v || v.indexOf('@') < 0) return;
+      var dom = v.slice(v.lastIndexOf('@') + 1).toLowerCase();
+      if (TYPO.indexOf(dom) === -1) { var near = TYPO.filter(function (d) { return lev(dom, d) === 1 || (d.length === dom.length && d.split('').sort().join('') === dom.split('').sort().join('')); })[0]; if (near) S.liveWarn.push({ message: k.replace(/_/g, ' ') + ': ' + dom + ' looks like a typo of ' + near + '.' }); }
+    });
+  }
+  function loadPeople() {
+    api('GET', '/api/onboarding/people').then(function (r) { S.people = r.ok ? r.body.people : null; if (!S.ob && !S.draft) renderList(); });
+  }
+  appEl.addEventListener('toggle', function (e) { if (e.target.id === 'people-card' && e.target.open && !S.people) loadPeople(); }, true);
+
+  // ---------------------------------------------------------------- start
+  fetch('/api/auth/me').then(function (r) { if (r.status !== 200) { location.href = '/login.html'; return null; } return r.json(); }).then(function (u) {
+    if (!u) return;
+    return Promise.all([api('GET', '/api/onboarding/me'), api('GET', '/api/onboarding/schema')]).then(function (rs) {
+      if (!rs[1].ok) { appEl.innerHTML = '<div class="ob"><div class="ob-msg err">' + esc(rs[1].body.error || 'Could not load onboarding.') + '</div></div>'; return; }
+      S.me = rs[0].body; S.schema = rs[1].body;
+      if (S.me.isHr && !S.me.pending) S.list.status = 'open';
+      route();
+    });
+  }).catch(function () { location.href = '/login.html'; });
+})();
+</script>
+</body>
+</html>

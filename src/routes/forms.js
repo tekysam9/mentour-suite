@@ -270,4 +270,5 @@ router.post('/:entity/:id/:form/reopen', async (req, res, next) => {
   } catch (err) { if (missingTable(err)) return res.status(503).json({ error: SCHEMA_MSG }); next(err); }
 });
 
+router.helpers = { loadForm, statusOf };
 module.exports = router;

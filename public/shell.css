@@ -102,3 +102,6 @@ body.dense .fin-wrap-cell { max-width: 180px; }
 .has-shell .copy-clamp.open { display: block; }
 .copy-more { background: none; border: none; color: var(--sh-pine); font: inherit; font-size: 12px; font-weight: 600; cursor: pointer; padding: 0; margin: 0 0 14px; }
 .copy-more:hover { text-decoration: underline; }
+
+.app-badge { margin-left: auto; font-style: normal; font-size: 11px; font-weight: 700; background: #B4501E; color: #fff; border-radius: 999px; min-width: 18px; height: 18px; padding: 0 6px; display: inline-flex; align-items: center; justify-content: center; }
+body.side-collapsed .app-badge { display: none; }

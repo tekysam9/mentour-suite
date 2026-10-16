@@ -27,7 +27,7 @@ const addr = (req) => [
 const FORMS = {
   w9: {
     title: 'Form W-9', subtitle: 'Request for Taxpayer Identification Number and Certification',
-    edition: 'Layout reference: IRS Form W-9 (Rev. March 2024)', entities: ['programs'],
+    edition: 'Layout reference: IRS Form W-9 (Rev. March 2024)', entities: ['programs', 'subvendors', 'consultants'],
     signatures: { payee: { label: 'Payee signature' } },
     sections: [
       { title: 'Part I — Taxpayer information', signKey: 'payee', fields: [

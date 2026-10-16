@@ -10,6 +10,7 @@ const { saveLedgerRoster } = require('./src/routes/ledgerRoster');
 const directoryRoutes = require('./src/routes/directory');
 const invoiceRoutes = require('./src/routes/invoices');
 const subvendorInvoiceRoutes = require('./src/routes/subvendorInvoices');
+const onboardingRoutes = require('./src/routes/onboarding');
 const profileRoutes = require('./src/routes/profiles');
 const formRoutes = require('./src/routes/forms');
 const versionRoutes = require('./src/routes/version');
@@ -31,6 +32,7 @@ app.use('/api/profiles', profileRoutes);
 app.use('/api/forms', formRoutes);
 app.use('/api/invoices', invoiceRoutes);
 app.use('/api/subvendor-invoices', subvendorInvoiceRoutes);
+app.use('/api/onboarding', onboardingRoutes);
 
 app.use(express.static(path.join(__dirname, 'public')));
 

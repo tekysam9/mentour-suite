@@ -522,3 +522,36 @@ ALTER TABLE record_forms    MODIFY entity ENUM('consultants', 'clients', 'progra
 ALTER TABLE subvendor_invoices ADD COLUMN IF NOT EXISTS paid_date DATE NULL;
 ALTER TABLE subvendor_invoices ADD COLUMN IF NOT EXISTS overrides_ledger TINYINT(1) NOT NULL DEFAULT 0;
 ALTER TABLE subvendor_invoices MODIFY rate_source ENUM('ledger', 'margin', 'hours_file', 'manual') NOT NULL;
+
+-- Onboarding: the placement information a recruiter hands to the HR admin, plus the
+-- paperwork checklist for the way the person is engaged (W2 / C2C / 1099).
+-- data = placement fields (JSON); checklist = per-item state (JSON); log = activity (JSON array).
+-- Added October 2026; additive and safe to re-run.
+CREATE TABLE IF NOT EXISTS onboardings (
+  id              INT AUTO_INCREMENT PRIMARY KEY,
+  organization_id INT NOT NULL,
+  worker_type     ENUM('W2', 'C2C', '1099') NOT NULL,
+  status          ENUM('draft', 'submitted', 'returned', 'in_progress', 'complete', 'cancelled') NOT NULL DEFAULT 'draft',
+  consultant_name VARCHAR(255) NOT NULL,
+  start_date      DATE NULL,
+  consultant_id   INT NULL,
+  supplier_id     INT NULL,
+  data            MEDIUMTEXT NULL,
+  checklist       TEXT NULL,
+  log             MEDIUMTEXT NULL,
+  created_by      VARCHAR(255) NULL,
+  created_by_id   INT NULL,
+  submitted_at    TIMESTAMP NULL DEFAULT NULL,
+  completed_at    TIMESTAMP NULL DEFAULT NULL,
+  created_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE,
+  FOREIGN KEY (consultant_id) REFERENCES consultants(id) ON DELETE SET NULL,
+  FOREIGN KEY (supplier_id) REFERENCES subvendors(id) ON DELETE SET NULL,
+  INDEX idx_onboardings_org_status (organization_id, status)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- HR admins review and approve the onboarding requests recruiters send. 'owner' can do everything an
+-- HR admin can; the owner chooses who else is an HR admin (Onboarding page > People). Safe to re-run.
+ALTER TABLE users MODIFY role ENUM('owner', 'hr', 'member') NOT NULL DEFAULT 'member';
+ALTER TABLE onboardings ADD COLUMN IF NOT EXISTS created_by_id INT NULL;

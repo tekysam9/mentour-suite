@@ -33,6 +33,7 @@ async function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
 
 async function main() {
   process.env.FIELD_ENCRYPTION_KEY = require('crypto').randomBytes(32).toString('base64');
+  process.env.AUTH_RATE_LIMIT = '1000';
   const server = spawn('node', ['server.js'], { cwd: path.join(__dirname, '..'), env: process.env, stdio: 'pipe' });
   let serverOut = '';
   server.stdout.on('data', (d) => { serverOut += d.toString(); });
@@ -1732,7 +1733,7 @@ async function main() {
 
       // 36. Fillable forms: W-9 (vendors), W-4 and I-9 (consultants).
       r = await pfOwner.fetch('/api/forms/consultants/' + pfCons);
-      check('consultant has W-4 and I-9 forms listed, none started', r.status === 200 && r.body.forms.map((x) => x.form).sort().join() === 'i9,w4' && r.body.forms.every((x) => x.status === 'not started'), r.body);
+      check('consultant has W-4, I-9 and W-9 (for 1099) forms listed, none started', r.status === 200 && r.body.forms.map((x) => x.form).sort().join() === 'i9,w4,w9' && r.body.forms.every((x) => x.status === 'not started'), r.body);
       r = await pfOwner.fetch('/api/forms/programs/' + pfSub);
       check('vendor has only a W-9', r.body.forms.length === 1 && r.body.forms[0].form === 'w9', r.body);
       r = await pfOwner.fetch('/api/forms/clients/' + pfClient);
@@ -1842,9 +1843,137 @@ async function main() {
       r = await pfOther.fetch('/api/profiles/subvendors/' + sup);
       check('another organisation cannot see the supplier profile', r.status === 404, r);
       r = await pfOwner.fetch('/api/forms/subvendors/' + sup);
-      check('supplier companies have no tax forms listed', r.status === 200 && r.body.forms.length === 0, r.body);
+      check('supplier companies get the W-9 form (their own company W-9)', r.status === 200 && r.body.forms.length === 1 && r.body.forms[0].form === 'w9', r.body);
       const [secRow] = await dbConn.query(`SELECT cipher FROM record_secrets WHERE entity = 'subvendors' AND record_id = ? AND field = 'tax_id'`, [sup]);
       check('supplier tax ID is encrypted in the database', secRow.length === 1 && /^v1:/.test(secRow[0].cipher), secRow);
+
+      // 38. Onboarding: recruiter sends a placement to HR; HR approves, edits, works the W2/C2C/1099 checklist.
+      r = await pfOwner.fetch('/api/auth/me');
+      const obInvite = r.body.user.organization.inviteCode;
+      const obRec = makeJar(); const obRec2 = makeJar();
+      r = await obRec.fetch('/api/auth/join', { method: 'POST', body: JSON.stringify({ inviteCode: obInvite, name: 'Rita Recruiter', email: 'rita@onb.test', password: 'recruiterpass123' }) });
+      check('recruiter joins the organisation', r.status === 201, r);
+      r = await obRec2.fetch('/api/auth/join', { method: 'POST', body: JSON.stringify({ inviteCode: obInvite, name: 'Ron Recruiter', email: 'ron@onb.test', password: 'recruiterpass123' }) });
+      const obEmail = [
+        'PLACEMENT INFORMATION', '', 'Consultant Name:', '', 'Avinash Agnihotri', '', 'Consultant Contact Number:', '', '347 267 1449', '',
+        'Consultant Email:', '', 'avinash.agnihotri04@gamil.com', '', 'Technical Skill', '', 'DB2 LUW DBA', '', 'Status (W2/C2C/1099):', '', 'C2C', '',
+        'Project Start Date:', '', '10/14/2026', '', 'Project Duration:', '', '12 months', '', 'End Client:', '', 'CDW / OCC', '',
+        'Project Location (State and City):', '', 'Remote', '', 'Bill Rate:', '', '$90/hr', '', 'Pay To (Consultant/Vendor)', '', 'Pay Rate:', '', '$75/hr', '',
+        'Recruiter Name:', '', 'Asheet Kumar Singh', '', 'H1B Filing Required:', '', 'No', '', 'Candidate Employer Details', '', 'Accurate Software Consulting LLC', '',
+        'avinash.agnihotri04@gmail.com', '', '347 267 1449'].join('\n');
+      r = await obRec.fetch('/api/onboarding/parse-email', { method: 'POST', body: JSON.stringify({ text: obEmail }) });
+      check('the placement e-mail is read into fields', r.status === 200 && r.body.fields.consultant_name === 'Avinash Agnihotri' && r.body.worker_type === 'C2C' && r.body.fields.start_date === '2026-10-14'
+        && r.body.fields.bill_rate === 90 && r.body.fields.pay_rate === 75 && r.body.fields.end_client === 'CDW / OCC' && r.body.fields.employer_name === 'Accurate Software Consulting LLC', r.body);
+      r = await obRec.fetch('/api/onboarding/parse-email', { method: 'POST', body: JSON.stringify({ text: 'hello there' }) });
+      check('text with no placement fields is refused', r.status === 422, r);
+      const obF = (await obRec.fetch('/api/onboarding/parse-email', { method: 'POST', body: JSON.stringify({ text: obEmail }) })).body.fields; delete obF.worker_type;
+
+      r = await obRec.fetch('/api/onboarding', { method: 'POST', body: JSON.stringify({ workerType: 'bogus', data: obF }) });
+      check('an unknown worker type is refused', r.status === 400, r);
+      r = await obRec.fetch('/api/onboarding', { method: 'POST', body: JSON.stringify({ workerType: 'C2C', data: Object.assign({}, obF, { email: 'not-an-email' }) }) });
+      check('a bad email address is refused', r.status === 400 && r.body.errors[0].key === 'email', r.body);
+      r = await obRec.fetch('/api/onboarding', { method: 'POST', body: JSON.stringify({ workerType: 'C2C', data: obF }) });
+      check('recruiter saves a draft', r.status === 201 && r.body.status === 'draft' && r.body.margin.perHour === 15, r.body);
+      const obId = r.body.id;
+      check('the e-mail typo (gamil.com) is flagged', r.body.warnings.some((w) => w.key === 'email' && /gmail/.test(w.message)), r.body.warnings);
+      r = await obRec.fetch('/api/onboarding/' + obId + '/status', { method: 'POST', body: JSON.stringify({ status: 'submitted' }) });
+      check('sending without the required fields is refused and names them (invoicing method)', r.status === 422 && /Invoicing/.test(r.body.error), r.body);
+      r = await obRec.fetch('/api/onboarding/' + obId, { method: 'PUT', body: JSON.stringify({ data: { invoicing_method: 'QuickBooks', email: 'avinash.agnihotri04@gmail.com' } }) });
+      check('recruiter fixes the details', r.status === 200 && r.body.data.invoicing_method === 'QuickBooks' && !r.body.warnings.some((w) => w.key === 'email'), r.body);
+      r = await obRec.fetch('/api/onboarding/' + obId + '/status', { method: 'POST', body: JSON.stringify({ status: 'submitted' }) });
+      check('recruiter sends it to HR for approval', r.status === 200 && r.body.status === 'submitted', r.body);
+
+      r = await obRec2.fetch('/api/onboarding/' + obId);
+      check('another recruiter cannot see it', r.status === 404, r);
+      r = await obRec2.fetch('/api/onboarding?status=all');
+      check('another recruiter’s list is empty', r.status === 200 && r.body.onboardings.length === 0, r.body);
+      r = await obRec.fetch('/api/onboarding/me');
+      check('recruiter is not an HR admin', r.body.isHr === false, r.body);
+      r = await pfOwner.fetch('/api/onboarding/me');
+      check('owner is an HR admin and sees one pending request', r.body.isHr === true && r.body.pending === 1, r.body);
+      r = await pfOwner.fetch('/api/onboarding?status=submitted');
+      check('HR sees the request waiting for approval', r.body.onboardings.length === 1 && r.body.onboardings[0].consultantName === 'Avinash Agnihotri', r.body);
+
+      r = await obRec.fetch('/api/onboarding/' + obId, { method: 'PUT', body: JSON.stringify({ data: { recruiter: 'Someone Else' } }) });
+      check('recruiter cannot change a request that is with HR', r.status === 403, r);
+      r = await obRec.fetch('/api/onboarding/' + obId + '/checklist', { method: 'POST', body: JSON.stringify({ key: 'nda', done: true }) });
+      check('recruiter cannot work the checklist', r.status === 403, r);
+      r = await pfOwner.fetch('/api/onboarding/' + obId + '/checklist', { method: 'POST', body: JSON.stringify({ key: 'nda', done: true }) });
+      check('HR must approve before the checklist opens', r.status === 409, r);
+      r = await pfOwner.fetch('/api/onboarding/' + obId, { method: 'PUT', body: JSON.stringify({ data: { bill_rate: 95, location: 'Remote (NY)' } }) });
+      check('HR can change any detail', r.status === 200 && r.body.data.bill_rate === 95 && r.body.log[0].text.indexOf('Edited by HR') === 0, r.body);
+
+      r = await pfOwner.fetch('/api/onboarding/' + obId + '/status', { method: 'POST', body: JSON.stringify({ status: 'draft' }) });
+      check('sending back needs a reason', r.status === 422, r);
+      r = await pfOwner.fetch('/api/onboarding/' + obId + '/status', { method: 'POST', body: JSON.stringify({ status: 'draft', reason: 'Please add the invoice recipient.' }) });
+      check('HR sends it back to the recruiter', r.status === 200 && r.body.status === 'draft' && /recruiter/.test(r.body.log[0].text), r.body);
+      r = await obRec.fetch('/api/onboarding/' + obId + '/status', { method: 'POST', body: JSON.stringify({ status: 'submitted' }) });
+      check('recruiter re-sends it', r.body.status === 'submitted', r.body);
+      r = await pfOwner.fetch('/api/onboarding/' + obId + '/status', { method: 'POST', body: JSON.stringify({ status: 'in_progress' }) });
+      check('HR approves and starts onboarding', r.status === 200 && r.body.status === 'in_progress' && /Approved/.test(r.body.log[0].text), r.body);
+      const clKeys = r.body.checklist.map((c) => c.key);
+      check('C2C checklist: company W-9, subcontract, insurance; no W-4', clKeys.includes('company_w9') && clKeys.includes('subcontract') && clKeys.includes('coi') && !clKeys.includes('w4') && !clKeys.includes('h1b_petition'), clKeys);
+
+      r = await pfOwner.fetch('/api/onboarding/' + obId + '/status', { method: 'POST', body: JSON.stringify({ status: 'complete' }) });
+      check('cannot complete with open checklist items', r.status === 422 && /still open/.test(r.body.error), r.body);
+      r = await obRec.fetch('/api/onboarding/' + obId + '/create-records', { method: 'POST', body: JSON.stringify({}) });
+      check('recruiter cannot create directory records', r.status === 403, r);
+      r = await pfOwner.fetch('/api/onboarding/' + obId + '/create-records', { method: 'POST', body: JSON.stringify({}) });
+      check('HR creates the directory records', r.status === 200 && r.body.consultantId && r.body.supplierId && r.body.checklist.find((c) => c.key === 'directory_records').done === true, r.body);
+      const [[asg]] = await dbConn.query(`SELECT a.billing, c.name AS client, p.name AS program FROM consultant_assignments a JOIN clients c ON c.id = a.client_id LEFT JOIN programs p ON p.id = a.program_id WHERE a.consultant_id = ?`, [r.body.consultantId]);
+      check('billing pairing: client OCC, vendor CDW, bill rate 95', asg && asg.client === 'OCC' && asg.program === 'CDW' && Number(asg.billing) === 95, asg);
+      r = await pfOwner.fetch('/api/profiles/consultants/' + (await pfOwner.fetch('/api/onboarding/' + obId)).body.consultantId);
+      check('consultant profile carries worker type Corp-to-Corp and the supplier company', r.body.values.worker_type === 'Corp-to-Corp' && !!r.body.values.supplier_id && r.body.values.hire_date === '2026-10-14', r.body.values);
+      const supId = (await pfOwner.fetch('/api/onboarding/' + obId)).body.supplierId;
+      r = await pfOwner.fetch('/api/directory/subvendors');
+      check('the consultant’s company is a supplier company', r.body.subvendors.some((x) => x.id === supId && x.name === 'Accurate Software Consulting LLC'), r.body);
+      r = await pfOwner.fetch('/api/onboarding/' + obId + '/create-records', { method: 'POST', body: JSON.stringify({}) });
+      check('creating the records again links, never duplicates', r.status === 200 && (await dbConn.query(`SELECT COUNT(*) n FROM consultants WHERE organization_id = (SELECT organization_id FROM onboardings WHERE id = ?) AND name = 'Avinash Agnihotri'`, [obId]))[0][0].n === 1, r.body);
+      r = await pfOwner.fetch('/api/forms/subvendors/' + supId);
+      check('the company’s W-9 shows as not started on the checklist', (await pfOwner.fetch('/api/onboarding/' + obId)).body.checklist.find((c) => c.key === 'company_w9').form.status === 'not started', r.body);
+
+      // tick everything (W-9 by hand: paper copy on file) and complete
+      let ob = (await pfOwner.fetch('/api/onboarding/' + obId)).body;
+      for (const c of ob.checklist.filter((x) => !x.done)) {
+        r = await pfOwner.fetch('/api/onboarding/' + obId + '/checklist', { method: 'POST', body: JSON.stringify(c.key === 'coi' ? { done: true, key: c.key, note: 'expires 2027-06-30' } : { done: true, key: c.key }) });
+      }
+      r = await pfOwner.fetch('/api/onboarding/' + obId + '/status', { method: 'POST', body: JSON.stringify({ status: 'complete' }) });
+      check('HR completes the onboarding', r.status === 200 && r.body.status === 'complete' && r.body.progress.done === r.body.progress.total, r.body);
+      r = await pfOwner.fetch('/api/onboarding/' + obId, { method: 'PUT', body: JSON.stringify({ data: { recruiter: 'x' } }) });
+      check('a completed onboarding is locked until reopened', r.status === 409, r);
+      r = await pfOwner.fetch('/api/onboarding/' + obId + '/status', { method: 'POST', body: JSON.stringify({ status: 'in_progress' }) });
+      check('HR can reopen it', r.body.status === 'in_progress', r.body);
+      r = await pfOwner.fetch('/api/onboarding/' + obId + '/email');
+      check('the placement can be exported as the usual e-mail text', r.status === 200 && /PLACEMENT INFORMATION/.test(r.body.text) && /Status \(W2\/C2C\/1099\):\nC2C/.test(r.body.text) && /\$95\/hr/.test(r.body.text), r.body);
+
+      // W2 and 1099 get their own checklists
+      r = await obRec.fetch('/api/onboarding', { method: 'POST', body: JSON.stringify({ workerType: 'W2', data: { consultant_name: 'Wendy Wtwo', h1b_filing_required: 'Yes', start_date: '2026-11-02', end_client: 'Acme', bill_rate: 80, pay_rate: 55, recruiter: 'Rita', invoicing_method: 'Client portal', job_title: 'QA Lead', work_state: 'NJ' } }) });
+      const w2Id = r.body.id;
+      const w2 = (await pfOwner.fetch('/api/onboarding/' + w2Id)).body.checklist.map((c) => c.key);
+      check('W2 checklist: W-4, I-9, direct deposit, benefits, H-1B petition', ['w4', 'i9', 'direct_deposit', 'benefits', 'h1b_petition', 'offer_letter'].every((k) => w2.includes(k)) && !w2.includes('company_w9'), w2);
+      r = await obRec.fetch('/api/onboarding', { method: 'POST', body: JSON.stringify({ workerType: '1099', data: { consultant_name: 'Ned Ninetynine', h1b_filing_required: 'No', start_date: '2026-11-02', end_client: 'Beta', bill_rate: 70, pay_rate: 60, recruiter: 'Rita', invoicing_method: 'QuickBooks' } }) });
+      const t99 = (await pfOwner.fetch('/api/onboarding/' + r.body.id)).body.checklist.map((c) => c.key);
+      check('1099 checklist: contractor agreement, W-9, I-9; no W-4', ['contractor_agreement', 'w9', 'i9'].every((k) => t99.includes(k)) && !t99.includes('w4'), t99);
+      r = await obRec.fetch('/api/onboarding/' + r.body.id, { method: 'DELETE' });
+      check('recruiter can delete their own draft', r.status === 200, r);
+      r = await obRec.fetch('/api/onboarding/' + w2Id + '/status', { method: 'POST', body: JSON.stringify({ status: 'in_progress' }) });
+      check('recruiter cannot start onboarding themselves', r.status === 403, r);
+
+      // owner chooses HR admins
+      r = await obRec.fetch('/api/onboarding/people');
+      check('recruiter cannot list people', r.status === 403, r);
+      const ritaId = (await pfOwner.fetch('/api/onboarding/people')).body.people.find((p) => p.email === 'rita@onb.test').id;
+      r = await obRec.fetch('/api/onboarding/people/' + ritaId, { method: 'PUT', body: JSON.stringify({ role: 'hr' }) });
+      check('a recruiter cannot make themselves HR', r.status === 403, r);
+      r = await pfOwner.fetch('/api/onboarding/people/' + ritaId, { method: 'PUT', body: JSON.stringify({ role: 'hr' }) });
+      check('the owner makes Rita an HR admin', r.status === 200, r);
+      r = await obRec.fetch('/api/onboarding?status=all');
+      check('an HR admin sees every request', r.body.onboardings.length >= 2, r.body);
+      r = await obRec2.fetch('/api/onboarding/me');
+      check('the other recruiter is still a recruiter', r.body.isHr === false, r.body);
+      r = await obRec2.fetch('/api/onboarding', { method: 'GET' });
+      r = await pfOther.fetch('/api/onboarding/' + obId);
+      check('another organisation cannot see the onboarding', r.status === 404, r);
     } finally {
       await dbConn.end();
     }

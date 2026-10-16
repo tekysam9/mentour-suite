@@ -374,3 +374,14 @@ current editions at irs.gov and uscis.gov.
 payments-file rows get an **Edit** button (makes a copy that replaces the file's row; **Revert** restores it); payments can be
 added by hand; generating invoices now asks "Yes, generate / Cancel" first. Re-run `db/schema.sql` (adds `paid_date`,
 `overrides_ledger`, and the `manual` rate source).
+
+## Onboarding (recruiter → HR admin)
+
+**People → Onboarding** replaces the "PLACEMENT INFORMATION" e-mail.
+
+- **Recruiters** (every non-HR user) choose W-2 / C2C / 1099, fill in the placement (or paste the old e-mail and the form fills itself), and **Send to HR for approval**. They see only their own requests and can follow their status.
+- **HR admins** (the account owner, plus anyone the owner marks under *People and roles* on the Onboarding page) see every request. New ones appear under **Waiting for your approval** and as a badge on the menu. HR can change any detail, **Approve & start onboarding**, **Send back to recruiter** (with a note) or reject.
+- After approval HR works the paperwork checklist for that type (W-2: W-4, I-9, direct deposit, benefits…; C2C: the company's W-9, subcontract/MSA, certificate of insurance…; 1099: contractor agreement, W-9, I-9…). Form items tick themselves when the form is fully signed. **Create directory records** makes the consultant, supplier company (C2C), client, vendor and billing pairing from the placement.
+- W-9 is now also available on Consultants (1099) and Supplier companies (C2C).
+
+Deploy: re-run `db/schema.sql` (new `onboardings` table, `users.role` gains `hr`). `/api/version` reports `schema.onboardingTable` and `schema.hrRole`.
