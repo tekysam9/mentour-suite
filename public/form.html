@@ -84,7 +84,7 @@
     if (d.kind === 'secret') {
       var sec = S.d.secrets[d.key] || { set: false };
       var shown = sec.set ? '<span class="fm-mask">' + esc(sec.masked) + '</span>' : '<span class="fm-unset">Not on file</span>';
-      var inp = (S.can && !locked) ? '<div style="margin-top:6px"><input id="' + id + '" data-secret="' + d.key + '" type="password" autocomplete="off" placeholder="' + (sec.set ? 'Type to replace' : 'Enter value') + '"></div>'
+      var inp = (S.canSecret && !locked) ? '<div style="margin-top:6px"><input id="' + id + '" data-secret="' + d.key + '" type="password" autocomplete="off" placeholder="' + (sec.set ? 'Type to replace' : 'Enter value') + '"></div>'
         : '<div class="fm-help">' + (locked ? 'Locked by signature.' : 'Only the account owner can enter this.') + '</div>';
       return '<div class="fm-field">' + label + shown + inp + help + '</div>';
     }
@@ -204,7 +204,7 @@
   fetch('/api/auth/me').then(function (r) { if (!r.ok) { location.href = '/login.html'; return null; } return r.json(); }).then(function (u) {
     if (!u) return; S.user = u.user;
     return api('GET', '/api/forms/schema').then(function (r) {
-      if (r.ok) { S.can = r.body.canEditSecrets; S.enc = r.body.encryptionConfigured; }
+      if (r.ok) { S.can = r.body.canEditSecrets; S.canSecret = (r.body.canEditSecretsFor || {})[FORM] === true; S.enc = r.body.encryptionConfigured; }
       document.title = ({ w9: 'Form W-9', w4: 'Form W-4', i9: 'Form I-9', banking: 'ACH / Wire banking authorization' }[FORM] || 'Form') + ' — Mentour Suite';
       return reload();
     });

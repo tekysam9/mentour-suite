@@ -19,6 +19,9 @@ const ENTITIES = ['consultants', 'clients', 'programs', 'subvendors'];
 const SIGN_AFTER = { employer: 'employee', reverify: 'employer' };
 const OPTIONAL_SIG = { i9: ['reverify'] };
 
+// Who may type identifying numbers. The owner always; HR admins only on the banking form
+// (bank numbers). SSN / tax ID / document numbers stay owner-only. Nobody can read them back.
+const canEditSecrets = (req, form) => req.user.role === 'owner' || (form === 'banking' && req.user.role === 'hr');
 const missingTable = (e) => e && e.code === 'ER_NO_SUCH_TABLE';
 
 async function loadRecord(entity, id, orgId) {
@@ -115,7 +118,7 @@ function checkParams(req, res) {
 }
 
 router.get('/schema', (req, res) => {
-  res.json({ forms: FORMS, encryptionConfigured: isConfigured(), canEditSecrets: req.user.role === 'owner' });
+  res.json({ forms: FORMS, encryptionConfigured: isConfigured(), canEditSecrets: req.user.role === 'owner', canEditSecretsFor: Object.fromEntries(Object.keys(FORMS).map((k) => [k, canEditSecrets(req, k)])) });
 });
 
 router.get('/:entity/:id', async (req, res, next) => {
@@ -170,7 +173,7 @@ router.put('/:entity/:id/:form', async (req, res, next) => {
     }
     const secretKeys = Object.keys(secrets);
     if (secretKeys.length) {
-      if (req.user.role !== 'owner') return res.status(403).json({ error: 'Only the account owner can enter SSN, tax ID or document numbers.' });
+      if (!canEditSecrets(req, P.form)) return res.status(403).json({ error: P.form === 'banking' ? 'Only the account owner or an HR admin can enter bank numbers.' : 'Only the account owner can enter SSN, tax ID or document numbers.' });
       if (secretKeys.some((k) => secrets[k] !== null && secrets[k] !== '') && !isConfigured()) {
         return res.status(503).json({ error: 'Sensitive fields cannot be saved yet: the server has no encryption key. Set FIELD_ENCRYPTION_KEY (see README-DEPLOY.md), restart, and try again. Nothing was stored.' });
       }

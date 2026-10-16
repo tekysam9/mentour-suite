@@ -2055,6 +2055,42 @@ async function main() {
       check('a recruiter cannot make themselves HR', r.status === 403, r);
       r = await pfOwner.fetch('/api/onboarding/people/' + ritaId, { method: 'PUT', body: JSON.stringify({ role: 'hr' }) });
       check('the owner makes Rita an HR admin', r.status === 200, r);
+      // ---- HR admins may enter bank numbers (banking form only); W2 / 1099 bank items use the banking form
+      {
+        const consId = (await pfOwner.fetch('/api/onboarding/' + obId)).body.consultantId;
+        const [[o]] = await dbConn.query('SELECT organization_id FROM onboardings WHERE id = ?', [obId]);
+        r = await obRec.fetch('/api/forms/schema');
+        check('schema: HR may type bank numbers, not SSNs', r.body.canEditSecretsFor.banking === true && r.body.canEditSecretsFor.w9 === false && r.body.canEditSecrets === false, r.body.canEditSecretsFor);
+        r = await obRec.fetch('/api/forms/consultants/' + consId + '/w9', { method: 'PUT', body: JSON.stringify({ secrets: { tin: '123456789' } }) });
+        check('HR still cannot enter a tax ID', r.status === 403, r.body);
+        r = await obRec2.fetch('/api/forms/consultants/' + consId + '/banking', { method: 'PUT', body: JSON.stringify({ secrets: { ach_account: '55554444' } }) });
+        check('a recruiter cannot open the banking form at all', r.status === 403, r.body);
+        // a W2 and a 1099 onboarding for this consultant, one with an old manual tick
+        const mk = async (type, cl) => (await dbConn.query(`INSERT INTO onboardings (organization_id, worker_type, status, consultant_name, consultant_id, data, checklist, log) VALUES (?, ?, 'in_progress', 'Avinash Agnihotri', ?, ?, ?, '[]')`,
+          [o.organization_id, type, consId, JSON.stringify({ consultant_name: 'Avinash Agnihotri', h1b_filing_required: 'No' }), JSON.stringify(cl)]))[0].insertId;
+        const w2b = await mk('W2', { direct_deposit: { done: true, by: 'Old HR' } });
+        const t99b = await mk('1099', {});
+        let g = (await pfOwner.fetch('/api/onboarding/' + w2b)).body.checklist.find((c) => c.key === 'direct_deposit');
+        check('W2 direct deposit links to the consultant banking form; old tick still counts, tagged', g.form && g.form.form === 'banking' && g.form.entity === 'consultants' && g.form.recordId === consId && g.done === true && g.legacyDone === true && g.formOnly === true, g);
+        g = (await pfOwner.fetch('/api/onboarding/' + t99b)).body.checklist.find((c) => c.key === 'payment_details');
+        check('1099 payment details links to the banking form and is open', g.form && g.form.form === 'banking' && g.done === false, g);
+        r = await pfOwner.fetch('/api/onboarding/' + t99b + '/checklist', { method: 'POST', body: JSON.stringify({ key: 'payment_details', done: true }) });
+        check('1099 payment details cannot be ticked by hand', r.status === 400, r.body);
+        const bu = '/api/forms/consultants/' + consId + '/banking';
+        r = await obRec.fetch(bu, { method: 'PUT', body: JSON.stringify({ values: { method: 'ACH', bank_name: 'Chase', ach_holder: 'Avinash Agnihotri', ach_type: 'Savings', payee_attest: true }, secrets: { ach_routing: '021000021', ach_account: '9876543210' } }) });
+        check('an HR admin enters bank numbers on the banking form', r.status === 200, r.body);
+        r = await obRec.fetch(bu);
+        check('HR reads back last 4 only', r.body.secrets.ach_account.last4 === '3210' && !JSON.stringify(r.body).includes('9876543210'), r.body.secrets);
+        r = await obRec.fetch(bu, { method: 'PUT', body: JSON.stringify({ secrets: { ach_account: '1111222233' } }) });
+        check('an HR admin can update a bank number', r.status === 200 && (await obRec.fetch(bu)).body.secrets.ach_account.last4 === '2233', r.body);
+        r = await obRec.fetch(bu + '/sign', { method: 'POST', body: JSON.stringify({ signature: 'payee', typedName: 'Avinash Agnihotri', consent: true }) });
+        check('the consultant banking form is signed', r.status === 200 && r.body.status === 'complete', r.body);
+        g = (await pfOwner.fetch('/api/onboarding/' + t99b)).body.checklist.find((c) => c.key === 'payment_details');
+        check('1099 payment details ticks itself once signed', g.done === true && g.autoDone === true && !g.legacyDone, g);
+        g = (await pfOwner.fetch('/api/onboarding/' + w2b)).body.checklist.find((c) => c.key === 'direct_deposit');
+        check('W2 direct deposit is now done by the form (no longer tagged)', g.done === true && g.autoDone === true && g.legacyDone === false, g);
+        await dbConn.query('DELETE FROM onboardings WHERE id IN (?, ?)', [w2b, t99b]);
+      }
       r = await obRec.fetch('/api/onboarding?status=all');
       check('an HR admin sees every request', r.body.onboardings.length >= 2, r.body);
       r = await obRec2.fetch('/api/onboarding/me');

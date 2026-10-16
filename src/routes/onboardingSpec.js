@@ -122,7 +122,7 @@ const CHECKLISTS = {
     item('w4', 'Form W-4 (federal withholding)', { group: 'Paperwork', form: 'w4', on: 'consultant' }),
     item('i9', 'Form I-9 (employment eligibility)', { group: 'Paperwork', form: 'i9', on: 'consultant', hint: 'Employee completes Section 1 by day one; the employer completes Section 2 within 3 business days of the start date.' }),
     item('state_withholding', 'State withholding form', { group: 'Paperwork', hint: 'The state form for the state of work, if it has one.' }),
-    item('direct_deposit', 'Direct deposit details collected', { group: 'Paperwork' }),
+    item('direct_deposit', 'Direct deposit details collected', { group: 'Paperwork', form: 'banking', on: 'consultant', formOnly: true, hint: 'The ACH / Wire banking authorization form on the consultant, filled in and signed. Needs the directory records.' }),
     item('emergency_contact', 'Emergency contact collected', { group: 'Paperwork' }),
     item('handbook', 'Handbook and policies acknowledged', { group: 'Paperwork' }),
     NDA,
@@ -145,7 +145,7 @@ const CHECKLISTS = {
     item('w9', 'Form W-9', { group: 'Paperwork', form: 'w9', on: 'consultant' }),
     item('i9', 'Form I-9 (employment eligibility)', { group: 'Paperwork', form: 'i9', on: 'consultant', hint: 'Kept for contractors as company practice.' }),
     NDA,
-    item('payment_details', 'Payment (ACH) details collected', { group: 'Paperwork' }),
+    item('payment_details', 'Payment (ACH) details collected', { group: 'Paperwork', form: 'banking', on: 'consultant', formOnly: true, hint: 'The ACH / Wire banking authorization form on the consultant, filled in and signed. Needs the directory records.' }),
     H1B,
   ].concat(COMMON_TAIL),
 };

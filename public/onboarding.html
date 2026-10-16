@@ -393,7 +393,7 @@
       var manual = !c.answer && !c.formOnly && c.upload !== 'required';
       var tickable = live && manual && !(c.autoDone && !c.manualDone);
       h += '<div class="ob-item' + (c.na ? ' na' : '') + '"><input type="checkbox" data-act="tick" data-k="' + c.key + '"' + (c.done ? ' checked' : '') + (tickable || (live && c.legacyDone) ? '' : ' disabled') + (manual ? '' : ' title="Completes itself: ' + (c.answer ? 'choose Yes or No' : c.formOnly ? 'fill in and sign the form' : 'upload the document') + '"') + '>' +
-        '<div class="lbl">' + esc(c.label) + (c.optional ? ' <span class="ob-chipf">optional</span>' : '') + (c.autoDone && !c.manualDone ? ' <span class="ob-chipf complete">automatic</span>' : '') + (c.legacyDone ? ' <span class="ob-chipf">ticked before uploads</span>' : '') + '</div><div class="more">';
+        '<div class="lbl">' + esc(c.label) + (c.optional ? ' <span class="ob-chipf">optional</span>' : '') + (c.autoDone && !c.manualDone ? ' <span class="ob-chipf complete">automatic</span>' : '') + (c.legacyDone ? ' <span class="ob-chipf">ticked before ' + (c.formOnly ? 'the form' : 'uploads') + '</span>' : '') + '</div><div class="more">';
       if (c.answer) {
         h += '<span class="ob-yn">' + ['Yes', 'No'].map(function (v) { return '<button class="ob-btn' + (c.value === v ? ' primary' : '') + '" data-act="answer" data-k="' + c.key + '" data-v="' + v + '"' + (live ? '' : ' disabled') + '>' + v + '</button>'; }).join(' ') + '</span>';
         if (c.value === 'No' && c.key === 'background_check') h += '<span style="color:#9a3b1f">Answered No: check before completing.</span>';
