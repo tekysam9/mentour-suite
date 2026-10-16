@@ -551,7 +551,7 @@ CREATE TABLE IF NOT EXISTS onboardings (
   INDEX idx_onboardings_org_status (organization_id, status)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
--- HR admins review and approve the onboarding requests recruiters send. 'owner' can do everything an
--- HR admin can; the owner chooses who else is an HR admin (Onboarding page > People). Safe to re-run.
-ALTER TABLE users MODIFY role ENUM('owner', 'hr', 'member') NOT NULL DEFAULT 'member';
+-- HR admins review and approve the onboarding requests recruiters send. A 'recruiter' login sees only the
+-- Onboarding module. 'owner' can do everything an HR admin can; the owner chooses who else is an HR admin (Onboarding page > People). Safe to re-run.
+ALTER TABLE users MODIFY role ENUM('owner', 'hr', 'member', 'recruiter') NOT NULL DEFAULT 'member';
 ALTER TABLE onboardings ADD COLUMN IF NOT EXISTS created_by_id INT NULL;

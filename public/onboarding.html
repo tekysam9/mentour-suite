@@ -10,6 +10,8 @@
   .ob { max-width: 1240px; margin: 0 auto; padding: 28px 24px 72px; }
   .ob h1 { font-family: Georgia, 'Iowan Old Style', 'Palatino Linotype', serif; font-size: 30px; font-weight: 600; color: var(--ink); margin: 0 0 6px; }
   .ob-lede { color: var(--text-muted); font-size: 13.5px; line-height: 1.55; margin: 0 0 20px; max-width: 760px; }
+  .ob-addperson { margin-top:16px; padding-top:14px; border-top:1px solid var(--line); }
+  .ob-addperson input, .ob-addperson select { width:100%; box-sizing:border-box; border:1px solid var(--line); border-radius:5px; padding:7px 9px; font:inherit; font-size:13px; background:var(--paper); }
   .ob-top { display: flex; justify-content: space-between; align-items: flex-end; gap: 16px; flex-wrap: wrap; margin-bottom: 18px; }
   .ob-card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 18px 20px; margin-bottom: 16px; }
   .ob-card h2 { font-size: 12.5px; text-transform: uppercase; letter-spacing: .06em; color: var(--text-muted); margin: 0 0 14px; font-weight: 700; }
@@ -193,13 +195,18 @@
     var h = '<details class="ob-card" id="people-card"' + (S.people ? ' open' : '') + '><summary style="cursor:pointer;font-weight:700;font-size:12.5px;text-transform:uppercase;letter-spacing:.06em;color:var(--text-muted)">People and roles</summary>';
     if (!S.people) h += '<p class="ob-muted" style="margin-top:12px">Loading…</p>';
     else {
-      h += '<p class="ob-muted" style="margin:12px 0">HR admins see every onboarding request, approve them and can change any detail. Recruiters only see their own requests.</p><table class="ob-table"><tbody>';
+      h += '<p class="ob-muted" style="margin:12px 0"><b>Recruiter</b>: sees only the Onboarding module and only their own requests. <b>HR admin</b>: sees every request, approves them and can change any detail. <b>Team member</b>: the whole suite, with their own onboarding requests.</p><table class="ob-table"><tbody>';
       S.people.forEach(function (p) {
         h += '<tr><td><b>' + esc(p.name) + '</b></td><td class="ob-muted">' + esc(p.email) + '</td><td>' +
           (p.role === 'owner' ? '<span class="ob-muted">Owner (always HR)</span>' :
-            '<select data-act="role" data-id="' + p.id + '"><option value="member"' + (p.role === 'member' ? ' selected' : '') + '>Recruiter</option><option value="hr"' + (p.role === 'hr' ? ' selected' : '') + '>HR admin</option></select>') + '</td></tr>';
+            '<select data-act="role" data-id="' + p.id + '"><option value="recruiter"' + (p.role === 'recruiter' ? ' selected' : '') + '>Recruiter (Onboarding only)</option><option value="hr"' + (p.role === 'hr' ? ' selected' : '') + '>HR admin</option><option value="member"' + (p.role === 'member' ? ' selected' : '') + '>Team member (full access)</option></select>') + '</td></tr>';
       });
       h += '</tbody></table>';
+      h += '<div class="ob-addperson"><b style="font-size:12.5px">Add a person</b><div class="ob-grid" style="margin-top:8px">' +
+        '<input type="text" id="np-name" placeholder="Full name"><input type="email" id="np-email" placeholder="Email (their login)">' +
+        '<input type="text" id="np-pass" placeholder="Temporary password (8+ characters)" autocomplete="off">' +
+        '<select id="np-role"><option value="recruiter">Recruiter (Onboarding only)</option><option value="hr">HR admin</option><option value="member">Team member (full access)</option></select></div>' +
+        '<div style="margin-top:8px"><button class="ob-btn primary" data-act="add-person">Add person</button></div></div>';
     }
     return h + '</details>';
   }
@@ -360,7 +367,7 @@
         '<div class="lbl">' + esc(c.label) + (c.autoDone && !c.manualDone ? ' <span class="ob-chipf complete">automatic</span>' : '') + '</div><div class="more">';
       if (c.form) {
         h += '<span class="ob-chipf ' + (c.form.status === 'complete' ? 'complete' : '') + '">' + esc(c.form.title) + ': ' + esc(c.form.status || 'needs records') + '</span>';
-        if (c.form.recordId) h += '<a class="ob-link" href="/form.html?type=' + c.form.entity + '&id=' + c.form.recordId + '&form=' + c.form.form + '">Open form</a>';
+        if (c.form.recordId && hr) h += '<a class="ob-link" href="/form.html?type=' + c.form.entity + '&id=' + c.form.recordId + '&form=' + c.form.form + '">Open form</a>';
         else h += '<span>Create the directory records first</span>';
       }
       if (c.hint) h += '<span>' + esc(c.hint) + '</span>';
@@ -376,8 +383,8 @@
     // directory records
     h += '<div class="ob-card"><h2>Directory records</h2>';
     if (o.consultantId) {
-      h += '<p style="margin:0 0 8px;font-size:13px">Consultant: <a class="ob-link" href="/record.html?type=consultants&id=' + o.consultantId + '">open profile</a>' +
-        (o.supplierId ? ' · Supplier company: <a class="ob-link" href="/record.html?type=subvendors&id=' + o.supplierId + '">open profile</a>' : '') + '</p>';
+      h += '<p style="margin:0 0 8px;font-size:13px">Consultant: ' + (hr ? '<a class="ob-link" href="/record.html?type=consultants&id=' + o.consultantId + '">open profile</a>' : 'created') +
+        (o.supplierId ? ' · Supplier company: ' + (hr ? '<a class="ob-link" href="/record.html?type=subvendors&id=' + o.supplierId + '">open profile</a>' : 'created') : '') + '</p>';
     } else h += '<p class="ob-muted" style="margin:0 0 8px">' + (o.directoryMatch ? 'A consultant with this name is already in the Directory; it will be linked, not duplicated.' : 'Not created yet.') + '</p>';
     if (hr && (o.status === 'in_progress' || o.status === 'draft')) h += '<button class="ob-btn ' + (o.consultantId ? '' : 'primary') + '" data-act="ask-records">' + (o.consultantId ? 'Update directory records' : 'Create directory records') + '</button>';
     h += '</div>';
@@ -430,6 +437,11 @@
     var b = e.target.closest('[data-act]'); if (!b) return;
     var act = b.getAttribute('data-act'), v = b.getAttribute('data-v'), id = b.getAttribute('data-id');
     if (['tick', 'cnote', 'role'].indexOf(act) !== -1) return; // handled on change
+    if (act === 'add-person') {
+      api('POST', '/api/onboarding/people', { name: document.getElementById('np-name').value, email: document.getElementById('np-email').value, password: document.getElementById('np-pass').value, role: document.getElementById('np-role').value })
+        .then(function (r) { note(r.ok ? 'Added. Share their email and the temporary password with them.' : (r.body.error || 'Could not add that person.'), r.ok ? 'ok' : 'err'); S.people = null; loadPeople(); if (!r.ok) renderList(); });
+      return;
+    }
     if (act === 'new') { location.hash = 'new'; return; }
     if (act === 'open') { location.hash = id; return; }
     if (act === 'status' && S.ob) { setStatus(v); return; }

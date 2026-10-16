@@ -50,6 +50,10 @@ async function requireAuth(req, res, next) {
       return res.status(401).json({ error: 'Not signed in.' });
     }
     req.user = rows[0];
+    // A recruiter login is limited to the Onboarding module (and its own session endpoints).
+    if (req.user.role === 'recruiter' && !/^\/api\/(onboarding|auth)(\/|$)/.test(req.baseUrl || '')) {
+      return res.status(403).json({ error: 'Your login is limited to the Onboarding module.' });
+    }
     next();
   } catch (err) {
     next(err);

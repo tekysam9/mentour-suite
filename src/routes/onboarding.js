@@ -8,7 +8,7 @@
 
 const express = require('express');
 const pool = require('../db');
-const { requireAuth } = require('../auth');
+const { requireAuth, hashPassword, validateSignupInput } = require('../auth');
 const forms = require('./forms');
 const { FORMS } = require('./formSpecs');
 const { splitClientText } = require('./clientAliases');
@@ -210,11 +210,28 @@ router.get('/people', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+// The owner creates a login directly (e.g. a recruiter who only needs Onboarding).
+router.post('/people', async (req, res, next) => {
+  try {
+    if (req.user.role !== 'owner') return res.status(403).json({ error: 'Only the account owner can add people.' });
+    const b = req.body || {};
+    if (!['hr', 'member', 'recruiter'].includes(b.role)) return res.status(400).json({ error: 'Choose a role for this person.' });
+    const bad = validateSignupInput({ email: b.email, password: b.password, name: b.name });
+    if (bad) return res.status(400).json({ error: bad });
+    const email = String(b.email).trim().toLowerCase();
+    const [dup] = await pool.query('SELECT id FROM users WHERE email = ? LIMIT 1', [email]);
+    if (dup.length) return res.status(409).json({ error: 'That email already has a login.' });
+    const hash = await hashPassword(String(b.password));
+    await pool.query('INSERT INTO users (organization_id, email, password_hash, name, role) VALUES (?, ?, ?, ?, ?)', [req.user.organization_id, email, hash, String(b.name).trim(), b.role]);
+    res.status(201).json({ ok: true });
+  } catch (err) { if (err && /Data truncated|ER_WARN_DATA_OUT_OF_RANGE|Incorrect enum/i.test(String(err.message))) return res.status(503).json({ error: SCHEMA_MSG }); next(err); }
+});
+
 router.put('/people/:userId', async (req, res, next) => {
   try {
     if (req.user.role !== 'owner') return res.status(403).json({ error: 'Only the account owner can choose HR admins.' });
     const role = req.body && req.body.role;
-    if (!['hr', 'member'].includes(role)) return res.status(400).json({ error: 'Role must be HR admin or recruiter.' });
+    if (!['hr', 'member', 'recruiter'].includes(role)) return res.status(400).json({ error: 'Role must be Recruiter, HR admin or Team member.' });
     const [rows] = await pool.query(`SELECT id, role FROM users WHERE id = ? AND organization_id = ?`, [req.params.userId, req.user.organization_id]);
     if (!rows[0]) return res.status(404).json({ error: 'Person not found.' });
     if (rows[0].role === 'owner') return res.status(409).json({ error: 'The owner is always an HR admin.' });

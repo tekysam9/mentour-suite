@@ -45,6 +45,7 @@
     { label: 'Import history', href: '/invoices.html#hximport', icon: 'history', page: ['/invoices.html'], tab: 'hximport', crumb: ['Fin-Module', 'Import history'] }
   ];
   var BADGES = {};
+  var ROLE = ls('ms-role'); // a recruiter login sees only the Onboarding module
   var DEFAULT_TAB = { '/directory.html': 'consultants', '/invoices.html': 'client' };
 
   function currentItem() {
@@ -88,6 +89,7 @@
     var cur = currentItem();
     var out = '';
     NAV.forEach(function (n) {
+      if (ROLE === 'recruiter' && !(n.section === 'People' || n.badgeKey)) return;
       if (n.section) { out += '<div class="app-nav-label">' + esc(n.section) + '</div>'; return; }
       var child = n.href.indexOf('#') !== -1;
       out += '<a href="' + n.href + '" class="' + (child ? 'child' : '') + (n === cur ? ' active' : '') + '"' + (n === cur ? ' aria-current="page"' : '') + ' title="' + esc(n.label) + '">' + svg(n.icon) + '<span>' + esc(n.label) + '</span>' + (n.badgeKey && BADGES[n.badgeKey] ? '<em class="app-badge" title="Waiting for HR approval">' + BADGES[n.badgeKey] + '</em>' : '') + '</a>';
@@ -129,6 +131,9 @@
     var u = d.user, n = (u.name || u.email || '?').trim();
     document.getElementById('app-avatar').textContent = n.split(/\s+/).slice(0, 2).map(function (w) { return w[0]; }).join('').toUpperCase();
     document.getElementById('app-uname').textContent = n;
+    ls('ms-role', u.role);
+    if (u.role !== ROLE) { ROLE = u.role; paintNav(); }
+    if (u.role === 'recruiter' && location.pathname !== '/onboarding.html') location.replace('/onboarding.html');
     document.getElementById('app-uorg').textContent = (u.organization && u.organization.name) || '';
   }).catch(function () { /* the page itself redirects to login */ });
 

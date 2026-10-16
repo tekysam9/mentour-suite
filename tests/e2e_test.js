@@ -1974,6 +1974,38 @@ async function main() {
       r = await obRec2.fetch('/api/onboarding', { method: 'GET' });
       r = await pfOther.fetch('/api/onboarding/' + obId);
       check('another organisation cannot see the onboarding', r.status === 404, r);
+
+      // 39. A recruiter-only login: Onboarding module and nothing else.
+      r = await pfOwner.fetch('/api/onboarding/people', { method: 'POST', body: JSON.stringify({ name: 'Ron Recruiter', email: 'ron@pftest.test', password: 'ronpassword123', role: 'recruiter' }) });
+      check('the owner adds a recruiter login', r.status === 201, r);
+      r = await pfOwner.fetch('/api/onboarding/people', { method: 'POST', body: JSON.stringify({ name: 'Ron Again', email: 'RON@pftest.test', password: 'ronpassword123', role: 'recruiter' }) });
+      check('a duplicate email is refused', r.status === 409, r);
+      r = await pfOwner.fetch('/api/onboarding/people', { method: 'POST', body: JSON.stringify({ name: 'Bad', email: 'bad@pftest.test', password: 'short', role: 'recruiter' }) });
+      check('a short password is refused', r.status === 400, r);
+      const ron = makeJar();
+      r = await ron.fetch('/api/auth/login', { method: 'POST', body: JSON.stringify({ email: 'ron@pftest.test', password: 'ronpassword123' }) });
+      check('the recruiter can sign in', r.status === 200 && r.body.user.role === 'recruiter', r.body);
+      r = await ron.fetch('/api/auth/me');
+      check('the recruiter session endpoint works', r.status === 200 && r.body.user.role === 'recruiter', r.body);
+      r = await ron.fetch('/api/onboarding', { method: 'POST', body: JSON.stringify({ workerType: 'W2', data: { consultant_name: 'Wanda W2' } }) });
+      check('the recruiter can start an onboarding request', r.status === 201, r);
+      const ronId = r.body.id;
+      r = await ron.fetch('/api/onboarding?status=all');
+      check('the recruiter sees only their own request', r.status === 200 && r.body.onboardings.length === 1 && r.body.onboardings[0].id === ronId, r.body);
+      for (const path of ['/api/directory/consultants', '/api/invoices', '/api/subvendor-invoices', '/api/ledger', '/api/margin', '/api/profiles/schema', '/api/forms/schema', '/api/directory/clients']) {
+        r = await ron.fetch(path);
+        check('the recruiter is blocked from ' + path, r.status === 403, r.status);
+      }
+      r = await ron.fetch('/api/onboarding/people');
+      check('the recruiter cannot list people', r.status === 403, r);
+      r = await ron.fetch('/api/onboarding/' + ronId + '/create-records', { method: 'POST', body: '{}' });
+      check('the recruiter cannot create directory records', r.status === 403, r);
+      r = await pfOwner.fetch('/api/onboarding/people');
+      const ronRow = r.body.people.find((p) => p.email === 'ron@pftest.test');
+      check('the owner sees the recruiter role', ronRow && ronRow.role === 'recruiter', r.body);
+      r = await pfOwner.fetch('/api/onboarding/people/' + ronRow.id, { method: 'PUT', body: JSON.stringify({ role: 'member' }) });
+      r = await ron.fetch('/api/directory/consultants');
+      check('a team member (not recruiter) regains full access', r.status === 200, r.status);
     } finally {
       await dbConn.end();
     }
