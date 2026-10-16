@@ -1873,7 +1873,7 @@ async function main() {
       r = await obRec.fetch('/api/onboarding', { method: 'POST', body: JSON.stringify({ workerType: 'C2C', data: Object.assign({}, obF, { email: 'not-an-email' }) }) });
       check('a bad email address is refused', r.status === 400 && r.body.errors[0].key === 'email', r.body);
       r = await obRec.fetch('/api/onboarding', { method: 'POST', body: JSON.stringify({ workerType: 'C2C', data: obF }) });
-      check('recruiter saves a draft', r.status === 201 && r.body.status === 'draft' && r.body.margin.perHour === 15, r.body);
+      check('recruiter saves a draft', r.status === 201 && r.body.status === 'draft' && r.body.margin === null && r.body.data.bill_rate === undefined, r.body);
       const obId = r.body.id;
       check('the e-mail typo (gamil.com) is flagged', r.body.warnings.some((w) => w.key === 'email' && /gmail/.test(w.message)), r.body.warnings);
       r = await obRec.fetch('/api/onboarding/' + obId + '/status', { method: 'POST', body: JSON.stringify({ status: 'submitted' }) });
@@ -2020,6 +2020,29 @@ async function main() {
       check('a revoked invite code stops working', r.status === 404, r);
       r = await makeJar().fetch('/api/auth/join', { method: 'POST', body: JSON.stringify({ inviteCode: (await pfOwner.fetch('/api/auth/me')).body.user.organization.inviteCode, name: 'Old Code', email: 'oldcode@pftest.test', password: 'oldcodepassword1' }) });
       check('the original company code still gives a Team member', r.status === 201 && r.body.user.role === 'member', r.body);
+      // money is for HR only: a recruiter can enter it but never reads it back
+      r = await ron.fetch('/api/onboarding', { method: 'POST', body: JSON.stringify({ workerType: 'C2C', data: { consultant_name: 'Money Test', bill_rate: 123, pay_rate: 77, final_cost: 80, end_client: 'Acme / Rocket', recruiter: 'Ron', start_date: '2026-11-01', h1b_filing_required: 'No', invoicing_method: 'QuickBooks', employer_name: 'Money Co' } }) });
+      const monId = r.body.id;
+      check('the create response does not echo the rates', r.status === 201 && r.body.data.bill_rate === undefined && r.body.data.pay_rate === undefined && r.body.data.final_cost === undefined && r.body.margin === null, r.body);
+      check('the recruiter is told which values were entered', r.body.hiddenFields && r.body.hiddenFields.bill_rate === true && r.body.hiddenFields.pay_rate === true, r.body.hiddenFields);
+      r = await ron.fetch('/api/onboarding/' + monId);
+      check('a recruiter reading it back sees no rates or margin', r.body.data.bill_rate === undefined && r.body.data.pay_rate === undefined && r.body.data.final_cost === undefined && r.body.margin === null && !JSON.stringify(r.body).includes('123'), r.body);
+      r = await ron.fetch('/api/onboarding/' + monId + '/email');
+      check('the e-mail text for a recruiter leaves the rates out', !/123|77|80/.test(r.body.text.replace(/Project Start Date:\n[^\n]*/, '')), r.body.text);
+      r = await ron.fetch('/api/onboarding/' + monId, { method: 'PUT', body: JSON.stringify({ data: { bill_rate: '', pay_rate: '', final_cost: '', technical_skill: 'DB2' } }) });
+      check('saving blanks from a recruiter does not clear the rates', r.status === 200 && r.body.hiddenFields.bill_rate === true, r.body);
+      r = await pfOwner.fetch('/api/onboarding/' + monId);
+      check('HR still sees the real bill rate, pay rate, final cost and margin', r.body.data.bill_rate === 123 && r.body.data.pay_rate === 77 && r.body.data.final_cost === 80 && r.body.margin && r.body.margin.perHour === 43, r.body.margin);
+      r = await ron.fetch('/api/onboarding/' + monId + '/status', { method: 'POST', body: JSON.stringify({ status: 'submitted' }) });
+      check('a recruiter can submit without re-entering rates already saved', r.status === 200, r);
+      r = await pfOwner.fetch('/api/onboarding/' + monId + '/status', { method: 'POST', body: JSON.stringify({ status: 'draft', reason: 'check the rate' }) });
+      r = await ron.fetch('/api/onboarding/' + monId, { method: 'PUT', body: JSON.stringify({ data: { bill_rate: 130 } }) });
+      r = await pfOwner.fetch('/api/onboarding/' + monId);
+      check('a recruiter can replace the bill rate (write-only)', r.body.data.bill_rate === 130 && r.body.data.pay_rate === 77, r.body.data);
+      check('the activity log never contains the rate values', !/\b(123|130)\b/.test(JSON.stringify(r.body.log)), r.body.log);
+      r = await pfOwner.fetch('/api/onboarding?status=all');
+      check('the list never carries rates', !/bill_rate|pay_rate|margin/i.test(JSON.stringify(r.body)), 'list');
+
       r = await pfOwner.fetch('/api/onboarding/people');
       const ronRow = r.body.people.find((p) => p.email === 'ron@pftest.test');
       check('the owner sees the recruiter role', ronRow && ronRow.role === 'recruiter', r.body);

@@ -37,6 +37,9 @@ const dateStr = (v) => (!v ? null : v instanceof Date ? v.getFullYear() + '-' + 
 const who = (req) => req.user.name || req.user.email;
 // HR admins (and the owner) see every request and can change anything; recruiters (members) see and edit their own.
 const isHr = (req) => req.user.role === 'owner' || req.user.role === 'hr';
+// Money figures are for HR only: a recruiter can type them in, but never reads them back.
+const SENSITIVE = ['bill_rate', 'pay_rate', 'final_cost'];
+const withoutMoney = (data) => { const d = Object.assign({}, data); SENSITIVE.forEach((k) => { delete d[k]; }); return d; };
 const denyHr = (res) => res.status(403).json({ error: 'Only an HR admin can do that.' });
 
 // ------------------------------------------------------------ validation
@@ -158,8 +161,10 @@ function checklistView(row, data, stored, states) {
 const progress = (items) => { const live = items.filter((i) => !i.na); return { done: live.filter((i) => i.done).length, total: live.length }; };
 
 // ----------------------------------------------------------------- serialise
-async function present(row, extra) {
-  const data = parse(row.data, {});
+async function present(row, extra, req) {
+  const full = parse(row.data, {});
+  const hide = !!req && !isHr(req);
+  const data = hide ? withoutMoney(full) : full;
   const stored = parse(row.checklist, {});
   const states = await formStates(row.organization_id, [row]);
   const items = checklistView(row, data, stored, states);
@@ -168,7 +173,8 @@ async function present(row, extra) {
     id: row.id, workerType: row.worker_type, status: row.status, consultantName: row.consultant_name,
     startDate: dateStr(row.start_date),
     consultantId: row.consultant_id, supplierId: row.supplier_id, data: pub, meta: data._meta || {},
-    checklist: items, progress: progress(items), margin: margin(data), warnings: warningsFor(row.worker_type, data),
+    checklist: items, progress: progress(items), margin: hide ? null : margin(data), warnings: warningsFor(row.worker_type, data),
+    hiddenFields: hide ? Object.fromEntries(SENSITIVE.filter((k) => full[k] !== undefined).map((k) => [k, true])) : {},
     log: parse(row.log, []).slice(-60).reverse(), createdBy: row.created_by,
     submittedAt: row.submitted_at, completedAt: row.completed_at, createdAt: row.created_at, updatedAt: row.updated_at,
   }, extra || {});
@@ -322,14 +328,14 @@ router.post('/', async (req, res, next) => {
       `INSERT INTO onboardings (organization_id, worker_type, status, consultant_name, start_date, data, checklist, log, created_by, created_by_id) VALUES (?, ?, 'draft', ?, ?, ?, '{}', ?, ?, ?)`,
       [req.user.organization_id, body.workerType, data.consultant_name, data.start_date || null, JSON.stringify(data), row.log, who(req), req.user.id]);
     const [rows] = await pool.query(`SELECT * FROM onboardings WHERE id = ?`, [r.insertId]);
-    res.status(201).json(await present(rows[0], { directoryMatch: await directoryMatch(req.user.organization_id, data.consultant_name) }));
+    res.status(201).json(await present(rows[0], { directoryMatch: await directoryMatch(req.user.organization_id, data.consultant_name) }, req));
   } catch (err) { if (missingTable(err)) return res.status(503).json({ error: SCHEMA_MSG }); next(err); }
 });
 
 router.get('/:id', async (req, res, next) => {
   try {
     const row = await load(req, res); if (!row) return;
-    res.json(await present(row, { directoryMatch: await directoryMatch(row.organization_id, row.consultant_name), allowedNext: NEXT[row.status] }));
+    res.json(await present(row, { directoryMatch: await directoryMatch(row.organization_id, row.consultant_name), allowedNext: NEXT[row.status] }, req));
   } catch (err) { if (missingTable(err)) return res.status(503).json({ error: SCHEMA_MSG }); next(err); }
 });
 
@@ -345,7 +351,9 @@ router.put('/:id', async (req, res, next) => {
       type = body.workerType;
     }
     const old = parse(row.data, {});
-    const { data, errors } = clean(body.data || {}, old);
+    const input = Object.assign({}, body.data || {});
+    if (!isHr(req)) SENSITIVE.forEach((k) => { if (input[k] === '' || input[k] === null) delete input[k]; }); // a recruiter cannot see or clear these, only replace them
+    const { data, errors } = clean(input, old);
     if (errors.length) return res.status(400).json({ error: errors[0].message, errors });
     if (!data.consultant_name) return res.status(400).json({ error: 'Consultant name is required.' });
     const changed = Object.keys(data).filter((k) => k !== '_meta' && String(data[k]) !== String(old[k] === undefined ? '' : old[k]))
@@ -354,13 +362,13 @@ router.put('/:id', async (req, res, next) => {
     if (row.status !== 'draft' && changed.length) {
       const bits = changed.slice(0, 8).map((k) => {
         const lab = k === 'worker type' ? k : (FIELD_BY_KEY[k] || {}).label || k;
-        return k === 'worker type' ? `worker type ${row.worker_type} → ${type}` : `${lab}: ${old[k] === undefined ? '(blank)' : old[k]} → ${data[k] === undefined ? '(blank)' : data[k]}`;
+        return k === 'worker type' ? `worker type ${row.worker_type} → ${type}` : SENSITIVE.includes(k) ? `${lab}: changed` : `${lab}: ${old[k] === undefined ? '(blank)' : old[k]} → ${data[k] === undefined ? '(blank)' : data[k]}`;
       });
       addLog(row, req, (isHr(req) && row.created_by_id !== req.user.id ? 'Edited by HR: ' : 'Placement edited after it was sent: ') + bits.join('; '));
     }
     await save(row, { worker_type: type, consultant_name: data.consultant_name, start_date: data.start_date || null, data: JSON.stringify(data), log: row.log });
     const [rows] = await pool.query(`SELECT * FROM onboardings WHERE id = ?`, [row.id]);
-    res.json(await present(rows[0], { directoryMatch: await directoryMatch(row.organization_id, data.consultant_name), allowedNext: NEXT[rows[0].status] }));
+    res.json(await present(rows[0], { directoryMatch: await directoryMatch(row.organization_id, data.consultant_name), allowedNext: NEXT[rows[0].status] }, req));
   } catch (err) { if (missingTable(err)) return res.status(503).json({ error: SCHEMA_MSG }); next(err); }
 });
 
@@ -396,7 +404,7 @@ router.post('/:id/checklist', async (req, res, next) => {
     if (row.status === 'draft') { f.status = 'in_progress'; }
     await save(row, f);
     const [rows] = await pool.query(`SELECT * FROM onboardings WHERE id = ?`, [row.id]);
-    res.json(await present(rows[0], { allowedNext: NEXT[rows[0].status] }));
+    res.json(await present(rows[0], { allowedNext: NEXT[rows[0].status] }, req));
   } catch (err) { next(err); }
 });
 
@@ -430,14 +438,14 @@ router.post('/:id/status', async (req, res, next) => {
     f.log = row.log;
     await save(row, f);
     const [rows] = await pool.query(`SELECT * FROM onboardings WHERE id = ?`, [row.id]);
-    res.json(await present(rows[0], { allowedNext: NEXT[rows[0].status] }));
+    res.json(await present(rows[0], { allowedNext: NEXT[rows[0].status] }, req));
   } catch (err) { next(err); }
 });
 
 router.get('/:id/email', async (req, res, next) => {
   try {
     const row = await load(req, res); if (!row) return;
-    res.json({ text: spec.buildEmail(row.worker_type, parse(row.data, {})) });
+    res.json({ text: spec.buildEmail(row.worker_type, isHr(req) ? parse(row.data, {}) : withoutMoney(parse(row.data, {}))) });
   } catch (err) { next(err); }
 });
 
@@ -539,12 +547,12 @@ router.post('/:id/create-records', async (req, res, next) => {
     });
 
     data._meta = Object.assign({}, data._meta, { assignmentId, clientId, programId, createdAt: new Date().toISOString() });
-    addLog(row, req, `Directory records: ${made.join(', ')} (client “${clientName}”${vendorName ? `, vendor “${vendorName}”` : ''}, billing ${billing === null ? 'not set' : '$' + billing}).`);
+    addLog(row, req, `Directory records: ${made.join(', ')} (client “${clientName}”${vendorName ? `, vendor “${vendorName}”` : ''}, billing rate ${billing === null ? 'not set' : 'set'}).`);
     await conn.query(`UPDATE onboardings SET consultant_id = ?, supplier_id = ?, data = ?, log = ?${row.status === 'draft' ? `, status = 'in_progress'` : ''} WHERE id = ? AND organization_id = ?`,
       [consultantId, supplierId, JSON.stringify(data), row.log, row.id, orgId]);
     await conn.commit();
     const [rows] = await pool.query(`SELECT * FROM onboardings WHERE id = ?`, [row.id]);
-    res.json(await present(rows[0], { allowedNext: NEXT[rows[0].status], made }));
+    res.json(await present(rows[0], { allowedNext: NEXT[rows[0].status], made }, req));
   } catch (err) {
     if (conn) { try { await conn.rollback(); } catch (e) { /* ignore */ } }
     if (missingTable(err)) return res.status(503).json({ error: SCHEMA_MSG });

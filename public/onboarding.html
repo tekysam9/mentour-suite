@@ -242,12 +242,14 @@
     var v = S.draft.data[f.key]; v = v === undefined ? '' : v;
     var id = 'f-' + f.key;
     var inner;
-    if (!ed) inner = '<div style="padding:7px 0;font-size:13px">' + (v === '' ? '<span class="ob-muted">—</span>' : esc(f.kind === 'date' ? fmtDate(v) : v)) + '</div>';
+    var hid = !isHr() && S.ob && S.ob.hiddenFields && S.ob.hiddenFields[f.key] && v === '';
+    if (!ed && hid) inner = '<div style="padding:7px 0;font-size:13px" class="ob-muted">Entered — only HR can see it</div>';
+    else if (!ed) inner = '<div style="padding:7px 0;font-size:13px">' + (v === '' ? '<span class="ob-muted">—</span>' : esc(f.kind === 'date' ? fmtDate(v) : v)) + '</div>';
     else if (f.kind === 'select') inner = '<select id="' + id + '" data-f="' + f.key + '"><option value=""></option>' + f.options.map(function (o) { return '<option' + (String(v) === o ? ' selected' : '') + '>' + esc(o) + '</option>'; }).join('') + '</select>';
     else if (f.kind === 'textarea') inner = '<textarea id="' + id + '" data-f="' + f.key + '">' + esc(v) + '</textarea>';
     else {
       var t = f.kind === 'date' ? 'date' : f.kind === 'number' ? 'number' : f.kind === 'email' ? 'email' : 'text';
-      inner = '<input id="' + id + '" type="' + t + '"' + (t === 'number' ? ' step="0.01" min="0"' : '') + ' data-f="' + f.key + '" value="' + esc(v) + '">';
+      inner = '<input id="' + id + '" type="' + t + '"' + (t === 'number' ? ' step="0.01" min="0"' : '') + ' data-f="' + f.key + '" value="' + esc(v) + '"' + (hid ? ' placeholder="Entered — only HR can see it"' : '') + '>';
     }
     return '<div class="ob-f' + (f.wide ? ' wide' : '') + (S.errors[f.key] ? ' bad' : '') + '"><label for="' + id + '">' + esc(f.label) + (f.required ? ' <span class="ob-req">*</span>' : '') + '</label>' + inner +
       (S.errors[f.key] ? '<div class="help" style="color:var(--brick)">' + esc(S.errors[f.key]) + '</div>' : (f.help && ed ? '<div class="help">' + esc(f.help) + '</div>' : '')) + '</div>';
@@ -255,6 +257,7 @@
 
   function marginHtml() {
     var d = S.draft.data;
+    if (!isHr()) return '';
     if (d.bill_rate === undefined || d.bill_rate === '' || (d.pay_rate === undefined && d.final_cost === undefined)) return '';
     if ((d.bill_rate_basis || 'Hourly') !== (d.pay_rate_basis || 'Hourly')) return '';
     var cost = d.final_cost !== undefined && d.final_cost !== '' ? Number(d.final_cost) : Number(d.pay_rate);
