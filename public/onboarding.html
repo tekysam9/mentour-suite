@@ -202,6 +202,11 @@
             '<select data-act="role" data-id="' + p.id + '"><option value="recruiter"' + (p.role === 'recruiter' ? ' selected' : '') + '>Recruiter (Onboarding only)</option><option value="hr"' + (p.role === 'hr' ? ' selected' : '') + '>HR admin</option><option value="member"' + (p.role === 'member' ? ' selected' : '') + '>Team member (full access)</option></select>') + '</td></tr>';
       });
       h += '</tbody></table>';
+      var ROLE_NAME = { recruiter: 'Recruiter (Onboarding only)', hr: 'HR admin', member: 'Team member (full access)' };
+      h += '<div class="ob-addperson"><b style="font-size:12.5px">Invite codes</b><p class="ob-muted" style="margin:6px 0 10px">Send someone a code and they join with the role it carries. Sign-up is at the “Join with invite code” tab of the sign-in page.</p>' +
+        (S.invites || []).map(function (i) { return '<div style="display:flex;gap:10px;align-items:center;margin-bottom:6px;font-size:13px"><code style="background:#EAF3EE;padding:3px 8px;border-radius:4px">' + esc(i.code) + '</code><span>' + esc(ROLE_NAME[i.role]) + '</span><button class="ob-btn" data-act="invite-revoke" data-id="' + i.id + '">Revoke</button></div>'; }).join('') +
+        '<div style="display:flex;gap:8px;align-items:center;margin-top:8px"><select id="inv-role" style="max-width:260px"><option value="recruiter">Recruiter (Onboarding only)</option><option value="hr">HR admin</option><option value="member">Team member (full access)</option></select><button class="ob-btn primary" data-act="invite-new">Create invite code</button></div>' +
+        (S.legacyCode ? '<p class="ob-muted" style="margin:10px 0 0">The older company-wide code <code>' + esc(S.legacyCode) + '</code> still works and gives <b>Team member (full access)</b>. Share role-specific codes instead.</p>' : '') + '</div>';
       h += '<div class="ob-addperson"><b style="font-size:12.5px">Add a person</b><div class="ob-grid" style="margin-top:8px">' +
         '<input type="text" id="np-name" placeholder="Full name"><input type="email" id="np-email" placeholder="Email (their login)">' +
         '<input type="text" id="np-pass" placeholder="Temporary password (8+ characters)" autocomplete="off">' +
@@ -437,6 +442,8 @@
     var b = e.target.closest('[data-act]'); if (!b) return;
     var act = b.getAttribute('data-act'), v = b.getAttribute('data-v'), id = b.getAttribute('data-id');
     if (['tick', 'cnote', 'role'].indexOf(act) !== -1) return; // handled on change
+    if (act === 'invite-new') { api('POST', '/api/onboarding/invites', { role: document.getElementById('inv-role').value }).then(function (r) { note(r.ok ? 'Invite code created.' : (r.body.error || 'Could not create it.'), r.ok ? 'ok' : 'err'); loadPeople(); }); return; }
+    if (act === 'invite-revoke') { api('DELETE', '/api/onboarding/invites/' + id).then(function () { note('Invite code revoked.'); loadPeople(); }); return; }
     if (act === 'add-person') {
       api('POST', '/api/onboarding/people', { name: document.getElementById('np-name').value, email: document.getElementById('np-email').value, password: document.getElementById('np-pass').value, role: document.getElementById('np-role').value })
         .then(function (r) { note(r.ok ? 'Added. Share their email and the temporary password with them.' : (r.body.error || 'Could not add that person.'), r.ok ? 'ok' : 'err'); S.people = null; loadPeople(); if (!r.ok) renderList(); });
@@ -534,7 +541,10 @@
     });
   }
   function loadPeople() {
-    api('GET', '/api/onboarding/people').then(function (r) { S.people = r.ok ? r.body.people : null; if (!S.ob && !S.draft) renderList(); });
+    Promise.all([api('GET', '/api/onboarding/people'), api('GET', '/api/onboarding/invites')]).then(function (rs) {
+      S.people = rs[0].ok ? rs[0].body.people : null; S.invites = rs[1].ok ? rs[1].body.invites : []; S.legacyCode = rs[1].ok ? rs[1].body.legacyCode : '';
+      if (!S.ob && !S.draft) renderList();
+    });
   }
   appEl.addEventListener('toggle', function (e) { if (e.target.id === 'people-card' && e.target.open && !S.people) loadPeople(); }, true);
 

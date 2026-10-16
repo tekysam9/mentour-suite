@@ -387,3 +387,5 @@ added by hand; generating invoices now asks "Yes, generate / Cancel" first. Re-r
 Deploy: re-run `db/schema.sql` (new `onboardings` table, `users.role` gains `hr`). `/api/version` reports `schema.onboardingTable` and `schema.hrRole`.
 
 **Recruiter-only logins:** the owner adds them under *People and roles → Add a person* on the Onboarding page (role *Recruiter (Onboarding only)*). That login sees only the Onboarding module and only its own requests; every other page redirects to Onboarding and every other API answers 403. Re-run `db/schema.sql` first (`users.role` gains `recruiter`).
+
+**Invite codes carry a role.** *People and roles → Invite codes* creates a code for Recruiter, HR admin or Team member; whoever joins with it gets exactly that role (and a recruiter lands in Onboarding). Codes can be revoked. The original company-wide code still works and gives Team member (full access). Re-run `db/schema.sql` (new `invite_codes` table).

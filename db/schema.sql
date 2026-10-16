@@ -555,3 +555,16 @@ CREATE TABLE IF NOT EXISTS onboardings (
 -- Onboarding module. 'owner' can do everything an HR admin can; the owner chooses who else is an HR admin (Onboarding page > People). Safe to re-run.
 ALTER TABLE users MODIFY role ENUM('owner', 'hr', 'member', 'recruiter') NOT NULL DEFAULT 'member';
 ALTER TABLE onboardings ADD COLUMN IF NOT EXISTS created_by_id INT NULL;
+
+-- Role-specific invite codes: whoever signs up with the code gets that role (the owner creates and revokes them).
+CREATE TABLE IF NOT EXISTS invite_codes (
+  id              INT AUTO_INCREMENT PRIMARY KEY,
+  organization_id INT NOT NULL,
+  code            VARCHAR(32) NOT NULL,
+  role            ENUM('hr', 'member', 'recruiter') NOT NULL,
+  label           VARCHAR(120) NULL,
+  revoked         TINYINT(1) NOT NULL DEFAULT 0,
+  created_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE,
+  UNIQUE KEY uq_invite_code (code)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

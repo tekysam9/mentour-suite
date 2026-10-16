@@ -2000,6 +2000,26 @@ async function main() {
       check('the recruiter cannot list people', r.status === 403, r);
       r = await ron.fetch('/api/onboarding/' + ronId + '/create-records', { method: 'POST', body: '{}' });
       check('the recruiter cannot create directory records', r.status === 403, r);
+      // role-specific invite codes
+      r = await ron.fetch('/api/onboarding/invites', { method: 'POST', body: JSON.stringify({ role: 'recruiter' }) });
+      check('a non-owner cannot create invite codes', r.status === 403, r);
+      r = await pfOwner.fetch('/api/onboarding/invites', { method: 'POST', body: JSON.stringify({ role: 'owner' }) });
+      check('an invite code cannot grant owner', r.status === 400, r);
+      r = await pfOwner.fetch('/api/onboarding/invites', { method: 'POST', body: JSON.stringify({ role: 'recruiter' }) });
+      check('the owner creates a Recruiter invite code', r.status === 201 && /^[0-9a-f]{12}$/.test(r.body.code), r);
+      const recCode = r.body.code;
+      const viaCode = makeJar();
+      r = await viaCode.fetch('/api/auth/join', { method: 'POST', body: JSON.stringify({ inviteCode: recCode, name: 'Via Code', email: 'viacode@pftest.test', password: 'viacodepassword1' }) });
+      check('joining with a Recruiter code makes a recruiter', r.status === 201 && r.body.user.role === 'recruiter', r.body);
+      r = await viaCode.fetch('/api/directory/consultants');
+      check('that recruiter is blocked from the Directory', r.status === 403, r.status);
+      r = await pfOwner.fetch('/api/onboarding/invites');
+      const invId = r.body.invites.find((i) => i.code === recCode).id;
+      r = await pfOwner.fetch('/api/onboarding/invites/' + invId, { method: 'DELETE' });
+      r = await makeJar().fetch('/api/auth/join', { method: 'POST', body: JSON.stringify({ inviteCode: recCode, name: 'Late One', email: 'late@pftest.test', password: 'latepassword123' }) });
+      check('a revoked invite code stops working', r.status === 404, r);
+      r = await makeJar().fetch('/api/auth/join', { method: 'POST', body: JSON.stringify({ inviteCode: (await pfOwner.fetch('/api/auth/me')).body.user.organization.inviteCode, name: 'Old Code', email: 'oldcode@pftest.test', password: 'oldcodepassword1' }) });
+      check('the original company code still gives a Team member', r.status === 201 && r.body.user.role === 'member', r.body);
       r = await pfOwner.fetch('/api/onboarding/people');
       const ronRow = r.body.people.find((p) => p.email === 'ron@pftest.test');
       check('the owner sees the recruiter role', ronRow && ronRow.role === 'recruiter', r.body);

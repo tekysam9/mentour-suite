@@ -76,7 +76,14 @@ router.post('/join', authLimiter, async (req, res, next) => {
   if (!inviteCode || !String(inviteCode).trim()) return res.status(400).json({ error: 'Enter the invite code.' });
 
   try {
-    const [orgs] = await pool.query('SELECT id FROM organizations WHERE invite_code = ? LIMIT 1', [String(inviteCode).trim()]);
+    // A role-specific code (created by the owner) wins; the original organization code still gives a Team member.
+    let joinRole = 'member';
+    let orgs = [];
+    try {
+      const [ic] = await pool.query('SELECT organization_id AS id, role FROM invite_codes WHERE code = ? AND revoked = 0 LIMIT 1', [String(inviteCode).trim()]);
+      if (ic.length) { orgs = [{ id: ic[0].id }]; joinRole = ic[0].role; }
+    } catch (e) { if (!(e && e.code === 'ER_NO_SUCH_TABLE')) throw e; }
+    if (!orgs.length) [orgs] = await pool.query('SELECT id FROM organizations WHERE invite_code = ? LIMIT 1', [String(inviteCode).trim()]);
     if (!orgs.length) return res.status(404).json({ error: 'That invite code was not found.' });
 
     const [existing] = await pool.query('SELECT id FROM users WHERE email = ? LIMIT 1', [String(email).toLowerCase()]);
@@ -85,7 +92,7 @@ router.post('/join', authLimiter, async (req, res, next) => {
     const passwordHash = await hashPassword(password);
     const [userResult] = await pool.query(
       'INSERT INTO users (organization_id, email, password_hash, name, role) VALUES (?, ?, ?, ?, ?)',
-      [orgs[0].id, String(email).toLowerCase(), passwordHash, String(name).trim(), 'member']
+      [orgs[0].id, String(email).toLowerCase(), passwordHash, String(name).trim(), joinRole]
     );
 
     req.session.userId = userResult.insertId;

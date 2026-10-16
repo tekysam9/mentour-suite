@@ -82,7 +82,7 @@
       var res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(bodyFn(form)) });
       var data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Something went wrong.');
-      window.location.href = '/';
+      window.location.href = (data && data.user && data.user.role === 'recruiter') ? '/onboarding.html' : '/';
     } catch (err) {
       errorEl.textContent = err.message;
       errorEl.hidden = false;

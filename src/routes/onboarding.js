@@ -210,6 +210,33 @@ router.get('/people', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+// Role-specific invite codes: the role is fixed by the code, so a recruiter who signs up with a
+// "Recruiter" code lands in Onboarding only and never has to be demoted by hand.
+router.get('/invites', async (req, res, next) => {
+  try {
+    if (req.user.role !== 'owner') return res.status(403).json({ error: 'Only the account owner can manage invite codes.' });
+    const [rows] = await pool.query('SELECT id, code, role, label, created_at FROM invite_codes WHERE organization_id = ? AND revoked = 0 ORDER BY id DESC', [req.user.organization_id]);
+    res.json({ invites: rows, legacyCode: req.user.invite_code });
+  } catch (err) { if (missingTable(err)) return res.status(503).json({ error: SCHEMA_MSG }); next(err); }
+});
+router.post('/invites', async (req, res, next) => {
+  try {
+    if (req.user.role !== 'owner') return res.status(403).json({ error: 'Only the account owner can create invite codes.' });
+    const b = req.body || {};
+    if (!['hr', 'member', 'recruiter'].includes(b.role)) return res.status(400).json({ error: 'Choose a role for this invite code.' });
+    const code = require('crypto').randomBytes(6).toString('hex');
+    await pool.query('INSERT INTO invite_codes (organization_id, code, role, label) VALUES (?, ?, ?, ?)', [req.user.organization_id, code, b.role, b.label ? String(b.label).trim().slice(0, 120) : null]);
+    res.status(201).json({ code, role: b.role });
+  } catch (err) { if (missingTable(err)) return res.status(503).json({ error: SCHEMA_MSG }); next(err); }
+});
+router.delete('/invites/:id', async (req, res, next) => {
+  try {
+    if (req.user.role !== 'owner') return res.status(403).json({ error: 'Only the account owner can revoke invite codes.' });
+    await pool.query('UPDATE invite_codes SET revoked = 1 WHERE id = ? AND organization_id = ?', [req.params.id, req.user.organization_id]);
+    res.json({ ok: true });
+  } catch (err) { next(err); }
+});
+
 // The owner creates a login directly (e.g. a recruiter who only needs Onboarding).
 router.post('/people', async (req, res, next) => {
   try {
