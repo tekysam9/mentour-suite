@@ -203,6 +203,8 @@ async function present(row, extra, req) {
   const stored = parse(row.checklist, {});
   const states = await formStates(row.organization_id, [row]);
   const items = checklistView(row, data, stored, states, await docList(row.organization_id, [row.id]));
+  // Recruiters never see the banking form: no link, no status, no record id (the forms API refuses them too).
+  if (req && req.user.role === 'recruiter') items.forEach((i) => { if (i.form && i.form.form === 'banking') { delete i.form; delete i.autoDone; i.hint = 'Handled by HR.'; } });
   const pub = Object.assign({}, data); delete pub._meta;
   return Object.assign({
     id: row.id, workerType: row.worker_type, status: row.status, consultantName: row.consultant_name,

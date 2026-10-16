@@ -2089,6 +2089,23 @@ async function main() {
         check('1099 payment details ticks itself once signed', g.done === true && g.autoDone === true && !g.legacyDone, g);
         g = (await pfOwner.fetch('/api/onboarding/' + w2b)).body.checklist.find((c) => c.key === 'direct_deposit');
         check('W2 direct deposit is now done by the form (no longer tagged)', g.done === true && g.autoDone === true && g.legacyDone === false, g);
+        // recruiters never see the banking form or its details
+        const ronR = makeJar();
+        await pfOwner.fetch('/api/onboarding/people', { method: 'POST', body: JSON.stringify({ name: 'Bea Recruiter', email: 'bea@pftest.test', password: 'beapassword123', role: 'recruiter' }) });
+        await ronR.fetch('/api/auth/login', { method: 'POST', body: JSON.stringify({ email: 'bea@pftest.test', password: 'beapassword123' }) });
+        r = await ronR.fetch(bu);
+        check('a recruiter is refused the banking form (403)', r.status === 403 && !JSON.stringify(r.body).includes('3210') && !JSON.stringify(r.body).includes('2233'), r);
+        r = await ronR.fetch('/api/forms/consultants/' + consId);
+        check('a recruiter cannot list the forms (403)', r.status === 403, r.status);
+        r = await ronR.fetch('/api/forms/schema');
+        check('a recruiter cannot read the forms schema (403)', r.status === 403, r.status);
+        r = await ronR.fetch(bu, { method: 'PUT', body: JSON.stringify({ secrets: { ach_account: '1234567' } }) });
+        check('a recruiter cannot write bank numbers (403)', r.status === 403, r.status);
+        const [[bea]] = await dbConn.query(`SELECT id FROM users WHERE email = 'bea@pftest.test'`);
+        await dbConn.query('UPDATE onboardings SET created_by_id = ? WHERE id = ?', [bea.id, t99b]);
+        r = await ronR.fetch('/api/onboarding/' + t99b);
+        g = r.body.checklist.find((c) => c.key === 'payment_details');
+        check('the recruiter’s own request hides the banking form (no link, status or record)', r.status === 200 && !g.form && !JSON.stringify(r.body).includes('"banking"'), g);
         await dbConn.query('DELETE FROM onboardings WHERE id IN (?, ?)', [w2b, t99b]);
       }
       r = await obRec.fetch('/api/onboarding?status=all');
