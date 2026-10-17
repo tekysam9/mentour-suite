@@ -273,7 +273,7 @@ function renderHxTab() {
       '<label class="fin-check"><input type="checkbox" id="hx-subs"' + (imp.createSubvendors ? ' checked' : '') + '> Also add subvendor companies that are not in Directory</label>' +
     '</div>' +
     (imp.busy ? '<p class="fin-copy" role="status">Working — this can take a few seconds for a large file…</p>' : '') +
-    (imp.error ? '<div class="fin-readonly-note" role="alert" style="background:#F6E7E7;border-color:#E3BDBD;color:#8A2D2D">' + escapeHtml(imp.error) + '</div>' : '') +
+    (imp.error ? '<div class="fin-readonly-note" role="alert" style="background:#FDECEA;border-color:#E3BDBD;color:#8A2D2D">' + escapeHtml(imp.error) + '</div>' : '') +
     out
   );
 }

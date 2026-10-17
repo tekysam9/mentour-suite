@@ -10,7 +10,7 @@
   .fin-body { max-width: 1180px; margin: 0 auto; padding: 40px 24px 64px; }
   .fin-back { font-size: 12.5px; color: var(--pine); text-decoration: none; font-weight: 500; }
   .fin-back:hover { text-decoration: underline; }
-  .fin-title { font-family: Georgia, 'Iowan Old Style', 'Palatino Linotype', serif; font-size: 30px; font-weight: 600; color: var(--ink); margin: 14px 0 6px; }
+  .fin-title { font-family: Roboto, 'Helvetica Neue', Arial, sans-serif; font-size: 30px; font-weight: 600; color: var(--ink); margin: 14px 0 6px; }
   .fin-copy { font-size: 13.5px; color: var(--text-muted); margin: 0 0 24px; max-width: 680px; line-height: 1.6; }
 
   .fin-generate-card {
@@ -29,13 +29,13 @@
   }
   .fin-btn:hover { background: var(--paper); }
   .fin-btn:disabled { opacity: 0.6; cursor: default; }
-  .fin-btn-primary { background: var(--pine); border-color: var(--pine); color: #EFF3EC; }
-  .fin-btn-primary:hover { background: #275F46; }
+  .fin-btn-primary { background: var(--pine); border-color: var(--pine); color: #FFFFFF; }
+  .fin-btn-primary:hover { background: #0B64C0; }
   .fin-btn-small { font-size: 11.5px; padding: 5px 9px; }
-  .fin-btn-danger { color: var(--brick); border-color: #E3C3C3; }
+  .fin-btn-danger { color: var(--brick); border-color: #F5C2BD; }
 
   .fin-result {
-    background: #EAF3EE; border: 1px solid #CFE3D7; color: #2E6F52; border-radius: 8px;
+    background: #E3F1FD; border: 1px solid #CFE3D7; color: #0875E1; border-radius: 8px;
     padding: 10px 14px; font-size: 12.5px; margin-bottom: 18px; line-height: 1.6;
   }
   .fin-result-skip-list { margin: 6px 0 0; padding-left: 18px; color: #4D6B5C; }
@@ -71,10 +71,10 @@
     display: inline-block; font-size: 11px; font-weight: 600; padding: 3px 9px; border-radius: 99px;
     white-space: nowrap; border: none; cursor: pointer; font-family: inherit;
   }
-  .fin-status-paid { background: #EAF3EE; color: #2E6F52; }
-  .fin-status-unpaid { background: #F5F1E4; color: #97854A; }
-  .fin-status-yes { background: #EAF3EE; color: #2E6F52; }
-  .fin-status-no { background: #EFEFEC; color: #7A7A72; }
+  .fin-status-paid { background: #E4F6E9; color: #1B7A3A; }
+  .fin-status-unpaid { background: #FFF5E5; color: #8A5A00; }
+  .fin-status-yes { background: #E4F6E9; color: #1B7A3A; }
+  .fin-status-no { background: #F5F6F7; color: #6B7580; }
 
   .fin-loading, .fin-empty-state { padding: 40px; text-align: center; color: var(--text-muted); font-size: 13.5px; }
   .fin-generate-card label.fin-check, .fin-controls label.fin-check {
@@ -85,11 +85,11 @@
   .fin-sno { color: var(--text-muted); font-size: 11.5px; text-align: right; }
   .fin-inactive-tag {
     display: inline-block; margin-left: 6px; font-size: 10px; font-weight: 600; padding: 1px 6px; border-radius: 99px;
-    background: #EFEFEC; color: #7A7A72; vertical-align: middle;
+    background: #F5F6F7; color: #6B7580; vertical-align: middle;
   }
   .fin-saved-tick { font-size: 11px; color: var(--pine); font-weight: 500; margin-left: 6px; }
 
-  .fin-subtitle { font-family: Georgia, 'Iowan Old Style', 'Palatino Linotype', serif; font-size: 22px; font-weight: 600; color: var(--ink); margin: 0 0 6px; }
+  .fin-subtitle { font-family: Roboto, 'Helvetica Neue', Arial, sans-serif; font-size: 22px; font-weight: 600; color: var(--ink); margin: 0 0 6px; }
   .fin-tabs { display: flex; gap: 6px; border-bottom: 1px solid var(--line); margin-bottom: 22px; }
   .fin-tab {
     background: none; border: none; font-family: inherit; font-size: 13.5px; font-weight: 600;
@@ -98,7 +98,7 @@
   .fin-tab.active { color: var(--ink); border-bottom-color: var(--pine); }
   .fin-tab:hover:not(.active) { color: var(--ink); }
   .fin-readonly-note {
-    background: #F5F1E4; border: 1px solid #E6D9AE; color: #7A6421; border-radius: 8px;
+    background: #FFF5E5; border: 1px solid #FFD9A3; color: #7A6421; border-radius: 8px;
     padding: 9px 14px; font-size: 12.5px; margin-bottom: 16px; line-height: 1.6;
   }
   .fin-badge-static { cursor: default; }
@@ -114,7 +114,7 @@
   }
   .hist-chip span, .hist-month span { font-size: 11px; font-weight: 500; color: var(--text-muted); }
   .hist-chip:hover, .hist-month:hover { border-color: var(--pine); }
-  .hist-chip.on, .hist-month.on { background: var(--pine); border-color: var(--pine); color: #EFF3EC; }
+  .hist-chip.on, .hist-month.on { background: var(--pine); border-color: var(--pine); color: #FFFFFF; }
   .hist-chip.on span, .hist-month.on span { color: #D5E3D8; }
   .hist-months { display: grid; grid-template-columns: repeat(auto-fill, minmax(112px, 1fr)); gap: 8px; }
   .hist-month b { font-size: 14px; }
@@ -151,10 +151,10 @@
   .per-chip { border: 1px solid var(--line); background: var(--paper); border-radius: 99px; padding: 5px 12px; font: inherit; font-size: 12.5px; font-weight: 600; color: var(--ink); cursor: pointer; display: inline-flex; gap: 7px; align-items: center; }
   .per-chip span { font-size: 10.5px; font-weight: 600; color: var(--text-muted); }
   .per-chip:hover { border-color: var(--pine); }
-  .per-chip.on { background: var(--pine); border-color: var(--pine); color: #EFF3EC; }
+  .per-chip.on { background: var(--pine); border-color: var(--pine); color: #FFFFFF; }
   .per-chip.on span { color: #D5E3D8; }
   .per-chip.empty:not(.on) { opacity: .5; }
-  .gen-confirm { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; background: #FBF4E3; border: 1px solid #E6D9AE; border-radius: 8px; padding: 8px 12px; font-size: 12.5px; color: #6E5A1B; flex: 1 1 420px; }
+  .gen-confirm { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; background: #FBF4E3; border: 1px solid #FFD9A3; border-radius: 8px; padding: 8px 12px; font-size: 12.5px; color: #6E5A1B; flex: 1 1 420px; }
   .gen-confirm span { flex: 1 1 260px; line-height: 1.5; }
   .imp-details { margin: 10px 0; }
   .imp-details > summary { cursor: pointer; font-size: 13.5px; font-weight: 600; color: var(--ink); padding: 6px 0; }
@@ -164,7 +164,7 @@
   .fin-month-row td { background: #F3F1EA; font-weight: 600; color: var(--ink); font-size: 13px; padding-top: 9px; padding-bottom: 9px; }
   .fin-month-row .fin-src { font-weight: 500; margin-left: 8px; }
   .fin-subtotal-row td { font-weight: 600; font-size: 12.5px; border-bottom: 2px solid var(--line); }
-  .fin-grand-row td { font-weight: 700; background: #EAF3EE; color: #2E6F52; border-top: 2px solid #2E6F52; }
+  .fin-grand-row td { font-weight: 700; background: #E3F1FD; color: #0875E1; border-top: 2px solid #0875E1; }
   .fin-months { position: relative; }
   .fin-months-btn { border: 1px solid var(--line); border-radius: 6px; padding: 6px 10px; font: inherit; font-size: 12.5px; background: var(--paper); color: var(--text); cursor: pointer; min-width: 170px; text-align: left; }
   .fin-months-panel { position: absolute; z-index: 20; top: calc(100% + 4px); left: 0; background: #fff; border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 6px 18px rgba(0,0,0,.08); padding: 8px; min-width: 230px; max-height: 340px; overflow-y: auto; }
@@ -179,11 +179,12 @@
   .fin-fix-line select, .fin-fix-line input { border: 1px solid var(--line); border-radius: 5px; padding: 4px 6px; font: inherit; font-size: 12.5px; background: var(--paper); }
   .fin-fix-line input { width: 80px; }
   .fin-fix-note { font-size: 11px; color: var(--text-muted); }
-  .fin-ok-note { background: #EAF3EE; border: 1px solid #BFDCCB; color: #2E6F52; border-radius: 8px; padding: 9px 14px; font-size: 12.5px; margin-bottom: 12px; }
+  .fin-ok-note { background: #E4F6E9; border: 1px solid #BFE3C8; color: #1B7A3A; border-radius: 8px; padding: 9px 14px; font-size: 12.5px; margin-bottom: 12px; }
   .fin-linkbtn { background: none; border: none; padding: 0; color: var(--pine); font: inherit; font-size: 12px; cursor: pointer; text-decoration: underline; }
 </style>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="/import-hours.js"></script>
+<link rel="stylesheet" href="/theme.css">
 </head>
 <body>
 <div id="app"></div>
@@ -907,7 +908,7 @@
           : 'Some headings have no year: there, columns after a Dec → Jan rollover use the Hours year box and columns before it are the year before. Change the Hours year box if these look wrong.') +
         ' Hours for a month after the current month are never invoiced.</p>' : '') +
       (imp.busy ? '<p class="fin-copy">Working…</p>' : '') +
-      (imp.error ? '<div class="fin-readonly-note" role="alert" style="background:#F6E7E7;border-color:#E3BDBD;color:#8A2D2D">' + escapeHtml(imp.error) + '</div>' : '') +
+      (imp.error ? '<div class="fin-readonly-note" role="alert" style="background:#FDECEA;border-color:#E3BDBD;color:#8A2D2D">' + escapeHtml(imp.error) + '</div>' : '') +
       (imp.notice ? '<div class="fin-ok-note" role="status">' + escapeHtml(imp.notice) + '</div>' : '') +
       out +
       impAliasesSection()

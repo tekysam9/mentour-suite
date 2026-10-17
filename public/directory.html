@@ -10,7 +10,7 @@
   .dir-body { max-width: 1040px; margin: 0 auto; padding: 40px 24px 64px; }
   .dir-back { font-size: 12.5px; color: var(--pine); text-decoration: none; font-weight: 500; }
   .dir-back:hover { text-decoration: underline; }
-  .dir-title { font-family: Georgia, 'Iowan Old Style', 'Palatino Linotype', serif; font-size: 30px; font-weight: 600; color: var(--ink); margin: 14px 0 6px; }
+  .dir-title { font-family: Roboto, 'Helvetica Neue', Arial, sans-serif; font-size: 30px; font-weight: 600; color: var(--ink); margin: 14px 0 6px; }
   .dir-copy { font-size: 13.5px; color: var(--text-muted); margin: 0 0 28px; max-width: 560px; line-height: 1.6; }
 
   .dir-tabs { display: flex; gap: 6px; border-bottom: 1px solid var(--line); margin-bottom: 22px; }
@@ -48,8 +48,8 @@
     font-size: 12px; font-weight: 500; cursor: pointer; font-family: inherit; color: var(--text);
   }
   .dir-btn:hover { background: var(--paper); }
-  .dir-btn-primary { background: var(--pine); border-color: var(--pine); color: #EFF3EC; }
-  .dir-btn-primary:hover { background: #275F46; }
+  .dir-btn-primary { background: var(--pine); border-color: var(--pine); color: #FFFFFF; }
+  .dir-btn-primary:hover { background: #0B64C0; }
   .dir-btn-save-status { font-size: 11.5px; color: var(--pine); font-weight: 500; }
 
   .dir-name-link { color: var(--ink); text-decoration: none; border-bottom: 1px dotted var(--pine); }
@@ -60,9 +60,9 @@
   .dir-status-badge {
     display: inline-block; font-size: 11px; font-weight: 600; padding: 3px 9px; border-radius: 99px; white-space: nowrap;
   }
-  .dir-status-active { background: #EAF3EE; color: #2E6F52; }
-  .dir-status-inactive { background: #F5F1E4; color: #97854A; }
-  .dir-status-none { background: #EFEFEC; color: #7A7A72; }
+  .dir-status-active { background: #E4F6E9; color: #1B7A3A; }
+  .dir-status-inactive { background: #FFF5E5; color: #8A5A00; }
+  .dir-status-none { background: #F5F6F7; color: #6B7580; }
 
   .dir-controls { display: flex; justify-content: flex-end; margin-bottom: 12px; }
   .dir-controls select {
@@ -71,7 +71,7 @@
   }
 
   .dir-dupe-panel {
-    background: #FBF7EC; border: 1px solid #E6D9AE; border-radius: 10px; padding: 14px 16px; margin-bottom: 16px;
+    background: #FBF7EC; border: 1px solid #FFD9A3; border-radius: 10px; padding: 14px 16px; margin-bottom: 16px;
   }
   .dir-dupe-title { font-size: 12.5px; font-weight: 700; color: #7A6421; margin: 0 0 4px; }
   .dir-dupe-copy { font-size: 12px; color: #8A7430; margin: 0 0 12px; line-height: 1.5; }
@@ -109,6 +109,7 @@
   }
   .dir-assign-empty { font-size: 12px; color: var(--text-muted); font-style: italic; padding: 4px 10px 10px; }
 </style>
+<link rel="stylesheet" href="/theme.css">
 </head>
 <body>
 <div id="app"></div>
@@ -328,7 +329,7 @@
           '<div class="dir-row-actions">' +
             '<button class="dir-btn dir-btn-primary" data-action="save" data-id="' + r.id + '" data-tab="' + tab.key + '">Save</button>' +
             '<button class="dir-btn" data-action="cancel">Cancel</button>' +
-            (state.saveStatus === 'error' ? '<span class="dir-btn-save-status" style="color:#9B3B3B">Couldn’t save</span>' : '') +
+            (state.saveStatus === 'error' ? '<span class="dir-btn-save-status" style="color:#C62F25">Couldn’t save</span>' : '') +
           '</div>';
       } else {
         actions = '<button class="dir-btn" data-action="edit" data-id="' + r.id + '">Edit</button>';
@@ -461,7 +462,7 @@
           '<td>' + stateCell + '</td>' +
           '<td>' + billingCell + '</td>' +
           '<td><span class="dir-assign-source">' + (a.source === 'upload' ? 'from upload' : 'manual') + '</span></td>' +
-          '<td>' + actions + (state.assignmentStatus === 'error' && editing ? ' <span class="dir-btn-save-status" style="color:#9B3B3B">Couldn’t save</span>' : '') + '</td>' +
+          '<td>' + actions + (state.assignmentStatus === 'error' && editing ? ' <span class="dir-btn-save-status" style="color:#C62F25">Couldn’t save</span>' : '') + '</td>' +
         '</tr>';
       }).join('');
       body = '<table class="dir-assign-table"><thead><tr><th>Client</th><th>Vendor</th><th>Status</th><th>Billing</th><th></th><th></th></tr></thead><tbody>' + rows + '</tbody></table>' +

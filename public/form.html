@@ -12,7 +12,7 @@
   .fm-back:hover { text-decoration: underline; }
   .fm-head { margin: 14px 0 6px; display: flex; justify-content: space-between; align-items: flex-end; gap: 16px; flex-wrap: wrap; }
   .fm-kind { font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--text-muted); font-weight: 600; }
-  .fm-title { font-family: Georgia, 'Iowan Old Style', 'Palatino Linotype', serif; font-size: 30px; font-weight: 600; color: var(--ink); margin: 0; }
+  .fm-title { font-family: Roboto, 'Helvetica Neue', Arial, sans-serif; font-size: 30px; font-weight: 600; color: var(--ink); margin: 0; }
   .fm-sub { color: var(--text-muted); font-size: 14px; margin: 2px 0 0; }
   .fm-edition { font-size: 11.5px; color: var(--text-muted); margin: 8px 0 16px; }
   .fm-card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 18px 20px; margin-bottom: 16px; }
@@ -25,30 +25,30 @@
   }
   .fm-field textarea { min-height: 70px; resize: vertical; }
   .fm-field input:focus, .fm-field select:focus, .fm-field textarea:focus { border-color: var(--pine); }
-  .fm-field input:disabled, .fm-field select:disabled, .fm-field textarea:disabled { background: #EFEBDD; color: var(--text-muted); }
+  .fm-field input:disabled, .fm-field select:disabled, .fm-field textarea:disabled { background: #EEF0F2; color: var(--text-muted); }
   .fm-field.wide { grid-column: 1 / -1; }
   .fm-attest { display: flex; gap: 10px; align-items: flex-start; font-size: 13px; line-height: 1.5; color: var(--text); font-weight: 400 !important; }
   .fm-attest input { width: auto; margin-top: 3px; }
   .fm-help { font-size: 11px; color: var(--text-muted); margin-top: 3px; line-height: 1.4; }
   .fm-req { color: var(--brick); }
-  .fm-mask { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 13px; color: var(--ink); background: #EAF3EE; border-radius: 5px; padding: 6px 9px; display: inline-block; }
+  .fm-mask { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 13px; color: var(--ink); background: #E3F1FD; border-radius: 5px; padding: 6px 9px; display: inline-block; }
   .fm-unset { font-size: 12px; color: var(--text-muted); font-style: italic; }
   .fm-btn { border: 1px solid var(--line); background: var(--card); border-radius: 5px; padding: 8px 15px; font-size: 12.5px; font-weight: 600; cursor: pointer; font-family: inherit; color: var(--text); }
   .fm-btn:hover { background: var(--paper); }
-  .fm-btn-primary { background: var(--pine); border-color: var(--pine); color: #EFF3EC; }
-  .fm-btn-primary:hover { background: #275F46; }
+  .fm-btn-primary { background: var(--pine); border-color: var(--pine); color: #FFFFFF; }
+  .fm-btn-primary:hover { background: #0B64C0; }
   .fm-btn-small { padding: 4px 10px; font-size: 11.5px; }
   .fm-bar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin: 4px 0 18px; }
   .fm-msg { font-size: 12.5px; font-weight: 600; }
   .fm-msg.ok { color: var(--pine); } .fm-msg.err { color: var(--brick); }
-  .fm-badge { display: inline-block; font-size: 11px; font-weight: 700; padding: 3px 10px; border-radius: 99px; background: #F5F1E4; color: #97854A; }
-  .fm-badge.complete { background: #EAF3EE; color: #2E6F52; }
+  .fm-badge { display: inline-block; font-size: 11px; font-weight: 700; padding: 3px 10px; border-radius: 99px; background: #FFF5E5; color: #8A5A00; }
+  .fm-badge.complete { background: #E4F6E9; color: #1B7A3A; }
   .fm-sign { border: 1px dashed var(--line); border-radius: 8px; padding: 14px 16px; margin: 4px 0 16px; background: var(--paper); }
   .fm-sign h3 { margin: 0 0 8px; font-size: 13px; color: var(--ink); }
   .fm-signed { font-size: 13px; color: var(--pine); font-weight: 600; }
   .fm-signed .sig-name { font-family: 'Brush Script MT', 'Segoe Script', cursive; font-size: 24px; color: var(--ink); display: block; margin: 4px 0; font-weight: 400; }
   .fm-signed small { color: var(--text-muted); font-weight: 400; display: block; }
-  .fm-banner { background: #F5F1E4; border: 1px solid #E3D9B3; color: #6E5F26; border-radius: 8px; padding: 10px 14px; font-size: 12.5px; margin-bottom: 14px; line-height: 1.5; }
+  .fm-banner { background: #FFF5E5; border: 1px solid #FFD9A3; color: #7A4A00; border-radius: 8px; padding: 10px 14px; font-size: 12.5px; margin-bottom: 14px; line-height: 1.5; }
   .fm-loading { padding: 40px; text-align: center; color: var(--text-muted); }
   @media print {
     .landing-header, .fm-back, .fm-bar, .fm-noprint, .fm-banner { display: none !important; }
@@ -58,6 +58,7 @@
     .fm-field input, .fm-field select, .fm-field textarea { border: none; border-bottom: 1px solid #999; border-radius: 0; background: #fff; padding: 4px 0; }
   }
 </style>
+<link rel="stylesheet" href="/theme.css">
 </head>
 <body>
 <div id="app"><div class="fm-loading">Loading…</div>

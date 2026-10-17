@@ -408,3 +408,6 @@ Deploy: re-run `db/schema.sql` (new `onboardings` table, `users.role` gains `hr`
   database's `max_allowed_packet` must be at least 16 MB (the MariaDB default).
 - **ACH / Wire banking authorization** is a new fillable form (form type `banking`) on supplier
   companies and consultants; bank numbers go to `record_secrets` (last 4 shown).
+
+## Look and feel
+The UI uses a Workday-style theme: Roboto (self-hosted in `public/fonts`), blue primary, soft grey canvas, white cards, pill buttons. All overrides live in `public/theme.css`, linked last on every page.

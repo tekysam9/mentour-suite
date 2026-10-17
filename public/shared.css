@@ -1,13 +1,13 @@
 :root {
-  --ink: #16241C;
-  --paper: #F2F5F0;
+  --ink: #1E272E;
+  --paper: #F0F1F2;
   --card: #FFFFFF;
-  --line: #DCE3D9;
-  --text: #1A241C;
-  --text-muted: #5B6B60;
-  --brass: #B9862E;
-  --pine: #2E6F52;
-  --brick: #9B3B3B;
+  --line: #DFE2E6;
+  --text: #333D47;
+  --text-muted: #5E6A75;
+  --brass: #FFA126;
+  --pine: #0875E1;
+  --brick: #C62F25;
 }
 * { box-sizing: border-box; }
 html, body {
@@ -15,13 +15,13 @@ html, body {
   font-family: -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
   min-height: 100vh;
 }
-.serif { font-family: Georgia, 'Iowan Old Style', 'Palatino Linotype', serif; }
+.serif { font-family: Roboto, 'Helvetica Neue', Arial, sans-serif; }
 
 /* ---------- auth pages ---------- */
 .auth-page { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 24px; }
-.auth-card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 40px 36px; width: 100%; max-width: 380px; box-shadow: 0 1px 2px rgba(22,36,28,0.04); }
+.auth-card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 40px 36px; width: 100%; max-width: 380px; box-shadow: 0 1px 2px rgba(30,39,46,0.04); }
 .auth-kicker { font-size: 11.5px; letter-spacing: 0.06em; color: var(--pine); font-weight: 600; margin-bottom: 8px; }
-.auth-title { font-family: Georgia, 'Iowan Old Style', 'Palatino Linotype', serif; font-weight: 600; font-size: 32px; color: var(--ink); margin: 0 0 6px; }
+.auth-title { font-family: Roboto, 'Helvetica Neue', Arial, sans-serif; font-weight: 600; font-size: 32px; color: var(--ink); margin: 0 0 6px; }
 .auth-copy { font-size: 13.5px; color: var(--text-muted); margin: 0 0 26px; }
 .auth-card form { display: flex; flex-direction: column; gap: 16px; }
 .auth-card label { display: flex; flex-direction: column; gap: 6px; font-size: 12.5px; font-weight: 500; color: var(--text-muted); }
@@ -31,13 +31,13 @@ html, body {
 }
 .auth-card input:focus { border-color: var(--pine); }
 .auth-btn {
-  background: var(--pine); color: #EFF3EC; border: none; border-radius: 6px; padding: 11px 14px;
+  background: var(--pine); color: #FFFFFF; border: none; border-radius: 6px; padding: 11px 14px;
   font-size: 14px; font-weight: 600; cursor: pointer; font-family: inherit; margin-top: 4px;
 }
-.auth-btn:hover { background: #275F46; }
+.auth-btn:hover { background: #0B64C0; }
 .auth-btn:disabled { opacity: 0.6; cursor: default; }
 .auth-error {
-  background: #F6E9E9; border: 1px solid #E3C3C3; color: #6E2626; padding: 9px 11px;
+  background: #FDECEA; border: 1px solid #F5C2BD; color: #8E1F18; padding: 9px 11px;
   border-radius: 6px; font-size: 12.5px; line-height: 1.5;
 }
 .auth-footer { margin-top: 22px; font-size: 12.5px; color: var(--text-muted); text-align: center; }
@@ -49,25 +49,25 @@ html, body {
   flex: 1; padding: 8px; background: var(--card); border: none; font-size: 12.5px; font-weight: 500;
   color: var(--text-muted); cursor: pointer; font-family: inherit;
 }
-.auth-toggle button.active { background: var(--ink); color: #EFF3EC; }
+.auth-toggle button.active { background: var(--ink); color: #FFFFFF; }
 
 /* ---------- landing / picker page ---------- */
 .landing-header {
-  background: var(--ink); color: #EFF3EC; padding: 22px 28px; display: flex; align-items: center;
+  background: var(--ink); color: #FFFFFF; padding: 22px 28px; display: flex; align-items: center;
   justify-content: space-between; gap: 16px; flex-wrap: wrap; border-bottom: 3px solid var(--brass);
 }
-.landing-wordmark { font-family: Georgia, 'Iowan Old Style', 'Palatino Linotype', serif; font-size: 22px; font-weight: 600; }
-.landing-sub { font-size: 12.5px; color: #B9C4B4; margin-top: 3px; }
-.landing-account { font-size: 12.5px; color: #C9D3C4; text-align: right; }
+.landing-wordmark { font-family: Roboto, 'Helvetica Neue', Arial, sans-serif; font-size: 22px; font-weight: 600; }
+.landing-sub { font-size: 12.5px; color: #C6CCD2; margin-top: 3px; }
+.landing-account { font-size: 12.5px; color: #C6CCD2; text-align: right; }
 .landing-btn {
   display: inline-flex; align-items: center; gap: 7px; border: 1px solid rgba(239,243,236,0.35);
-  background: transparent; color: #EFF3EC; padding: 7px 13px; border-radius: 5px; font-size: 12.5px;
+  background: transparent; color: #FFFFFF; padding: 7px 13px; border-radius: 5px; font-size: 12.5px;
   font-weight: 500; cursor: pointer; font-family: inherit; margin-top: 8px;
 }
 .landing-btn:hover { background: rgba(239,243,236,0.1); }
 
 .landing-body { max-width: 880px; margin: 0 auto; padding: 56px 24px; }
-.landing-greeting { font-family: Georgia, 'Iowan Old Style', 'Palatino Linotype', serif; font-size: 34px; font-weight: 600; color: var(--ink); margin: 0 0 8px; }
+.landing-greeting { font-family: Roboto, 'Helvetica Neue', Arial, sans-serif; font-size: 34px; font-weight: 600; color: var(--ink); margin: 0 0 8px; }
 .landing-copy { font-size: 14.5px; color: var(--text-muted); margin: 0 0 36px; max-width: 520px; line-height: 1.6; }
 
 .app-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; margin-bottom: 40px; }
@@ -76,8 +76,8 @@ html, body {
   display: block; text-decoration: none; background: var(--card); border: 1px solid var(--line);
   border-radius: 12px; padding: 26px; transition: border-color .15s ease, box-shadow .15s ease;
 }
-.app-card:hover { border-color: var(--pine); box-shadow: 0 2px 8px rgba(22,36,28,0.06); }
-.app-card-name { font-family: Georgia, 'Iowan Old Style', 'Palatino Linotype', serif; font-size: 24px; font-weight: 600; color: var(--ink); margin-bottom: 6px; }
+.app-card:hover { border-color: var(--pine); box-shadow: 0 2px 8px rgba(30,39,46,0.06); }
+.app-card-name { font-family: Roboto, 'Helvetica Neue', Arial, sans-serif; font-size: 24px; font-weight: 600; color: var(--ink); margin-bottom: 6px; }
 .app-card-desc { font-size: 13px; color: var(--text-muted); line-height: 1.55; }
 .app-card-arrow { color: var(--pine); font-size: 13px; font-weight: 600; margin-top: 14px; display: inline-block; }
 

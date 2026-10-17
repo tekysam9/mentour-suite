@@ -1,0 +1,135 @@
+/* Mentour Suite theme: modelled on the look of enterprise HCM/ERP suites (Workday "Canvas" style):
+   Roboto, a clear blue primary, soft grey canvas, white cards, rounded pill buttons, outline icons.
+   Loaded last on every page; `body` prefixes make these rules win over each page's own <style>. */
+
+@font-face { font-family: 'Roboto'; font-weight: 300; font-style: normal; font-display: swap; src: url('/fonts/roboto-latin-300-normal.woff2') format('woff2'); }
+@font-face { font-family: 'Roboto'; font-weight: 400; font-style: normal; font-display: swap; src: url('/fonts/roboto-latin-400-normal.woff2') format('woff2'); }
+@font-face { font-family: 'Roboto'; font-weight: 500; font-style: normal; font-display: swap; src: url('/fonts/roboto-latin-500-normal.woff2') format('woff2'); }
+@font-face { font-family: 'Roboto'; font-weight: 700; font-style: normal; font-display: swap; src: url('/fonts/roboto-latin-700-normal.woff2') format('woff2'); }
+
+:root {
+  --wd-blue: #0875E1; --wd-blue-dark: #0B64C0; --wd-blue-deep: #004387; --wd-blue-tint: #E3F1FD; --wd-blue-tint2: #F2F8FE;
+  --wd-orange: #FFA126; --wd-red: #C62F25; --wd-green: #1B7A3A; --wd-green-tint: #E4F6E9;
+  --wd-canvas: #F0F1F2; --wd-line: #DFE2E6; --wd-ink: #1E272E; --wd-text: #333D47; --wd-muted: #5E6A75; --wd-input: #8E98A3;
+  --ink: #1E272E; --paper: #F0F1F2; --card: #FFFFFF; --line: #DFE2E6; --text: #333D47; --text-muted: #5E6A75;
+  --pine: #0875E1; --brass: #FFA126; --brick: #C62F25;
+  --sh-ink: #1E272E; --sh-paper: #F0F1F2; --sh-line: #DFE2E6; --sh-text: #333D47; --sh-muted: #5E6A75; --sh-pine: #0875E1; --sh-brass: #FFA126;
+  --side-bg: #FFFFFF; --side-ink: #333D47; --side-hover: #F0F1F2; --top-h: 56px;
+}
+
+html, body, body button, body input, body select, body textarea { font-family: Roboto, 'Helvetica Neue', Helvetica, Arial, sans-serif; }
+body { background: var(--wd-canvas); color: var(--wd-text); font-size: 14px; -webkit-font-smoothing: antialiased; }
+body h1, body h2, body h3 { font-weight: 500; letter-spacing: 0; }
+body .fin-title, body .dir-title, body .rec-title, body .ob h1, body .fm-title, body .cl-title { font-size: 26px; font-weight: 500; color: var(--wd-ink); }
+body .fin-kind, body .dir-kind, body .rec-kind { color: var(--wd-muted); font-weight: 500; letter-spacing: .06em; }
+body a { color: var(--wd-blue); }
+body a:hover { color: var(--wd-blue-dark); }
+
+/* ---------------- application shell ---------------- */
+body .app-side { background: #fff; color: var(--wd-text); border-right: 1px solid var(--wd-line); box-shadow: none; }
+body .app-side-head { border-bottom: 1px solid var(--wd-line); height: 56px; }
+body .app-brand { color: var(--wd-ink); font-weight: 500; font-size: 18px; letter-spacing: .1px; display: flex; align-items: center; }
+body .app-brand i { width: 28px; height: 28px; border-radius: 50%; margin-right: 10px; vertical-align: 0; flex: none; position: relative;
+  background: radial-gradient(circle at 30% 25%, #4FA3F5, var(--wd-blue) 55%, var(--wd-blue-dark)); box-shadow: 0 0 0 3px var(--wd-blue-tint); }
+body .app-brand i::after { content: 'M'; position: absolute; inset: 0; color: #fff; font-weight: 700; font-size: 14px; display: flex; align-items: center; justify-content: center; }
+body .app-collapse { color: var(--wd-muted); }
+body .app-collapse:hover { background: var(--wd-canvas); color: var(--wd-ink); }
+body .app-nav { padding: 8px 10px 16px; scrollbar-color: #C6CCD2 transparent; }
+body .app-nav-label { color: #6B7580; font-size: 11px; font-weight: 700; letter-spacing: .08em; padding: 18px 12px 6px; }
+body .app-nav a { color: var(--wd-text); font-size: 14px; font-weight: 400; border-radius: 6px; padding: 9px 12px; gap: 12px; }
+body .app-nav a svg { width: 20px; height: 20px; opacity: 1; color: var(--wd-muted); stroke-width: 1.7; }
+body .app-nav a:hover { background: var(--wd-canvas); color: var(--wd-ink); }
+body .app-nav a:hover svg { color: var(--wd-ink); }
+body .app-nav a.active { background: var(--wd-blue-tint); color: var(--wd-blue-dark); font-weight: 500; }
+body .app-nav a.active svg { color: var(--wd-blue); }
+body .app-nav a.active::before { background: var(--wd-blue); left: -10px; width: 4px; top: 6px; bottom: 6px; border-radius: 0 4px 4px 0; }
+body .app-side-foot { border-top: 1px solid var(--wd-line); }
+body .app-avatar { background: var(--wd-blue); color: #fff; box-shadow: 0 0 0 2px #fff, 0 0 0 4px var(--wd-orange); font-weight: 500; }
+body .app-user b { color: var(--wd-ink); font-weight: 500; }
+body .app-user span { color: var(--wd-muted); }
+body .app-logout { border: 1px solid var(--wd-blue); color: var(--wd-blue); border-radius: 999px; padding: 5px 14px; font-weight: 500; background: #fff; }
+body .app-logout:hover { background: var(--wd-blue-tint); color: var(--wd-blue-dark); }
+body .app-top { background: #fff; border-bottom: 1px solid var(--wd-line); height: 56px; box-shadow: 0 1px 2px rgba(30,39,46,.04); }
+body .app-crumb { color: var(--wd-muted); font-size: 14px; }
+body .app-crumb b { color: var(--wd-ink); font-weight: 500; }
+body .app-crumb .sep { color: #A1AAB3; }
+body .app-tool { border: 1px solid var(--wd-blue); color: var(--wd-blue); border-radius: 999px; padding: 6px 16px; font-weight: 500; background: #fff; }
+body .app-tool:hover { background: var(--wd-blue-tint); }
+body .app-tool[aria-pressed="true"] { background: var(--wd-blue); color: #fff; border-color: var(--wd-blue); }
+body .app-burger { color: var(--wd-text); }
+body .app-badge { background: var(--wd-red); }
+
+/* ---------------- sign-in / sign-up ---------------- */
+body .auth-page { background: linear-gradient(135deg, #0875E1 0%, #0B64C0 55%, #004387 100%); }
+body .auth-card { border: none; border-radius: 8px; box-shadow: 0 8px 28px rgba(0,30,70,.28); padding: 40px 36px 36px; }
+body .auth-kicker { color: var(--wd-blue); font-weight: 700; letter-spacing: .1em; }
+body .auth-title { font-size: 28px; font-weight: 500; color: var(--wd-ink); }
+body .auth-card input { background: #fff; border: 1px solid var(--wd-input); border-radius: 4px; padding: 10px 12px; }
+body .auth-card input:focus { border-color: var(--wd-blue); box-shadow: 0 0 0 1px var(--wd-blue); }
+body .auth-btn { background: var(--wd-blue); border-radius: 999px; padding: 12px 14px; font-weight: 500; letter-spacing: .2px; }
+body .auth-btn:hover { background: var(--wd-blue-dark); }
+
+/* ---------------- home ---------------- */
+body .wd-hero { margin: 0 0 28px; padding: 40px 32px 36px; color: #fff; border-radius: 8px;
+  background: linear-gradient(115deg, #0B64C0 0%, #0875E1 45%, #3B9BF0 100%); position: relative; overflow: hidden; }
+body .wd-hero::after { content: ''; position: absolute; right: -60px; top: -80px; width: 320px; height: 320px; border-radius: 50%; background: rgba(255,255,255,.10); }
+body .wd-hero::before { content: ''; position: absolute; right: 120px; bottom: -120px; width: 240px; height: 240px; border-radius: 50%; background: rgba(255,161,38,.28); }
+body .wd-hero .landing-greeting { color: #fff; font-weight: 300; font-size: 34px; margin: 0 0 8px; position: relative; z-index: 1; }
+body .wd-hero .landing-copy { color: rgba(255,255,255,.92); margin: 0; position: relative; z-index: 1; }
+body .app-card { border-radius: 8px; padding: 22px 24px; border: 1px solid var(--wd-line); box-shadow: 0 1px 2px rgba(30,39,46,.08); }
+body .app-card:hover { border-color: var(--wd-blue); box-shadow: 0 4px 14px rgba(8,117,225,.16); }
+body .app-card-icon { width: 44px; height: 44px; border-radius: 50%; background: var(--wd-blue-tint); color: var(--wd-blue); display: flex; align-items: center; justify-content: center; margin-bottom: 14px; }
+body .app-card-icon svg { width: 22px; height: 22px; stroke-width: 1.7; }
+body .app-card-name { font-size: 20px; font-weight: 500; }
+body .app-card-arrow { color: var(--wd-blue); font-weight: 500; }
+body .invite-box, body .invite-code { border-radius: 8px; }
+
+/* ---------------- cards & surfaces ---------------- */
+body .rec-card, body .ob-card, body .fm-card, body .fin-generate-card, body .hist-card, body .cl-chart-card, body .fin-months-panel, body .dir-dupe-panel {
+  background: #fff; border: 1px solid var(--wd-line); border-radius: 8px; box-shadow: 0 1px 2px rgba(30,39,46,.06); }
+body .ob-card h2, body .rec-card h2, body .fm-card h2 { font-size: 12px; font-weight: 700; color: var(--wd-muted); letter-spacing: .08em; }
+body .ob-pending { border-left: 4px solid var(--wd-orange); background: #FFF9EF; }
+body .ob-msg, body .rec-banner, body .fin-readonly-note { border-radius: 6px; }
+
+/* ---------------- buttons: pill, blue outline / filled ---------------- */
+body .fin-btn, body .dir-btn, body .rec-btn, body .ob-btn, body .fm-btn, body .cl-btn, body .dir-add-btn, body .fin-months-btn, body .invite-copy-btn, body .landing-btn {
+  border-radius: 999px; font-weight: 500; background: #fff; color: var(--wd-blue); border: 1px solid var(--wd-blue); padding: 7px 18px; letter-spacing: .1px; }
+body .fin-btn:hover, body .dir-btn:hover, body .rec-btn:hover, body .ob-btn:hover, body .fm-btn:hover, body .cl-btn:hover, body .dir-add-btn:hover, body .fin-months-btn:hover, body .invite-copy-btn:hover {
+  background: var(--wd-blue-tint); color: var(--wd-blue-dark); }
+body .fin-btn-small, body .dir-btn-small, body .rec-btn-small, body .fm-btn-small { padding: 3px 12px; font-size: 12px; }
+body .fin-btn-primary, body .dir-btn-primary, body .rec-btn-primary, body .ob-btn.primary, body .fm-btn-primary, body .cl-btn-brass, body .dir-add-btn {
+  background: var(--wd-blue); color: #fff; border-color: var(--wd-blue); }
+body .fin-btn-primary:hover, body .dir-btn-primary:hover, body .rec-btn-primary:hover, body .ob-btn.primary:hover, body .fm-btn-primary:hover, body .cl-btn-brass:hover, body .dir-add-btn:hover {
+  background: var(--wd-blue-dark); color: #fff; border-color: var(--wd-blue-dark); }
+body .fin-btn-danger, body .ob-btn.danger { color: var(--wd-red); border-color: var(--wd-red); background: #fff; }
+body .fin-btn-danger:hover, body .ob-btn.danger:hover { background: #FDECEA; color: #8E1F18; }
+body button:disabled, body .ob-btn:disabled, body .fin-btn:disabled { opacity: .5; cursor: default; }
+body .fin-linkbtn, body .copy-more { color: var(--wd-blue); font-weight: 500; }
+
+/* ---------------- inputs ---------------- */
+body input:not([type=checkbox]):not([type=radio]):not([type=range]), body select, body textarea {
+  border: 1px solid var(--wd-input); border-radius: 4px; background: #fff; color: var(--wd-ink); }
+body input:not([type=checkbox]):not([type=radio]):focus, body select:focus, body textarea:focus {
+  outline: none; border-color: var(--wd-blue); box-shadow: 0 0 0 1px var(--wd-blue); }
+body input[readonly], body .rec-field input[readonly] { background: #F5F6F7; color: var(--wd-muted); }
+body input[type=checkbox], body input[type=radio] { accent-color: var(--wd-blue); }
+body label { font-weight: 500; }
+
+/* ---------------- tables ---------------- */
+body .fin-table th, body .dir-table th, body .ob-table th, body table.cl-main thead th, body .dir-assign-table th, body table.cl-subtable thead th {
+  background: #F5F6F7; color: var(--wd-text); font-size: 12px; font-weight: 700; text-transform: none; letter-spacing: .01em; border-bottom: 2px solid var(--wd-line); }
+body .fin-table td, body .dir-table td, body .ob-table td, body .dir-assign-table td { border-bottom: 1px solid #EBEDEF; }
+body .fin-table tbody tr:hover td, body .dir-table tbody tr:hover td, body .ob-table tbody tr:hover td { background: var(--wd-blue-tint2); }
+body .fin-table-wrap, body .dir-table-wrap, body .cl-table-wrap { border: 1px solid var(--wd-line); border-radius: 8px; background: #fff; }
+
+/* ---------------- chips, tabs, badges ---------------- */
+body .ob-chip { border-radius: 999px; border: 1px solid var(--wd-line); background: #fff; color: var(--wd-text); font-weight: 500; }
+body .ob-chip:hover { border-color: var(--wd-blue); color: var(--wd-blue); }
+body .ob-chip.on { background: var(--wd-blue); border-color: var(--wd-blue); color: #fff; }
+body .ob-type { border: 1px solid var(--wd-line); border-radius: 8px; background: #fff; }
+body .ob-type:hover { border-color: var(--wd-blue); }
+body .ob-type.on { border: 2px solid var(--wd-blue); background: var(--wd-blue-tint2); box-shadow: none; }
+body .ob-badge, body .fin-status-badge, body .fm-badge, body .dir-status { border-radius: 999px; font-weight: 500; }
+body .fin-status-unpaid, body .fin-status-no { background: #FFF5E5; color: #7A4A00; }
+body .dir-tabs button.active, body .fin-tabs button.active { border-color: var(--wd-blue); color: var(--wd-blue); }
+body .gen-confirm { border-radius: 8px; }

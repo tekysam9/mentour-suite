@@ -6,41 +6,41 @@
 <title>Ledger — Consultant &amp; Subvendor Cost Dashboard</title>
 <style>
   :root {
-    --ink: #16241C;
-    --paper: #F2F5F0;
+    --ink: #1E272E;
+    --paper: #F0F1F2;
     --card: #FFFFFF;
-    --line: #DCE3D9;
-    --text: #1A241C;
-    --text-muted: #5B6B60;
-    --brass: #B9862E;
-    --pine: #2E6F52;
-    --brick: #9B3B3B;
+    --line: #DFE2E6;
+    --text: #333D47;
+    --text-muted: #5E6A75;
+    --brass: #FFA126;
+    --pine: #0875E1;
+    --brick: #C62F25;
   }
   * { box-sizing: border-box; }
   html, body {
     margin: 0; padding: 0; background: var(--paper); color: var(--text);
     font-family: -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
   }
-  .cl-serif { font-family: Georgia, 'Iowan Old Style', 'Palatino Linotype', serif; }
+  .cl-serif { font-family: Roboto, 'Helvetica Neue', Arial, sans-serif; }
   .cl-mono { font-family: ui-monospace, 'SF Mono', 'Cascadia Mono', Consolas, monospace; }
 
   /* ---------- header band ---------- */
   .cl-header {
-    background: var(--ink); color: #EFF3EC; padding: 22px 28px;
+    background: var(--ink); color: #FFFFFF; padding: 22px 28px;
     display: flex; align-items: center; justify-content: space-between;
     gap: 16px; flex-wrap: wrap; border-bottom: 3px solid var(--brass);
   }
   .cl-header-left { display: flex; flex-direction: column; gap: 3px; }
-  .cl-wordmark { font-family: Georgia, 'Iowan Old Style', 'Palatino Linotype', serif; font-size: 22px; font-weight: 600; }
-  .cl-header-sub { font-size: 12.5px; color: #B9C4B4; }
+  .cl-wordmark { font-family: Roboto, 'Helvetica Neue', Arial, sans-serif; font-size: 22px; font-weight: 600; }
+  .cl-header-sub { font-size: 12.5px; color: #C6CCD2; }
   .cl-header-right { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
   .cl-header-file {
-    font-size: 12px; color: #C9D3C4; max-width: 220px; overflow: hidden;
+    font-size: 12px; color: #C6CCD2; max-width: 220px; overflow: hidden;
     text-overflow: ellipsis; white-space: nowrap;
   }
   .cl-btn {
     display: inline-flex; align-items: center; gap: 7px;
-    border: 1px solid rgba(239,243,236,0.35); background: transparent; color: #EFF3EC;
+    border: 1px solid rgba(239,243,236,0.35); background: transparent; color: #FFFFFF;
     padding: 8px 14px; border-radius: 5px; font-size: 13px; font-weight: 500;
     cursor: pointer; font-family: inherit;
   }
@@ -50,43 +50,43 @@
     display: flex; align-items: center; gap: 12px; padding-left: 12px; margin-left: 4px;
     border-left: 1px solid rgba(239,243,236,0.25);
   }
-  .cl-account-link { color: #C9D3C4; font-size: 12.5px; text-decoration: none; font-weight: 500; }
-  .cl-account-link:hover { color: #EFF3EC; text-decoration: underline; }
-  .cl-account-link-muted { color: #8FA089; }
-  .cl-account-name { font-size: 12.5px; color: #C9D3C4; }
-  .cl-save-note { font-size: 11.5px; color: #8FA089; }
+  .cl-account-link { color: #C6CCD2; font-size: 12.5px; text-decoration: none; font-weight: 500; }
+  .cl-account-link:hover { color: #FFFFFF; text-decoration: underline; }
+  .cl-account-link-muted { color: #8A94A0; }
+  .cl-account-name { font-size: 12.5px; color: #C6CCD2; }
+  .cl-save-note { font-size: 11.5px; color: #8A94A0; }
   .cl-save-ok { color: #7FBF9E; }
   .cl-save-err { color: #D99A9A; }
-  .cl-btn-brass:hover { background: #C79539; }
+  .cl-btn-brass:hover { background: #FFA126; }
 
   /* ---------- hero / upload ---------- */
   .cl-hero { padding: 64px 24px 56px; display: flex; justify-content: center; }
   .cl-hero-inner { max-width: 620px; width: 100%; text-align: center; }
   .cl-hero-kicker { font-size: 11.5px; letter-spacing: 0.06em; color: var(--pine); font-weight: 600; margin-bottom: 10px; }
-  .cl-hero-title { font-family: Georgia, 'Iowan Old Style', 'Palatino Linotype', serif; font-weight: 600; font-size: 52px; color: var(--ink); margin: 0 0 14px; line-height: 1; }
+  .cl-hero-title { font-family: Roboto, 'Helvetica Neue', Arial, sans-serif; font-weight: 600; font-size: 52px; color: var(--ink); margin: 0 0 14px; line-height: 1; }
   .cl-hero-copy { font-size: 15px; line-height: 1.6; color: var(--text-muted); margin: 0 auto 30px; max-width: 480px; }
   .cl-drop {
     border: 1.5px dashed #B8C3B2; border-radius: 10px; background: var(--card);
     padding: 34px 24px; cursor: pointer; display: flex; flex-direction: column;
     align-items: center; gap: 8px; color: var(--ink); transition: border-color .15s ease, background .15s ease;
   }
-  .cl-drop:hover, .cl-drop-over { border-color: var(--pine); background: #EEF3EA; }
+  .cl-drop:hover, .cl-drop-over { border-color: var(--pine); background: #F5F6F7; }
   .cl-drop-title { font-size: 14.5px; font-weight: 500; margin-top: 4px; }
   .cl-drop-sub { font-size: 12.5px; color: var(--text-muted); }
   .cl-upload-icon { font-size: 26px; line-height: 1; }
   .cl-error {
     margin-top: 16px; display: flex; align-items: flex-start; gap: 8px; text-align: left;
-    background: #F6E9E9; border: 1px solid #E3C3C3; color: #6E2626;
+    background: #FDECEA; border: 1px solid #F5C2BD; color: #8E1F18;
     padding: 12px 14px; border-radius: 7px; font-size: 13px; line-height: 1.5;
   }
-  .cl-hero-footnote { margin-top: 22px; font-size: 12px; color: #8A9585; line-height: 1.6; }
+  .cl-hero-footnote { margin-top: 22px; font-size: 12px; color: #8A94A0; line-height: 1.6; }
 
   /* ---------- KPI strip ---------- */
   .cl-kpi-strip { display: grid; grid-template-columns: repeat(6, 1fr); gap: 1px; background: var(--line); border-bottom: 1px solid var(--line); }
   @media (max-width: 900px) { .cl-kpi-strip { grid-template-columns: repeat(3, 1fr); } }
   .cl-kpi { background: var(--card); padding: 16px 18px; }
   .cl-kpi-top { font-size: 11.5px; color: var(--text-muted); margin-bottom: 8px; }
-  .cl-kpi-value { font-family: Georgia, 'Iowan Old Style', 'Palatino Linotype', serif; font-weight: 600; font-size: 24px; color: var(--ink); }
+  .cl-kpi-value { font-family: Roboto, 'Helvetica Neue', Arial, sans-serif; font-weight: 600; font-size: 24px; color: var(--ink); }
   .cl-kpi-sub { font-size: 11px; color: #93A08B; margin-top: 3px; }
 
   /* ---------- charts row ---------- */
@@ -106,14 +106,14 @@
   .cl-hbars { display: flex; flex-direction: column; gap: 9px; }
   .cl-hbar-row { display: grid; grid-template-columns: 100px 1fr 66px; align-items: center; gap: 8px; }
   .cl-hbar-label { font-size: 11.5px; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .cl-hbar-track { height: 9px; background: #EAEEE7; border-radius: 5px; overflow: hidden; }
+  .cl-hbar-track { height: 9px; background: #EEF0F2; border-radius: 5px; overflow: hidden; }
   .cl-hbar-fill { height: 100%; background: var(--brass); border-radius: 5px; }
   .cl-hbar-value { font-size: 10.5px; color: var(--text-muted); text-align: right; }
 
   .cl-donut-wrap { display: flex; align-items: center; gap: 16px; }
   .cl-donut { width: 92px; height: 92px; border-radius: 50%; flex-shrink: 0; display: flex; align-items: center; justify-content: center; }
   .cl-donut-hole { width: 56px; height: 56px; background: var(--card); border-radius: 50%; display: flex; flex-direction: column; align-items: center; justify-content: center; }
-  .cl-donut-value { font-family: Georgia, 'Iowan Old Style', 'Palatino Linotype', serif; font-size: 17px; font-weight: 600; color: var(--ink); line-height: 1; }
+  .cl-donut-value { font-family: Roboto, 'Helvetica Neue', Arial, sans-serif; font-size: 17px; font-weight: 600; color: var(--ink); line-height: 1; }
   .cl-donut-label { font-size: 8.5px; color: var(--text-muted); margin-top: 2px; }
   .cl-donut-legend { display: flex; flex-direction: column; gap: 6px; }
   .cl-legend-row { display: flex; align-items: center; gap: 6px; font-size: 11.5px; }
@@ -142,13 +142,13 @@
   .cl-sort-caret { opacity: 0.35; margin-left: 4px; font-size: 9px; }
   .cl-th-active .cl-sort-caret { opacity: 1; }
   .cl-row { cursor: pointer; border-bottom: 1px solid var(--line); }
-  .cl-row:hover { background: #F7F9F5; }
+  .cl-row:hover { background: #F5F6F7; }
   .cl-row td { padding: 11px 14px; vertical-align: middle; }
   .cl-name-cell { display: flex; align-items: center; gap: 6px; font-weight: 500; color: var(--ink); }
   .cl-caret { color: var(--text-muted); flex-shrink: 0; display: inline-block; width: 10px; }
   .cl-cost-cell { font-weight: 600; color: var(--ink); }
   .cl-count-chip { font-size: 10px; color: var(--text-muted); margin-left: 6px; background: var(--paper); border-radius: 8px; padding: 1px 6px; border: 1px solid var(--line); }
-  .cl-mini-flag { font-size: 10px; color: var(--brick); border: 1px solid #D9B7B7; background: #FBF0F0; border-radius: 8px; padding: 1px 7px; margin-left: 4px; }
+  .cl-mini-flag { font-size: 10px; color: var(--brick); border: 1px solid #D9B7B7; background: #FDECEA; border-radius: 8px; padding: 1px 7px; margin-left: 4px; }
 
   .cl-badge { display: inline-flex; align-items: center; font-size: 11.5px; font-weight: 500; padding: 3px 9px; border-radius: 20px; }
   .cl-badge-outline { border: 1px solid transparent; }
@@ -156,13 +156,13 @@
 
   /* ---------- expanded detail ---------- */
   .cl-expand-row td { padding: 0; }
-  .cl-expand-inner { background: #F5F7F3; padding: 16px 44px 20px; border-bottom: 1px solid var(--line); }
+  .cl-expand-inner { background: #F5F6F7; padding: 16px 44px 20px; border-bottom: 1px solid var(--line); }
   .cl-expand-title { font-size: 12px; font-weight: 600; color: var(--ink); margin-bottom: 10px; display: flex; align-items: center; gap: 10px; }
   .cl-expand-sub { font-weight: 400; color: var(--text-muted); font-size: 11px; }
-  .cl-left-note { font-size: 12px; color: #6E2626; background: #FBF0F0; border: 1px solid #E3C3C3; border-radius: 6px; padding: 8px 12px; margin-bottom: 12px; line-height: 1.5; }
+  .cl-left-note { font-size: 12px; color: #8E1F18; background: #FDECEA; border: 1px solid #F5C2BD; border-radius: 6px; padding: 8px 12px; margin-bottom: 12px; line-height: 1.5; }
   table.cl-subtable { width: 100%; border-collapse: collapse; font-size: 12px; background: var(--card); border-radius: 6px; overflow: hidden; }
   table.cl-subtable thead th { text-align: left; padding: 8px 12px; font-size: 10.5px; color: var(--text-muted); border-bottom: 1px solid var(--line); font-weight: 600; white-space: nowrap; }
-  table.cl-subtable tbody td { padding: 8px 12px; border-bottom: 1px solid #EEF1EC; }
+  table.cl-subtable tbody td { padding: 8px 12px; border-bottom: 1px solid #F5F6F7; }
   table.cl-subtable tbody tr:last-child td { border-bottom: none; }
   .cl-muted-cell { color: #B0A25E; }
   .cl-notes-cell { color: var(--text-muted); max-width: 220px; }
@@ -176,7 +176,7 @@
   .cl-other-copy { font-size: 12px; color: var(--text-muted); margin: 0 0 12px; max-width: 560px; line-height: 1.5; }
 
   /* ---------- footer ---------- */
-  .cl-footer { padding: 18px 24px 28px; font-size: 11.5px; color: #8A9585; line-height: 1.7; border-top: 1px solid var(--line); background: var(--card); }
+  .cl-footer { padding: 18px 24px 28px; font-size: 11.5px; color: #8A94A0; line-height: 1.7; border-top: 1px solid var(--line); background: var(--card); }
   .cl-footer b { color: var(--text-muted); }
 
   .cl-loading-note { margin-top: 16px; font-size: 12.5px; color: var(--text-muted); }
@@ -190,6 +190,7 @@
   .cl-diag-table-wrap table.cl-subtable td { white-space: nowrap; max-width: 160px; overflow: hidden; text-overflow: ellipsis; font-size: 11px; }
 </style>
 <link rel="stylesheet" href="/shell.css">
+<link rel="stylesheet" href="/theme.css">
 </head>
 <body>
 <div id="app"></div>
@@ -552,10 +553,10 @@
       .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
   }
 
-  var STATUS_COLOR = { Active: '#2E6F52', Left: '#9B3B3B', Inactive: '#97854A' };
-  var STATUS_BG = { Active: '#EAF3EE', Left: '#F7ECEC', Inactive: '#F5F1E4' };
-  var CLIENT_COLOR = { HCL: '#B9862E', 'Non-HCL': '#2E6F52', Unspecified: '#8C9188' };
-  var CLIENT_BG = { HCL: '#FBF3E6', 'Non-HCL': '#EAF3EE', Unspecified: '#F0F2EF' };
+  var STATUS_COLOR = { Active: '#0875E1', Left: '#C62F25', Inactive: '#8A5A00' };
+  var STATUS_BG = { Active: '#E4F6E9', Left: '#FDECEA', Inactive: '#FFF5E5' };
+  var CLIENT_COLOR = { HCL: '#FFA126', 'Non-HCL': '#0875E1', Unspecified: '#8C9188' };
+  var CLIENT_BG = { HCL: '#FBF3E6', 'Non-HCL': '#E3F1FD', Unspecified: '#F5F6F7' };
   var CLIENT_BORDER = { HCL: '#E7CE9E', 'Non-HCL': '#BEDBCD', Unspecified: '#DCE1D9' };
 
   /* =========================================================================
@@ -842,12 +843,12 @@
       var start = (acc / total) * 360;
       acc += d.value;
       var end = (acc / total) * 360;
-      var color = colorMap[d.label] || '#9AA398';
+      var color = colorMap[d.label] || '#8A94A0';
       return color + ' ' + start + 'deg ' + end + 'deg';
     });
     var bg = stops.length ? ('conic-gradient(' + stops.join(', ') + ')') : '#E4E8E1';
     var legend = segments.map(function (d) {
-      var color = colorMap[d.label] || '#9AA398';
+      var color = colorMap[d.label] || '#8A94A0';
       return (
         '<div class="cl-legend-row">' +
           '<span class="cl-legend-dot" style="background:' + color + ';"></span>' +
@@ -922,7 +923,7 @@
 
     var rows = filtered.length
       ? filtered.map(renderConsultantRow).join('')
-      : ('<tr><td colspan="' + COLUMNS.length + '" style="padding:28px 14px;text-align:center;color:#8A9585;">No consultants match these filters.</td></tr>');
+      : ('<tr><td colspan="' + COLUMNS.length + '" style="padding:28px 14px;text-align:center;color:#8A94A0;">No consultants match these filters.</td></tr>');
 
     return (
       '<div class="cl-table-wrap">' +
@@ -940,10 +941,10 @@
   }
   function statusBadge(status) {
     var label = status === 'Inactive' ? 'No recent activity' : status;
-    return badge(label, STATUS_COLOR[status] || '#5B6B60', STATUS_BG[status] || '#F0F2EF', null, false);
+    return badge(label, STATUS_COLOR[status] || '#5E6A75', STATUS_BG[status] || '#F5F6F7', null, false);
   }
   function clientBadge(tag, small) {
-    return badge(tag, CLIENT_COLOR[tag] || '#5B6B60', CLIENT_BG[tag] || '#F0F2EF', CLIENT_BORDER[tag] || '#DCE1D9', small);
+    return badge(tag, CLIENT_COLOR[tag] || '#5E6A75', CLIENT_BG[tag] || '#F5F6F7', CLIENT_BORDER[tag] || '#DCE1D9', small);
   }
 
   function renderConsultantRow(c) {

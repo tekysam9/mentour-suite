@@ -8,7 +8,7 @@
 <link rel="stylesheet" href="/shell.css">
 <style>
   .ob { max-width: 1240px; margin: 0 auto; padding: 28px 24px 72px; }
-  .ob h1 { font-family: Georgia, 'Iowan Old Style', 'Palatino Linotype', serif; font-size: 30px; font-weight: 600; color: var(--ink); margin: 0 0 6px; }
+  .ob h1 { font-family: Roboto, 'Helvetica Neue', Arial, sans-serif; font-size: 30px; font-weight: 600; color: var(--ink); margin: 0 0 6px; }
   .ob-lede { color: var(--text-muted); font-size: 13.5px; line-height: 1.55; margin: 0 0 20px; max-width: 760px; }
   .ob-addperson { margin-top:16px; padding-top:14px; border-top:1px solid var(--line); }
   .ob-addperson input, .ob-addperson select { width:100%; box-sizing:border-box; border:1px solid var(--line); border-radius:5px; padding:7px 9px; font:inherit; font-size:13px; background:var(--paper); }
@@ -18,8 +18,8 @@
   .ob-btn { border: 1px solid var(--line); background: var(--card); border-radius: 5px; padding: 8px 15px; font-size: 13px; font-weight: 600; cursor: pointer; font-family: inherit; color: var(--text); }
   .ob-btn:hover { background: var(--paper); }
   .ob-btn:disabled { opacity: .55; cursor: default; }
-  .ob-btn.primary { background: var(--pine); border-color: var(--pine); color: #EFF3EC; }
-  .ob-btn.primary:hover { background: #275F46; }
+  .ob-btn.primary { background: var(--pine); border-color: var(--pine); color: #FFFFFF; }
+  .ob-btn.primary:hover { background: #0B64C0; }
   .ob-btn.danger { color: var(--brick); border-color: #E3C2B5; }
   .ob-btn.small { padding: 4px 10px; font-size: 12px; }
   .ob-link { color: var(--pine); font-weight: 600; text-decoration: none; cursor: pointer; background: none; border: none; font: inherit; padding: 0; }
@@ -27,12 +27,12 @@
   .ob-muted { color: var(--text-muted); font-size: 12.5px; }
   .ob-msg { font-size: 13px; font-weight: 600; padding: 9px 13px; border-radius: 7px; margin-bottom: 14px; }
   .ob-msg.ok { background: #E6F0EA; color: var(--pine); }
-  .ob-msg.err { background: #F7E4DD; color: var(--brick); }
-  .ob-msg.warn { background: #F5F1E4; color: #6E5F26; font-weight: 500; }
+  .ob-msg.err { background: #FDECEA; color: var(--brick); }
+  .ob-msg.warn { background: #FFF5E5; color: #7A4A00; font-weight: 500; }
   .ob-badge { display: inline-block; font-size: 11px; font-weight: 700; border-radius: 999px; padding: 2px 9px; white-space: nowrap; letter-spacing: .02em; }
-  .t-W2 { background: #E3EFE8; color: #1F5A3F; } .t-C2C { background: #F6EBD3; color: #7A5410; } .t-1099 { background: #E4E8F2; color: #34456F; }
-  .s-draft { background: #ECE9DC; color: #5F5A45; } .s-submitted { background: #F8E3C4; color: #8A4A07; } .s-in_progress { background: #DCE8F6; color: #234D80; }
-  .s-complete { background: #DCEEDD; color: #1F5A3F; } .s-cancelled { background: #EFE0DA; color: #8A3B20; }
+  .t-W2 { background: #E4F6E9; color: #1B7A3A; } .t-C2C { background: #F6EBD3; color: #7A5410; } .t-1099 { background: #E4E8F2; color: #34456F; }
+  .s-draft { background: #E8EAED; color: #5E6A75; } .s-submitted { background: #F8E3C4; color: #8A4A07; } .s-in_progress { background: #DCE8F6; color: #234D80; }
+  .s-complete { background: #E4F6E9; color: #1B7A3A; } .s-cancelled { background: #EFE0DA; color: #8A3B20; }
   .ob-pending { border-color: #E6C48A; background: #FFFAF0; }
   .ob-pending h2 { color: #8A4A07; }
   .ob-row { display: flex; align-items: center; gap: 14px; padding: 10px 0; border-top: 1px solid #EFE6CB; flex-wrap: wrap; }
@@ -49,7 +49,7 @@
   .ob input:focus, .ob select:focus, .ob textarea:focus { border-color: var(--pine); }
   table.ob-table { width: 100%; border-collapse: collapse; font-size: 13px; }
   .ob-table th { text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--text-muted); padding: 8px 10px; border-bottom: 1px solid var(--line); white-space: nowrap; }
-  .ob-table td { padding: 10px; border-bottom: 1px solid #EFEBDD; vertical-align: middle; }
+  .ob-table td { padding: 10px; border-bottom: 1px solid #EEF0F2; vertical-align: middle; }
   .ob-table tr.click { cursor: pointer; } .ob-table tr.click:hover td { background: var(--paper); }
   .ob-bar { height: 7px; width: 90px; background: #E7E2D0; border-radius: 99px; overflow: hidden; display: inline-block; vertical-align: middle; margin-right: 6px; }
   .ob-bar i { display: block; height: 100%; background: var(--pine); }
@@ -71,26 +71,27 @@
   .ob-req { color: var(--brick); }
   .ob-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin: 10px 0 6px; }
   .ob-actions { display: flex; gap: 10px; flex-wrap: wrap; margin: 12px 0 18px; align-items: center; }
-  .ob-confirm { background: #F5F1E4; border: 1px solid #E3D9B3; border-radius: 8px; padding: 12px 14px; font-size: 13px; display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-bottom: 14px; }
+  .ob-confirm { background: #FFF5E5; border: 1px solid #FFD9A3; border-radius: 8px; padding: 12px 14px; font-size: 13px; display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-bottom: 14px; }
   .ob-confirm textarea { flex: 1 1 320px; min-height: 52px; }
-  .ob-margin { margin-top: 12px; font-size: 13px; background: #EAF3EE; color: var(--pine); border-radius: 6px; padding: 8px 12px; display: inline-block; font-weight: 600; }
-  .ob-margin.neg { background: #F7E4DD; color: var(--brick); }
+  .ob-margin { margin-top: 12px; font-size: 13px; background: #E3F1FD; color: var(--pine); border-radius: 6px; padding: 8px 12px; display: inline-block; font-weight: 600; }
+  .ob-margin.neg { background: #FDECEA; color: var(--brick); }
   .ob-grp { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--text-muted); font-weight: 700; margin: 14px 0 4px; }
-  .ob-item { display: grid; grid-template-columns: 22px 1fr; gap: 4px 10px; padding: 8px 0; border-bottom: 1px solid #EFEBDD; font-size: 13px; }
+  .ob-item { display: grid; grid-template-columns: 22px 1fr; gap: 4px 10px; padding: 8px 0; border-bottom: 1px solid #EEF0F2; font-size: 13px; }
   .ob-item:last-child { border-bottom: none; }
   .ob-item.na .lbl { text-decoration: line-through; color: var(--text-muted); }
   .ob-item .lbl { color: var(--ink); font-weight: 500; }
   .ob-item .more { grid-column: 2; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; font-size: 12px; color: var(--text-muted); }
   .ob-item .more input[type=text] { flex: 1 1 140px; font-size: 12px; padding: 4px 7px; }
-  .ob-chipf { font-size: 11px; font-weight: 700; border-radius: 4px; padding: 1px 6px; background: #ECE9DC; color: #5F5A45; }
-  .ob-chipf.complete { background: #DCEEDD; color: #1F5A3F; }
+  .ob-chipf { font-size: 11px; font-weight: 700; border-radius: 4px; padding: 1px 6px; background: #E8EAED; color: #5E6A75; }
+  .ob-chipf.complete { background: #E4F6E9; color: #1B7A3A; }
   .ob-log { font-size: 12.5px; line-height: 1.5; }
-  .ob-log div { padding: 7px 0; border-bottom: 1px solid #EFEBDD; }
+  .ob-log div { padding: 7px 0; border-bottom: 1px solid #EEF0F2; }
   .ob-log small { display: block; color: var(--text-muted); font-size: 11px; }
   .ob-paste textarea { width: 100%; min-height: 150px; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px; }
   .ob-savebar { position: sticky; bottom: 0; background: var(--paper); border-top: 1px solid var(--line); padding: 12px 0; display: flex; gap: 12px; align-items: center; margin-top: 8px; flex-wrap: wrap; }
   .ob-empty { padding: 28px; text-align: center; color: var(--text-muted); }
 </style>
+<link rel="stylesheet" href="/theme.css">
 </head>
 <body>
 <div id="app"><div class="ob"><p class="ob-muted">Loading…</p></div></div>
@@ -222,7 +223,7 @@
       h += '</div>';
       if (S.me.isOwner) {
       h += '<div class="ob-addperson"><b style="font-size:12.5px">Shared invite codes</b><p class="ob-muted" style="margin:6px 0 10px">A reusable code anyone can join with; they get the role it carries. Sign-up is at the “Join with invite code” tab of the sign-in page.</p>' +
-        (S.invites || []).map(function (i) { return '<div style="display:flex;gap:10px;align-items:center;margin-bottom:6px;font-size:13px"><code style="background:#EAF3EE;padding:3px 8px;border-radius:4px">' + esc(i.code) + '</code><span>' + esc(ROLE_NAME[i.role]) + '</span><button class="ob-btn" data-act="invite-revoke" data-id="' + i.id + '">Revoke</button></div>'; }).join('') +
+        (S.invites || []).map(function (i) { return '<div style="display:flex;gap:10px;align-items:center;margin-bottom:6px;font-size:13px"><code style="background:#E3F1FD;padding:3px 8px;border-radius:4px">' + esc(i.code) + '</code><span>' + esc(ROLE_NAME[i.role]) + '</span><button class="ob-btn" data-act="invite-revoke" data-id="' + i.id + '">Revoke</button></div>'; }).join('') +
         '<div style="display:flex;gap:8px;align-items:center;margin-top:8px"><select id="inv-role" style="max-width:260px"><option value="recruiter">Recruiter (Onboarding only)</option><option value="hr">HR admin</option><option value="member">Team member (full access)</option></select><button class="ob-btn primary" data-act="invite-new">Create invite code</button></div>' +
         (S.legacyCode ? '<p class="ob-muted" style="margin:10px 0 0">The older company-wide code <code>' + esc(S.legacyCode) + '</code> still works and gives <b>Team member (full access)</b>. Share role-specific codes instead.</p>' : '') + '</div>';
       h += '<div class="ob-addperson"><b style="font-size:12.5px">Add a person</b><div class="ob-grid" style="margin-top:8px">' +
