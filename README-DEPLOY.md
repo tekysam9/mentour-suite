@@ -423,3 +423,6 @@ The Margin dashboard reads and edits placements (consultant + client + vendor, b
 - **Ledger**: built from supplier payment lines; **+ Add payment** records one (supplier and consultant can be typed; new names are created).
 - **Fin-Module**: client invoices and supplier payments generate from placements (billing rate / pay rate per project); supplier payments need no Ledger or Margin file. Hours are typed into each invoice.
 - File imports (Margin workbook, Ledger workbook, Import hours) are optional one-time shortcuts. Re-run `db/schema.sql` on deploy (adds placement columns and the per-project supplier-payment key).
+
+## Confirmation before changes
+`public/confirm.js` (loaded by `shell.js`) asks "are you sure?" with the details before any add, edit, delete or generate request to `/api` goes out. Cancel sends nothing. Sign-in/out, previews (`apply:false`) and email parsing are not asked about.

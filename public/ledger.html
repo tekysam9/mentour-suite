@@ -1229,7 +1229,7 @@
       .then(function (res) { return res.json().then(function (b) { if (!res.ok) throw new Error(b.error || 'Could not save.'); return b; }); })
       .then(function () { state.adding = false; state.formError = null; return loadLedger(); })
       .then(render)
-      .catch(function (err) { state.formError = err.message; render(); });
+      .catch(function (err) { if (/^Cancelled/.test(err.message)) return; state.formError = err.message; render(); });
   }
 
   function exportCSV(consultants) {

@@ -879,7 +879,7 @@
         if (isNew && b.record) { state.filters.status = 'All'; state.expandedKey = 'r' + b.record.id; }
         render();
       });
-    }).catch(function (err) { state.formError = { id: isNew ? 'new' : Number(id), msg: err.message }; render(); });
+    }).catch(function (err) { if (/^Cancelled/.test(err.message)) return; state.formError = { id: isNew ? 'new' : Number(id), msg: err.message }; render(); });
   }
 
   function exportCSV(list) {
