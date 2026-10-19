@@ -603,3 +603,14 @@ CREATE TABLE IF NOT EXISTS onboarding_documents (
 -- pairing, so a consultant on several projects at once can have a different
 -- billing rate and pay rate on each. Nullable; additive and safe to re-run.
 ALTER TABLE consultant_assignments ADD COLUMN IF NOT EXISTS pay_rate DECIMAL(12,2) NULL AFTER billing;
+
+-- Placements: the Margin module now reads and edits these rows directly (no file
+-- needed). A consultant_assignments row = one placement: consultant at a
+-- client/vendor, with billing and pay ($/hr), supplier or employment type, recruiter,
+-- start text and left info. Uploads only seed/update them. Additive; safe to re-run.
+ALTER TABLE consultant_assignments ADD COLUMN IF NOT EXISTS employment_type VARCHAR(64) NULL;
+ALTER TABLE consultant_assignments ADD COLUMN IF NOT EXISTS supplier_id INT NULL;
+ALTER TABLE consultant_assignments ADD COLUMN IF NOT EXISTS recruiter VARCHAR(255) NULL;
+ALTER TABLE consultant_assignments ADD COLUMN IF NOT EXISTS joined_text VARCHAR(64) NULL;
+ALTER TABLE consultant_assignments ADD COLUMN IF NOT EXISTS left_text VARCHAR(255) NULL;
+ALTER TABLE consultant_assignments ADD CONSTRAINT fk_assignment_supplier FOREIGN KEY IF NOT EXISTS (supplier_id) REFERENCES subvendors(id) ON DELETE SET NULL;

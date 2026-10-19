@@ -185,10 +185,12 @@ async function saveMarginRoster(conn, { organizationId, importId, data }) {
       const leftDate = toNullableDate(r.leftDate);
       const prev = pairings.get(pairKey);
       if (!prev) {
-        pairings.set(pairKey, { consultantId, clientId, programId, active: isActive, billing: toNullableNumber(r.billing), leftDate });
+        pairings.set(pairKey, { consultantId, clientId, programId, active: isActive, billing: toNullableNumber(r.billing), leftDate,
+          cost: toNullableNumber(r.cost), employmentType: toNullableText(r.employmentType, 64) || 'Unspecified', supplierId: r.employmentType === 'Subvendor' ? (subvendorIds.get(normalizeName(r.subvendorText)) || null) : null,
+          recruiter: toNullableText(r.recruiter, 255), joined: toNullableText(r.joined, 64), leftText: toNullableText(r.leftText, 255) });
       } else {
         // The Active row's billing wins; among Left rows keep the latest left date.
-        if (isActive || !prev.active) prev.billing = toNullableNumber(r.billing);
+        if (isActive || !prev.active) { prev.billing = toNullableNumber(r.billing); prev.cost = toNullableNumber(r.cost); prev.recruiter = toNullableText(r.recruiter, 255) || prev.recruiter; prev.joined = toNullableText(r.joined, 64) || prev.joined; }
         prev.active = prev.active || isActive;
         if (leftDate && (!prev.leftDate || leftDate > prev.leftDate)) prev.leftDate = leftDate;
       }
@@ -222,10 +224,19 @@ async function saveMarginRoster(conn, { organizationId, importId, data }) {
   }
 
   for (const p of pairings.values()) {
-    await upsertAssignmentBilling(conn, {
+    // A placement a person has edited in the app (source 'manual') is left alone: a file only seeds or refreshes
+    // placements that came from a file.
+    const [mine] = await conn.query(
+      `SELECT id, source FROM consultant_assignments WHERE organization_id = ? AND consultant_id = ? AND client_id <=> ? AND program_id <=> ?`,
+      [organizationId, p.consultantId, p.clientId, p.programId]);
+    if (mine.length && mine[0].source === 'manual') continue;
+    const id = await upsertAssignmentBilling(conn, {
       organizationId, consultantId: p.consultantId, clientId: p.clientId, programId: p.programId,
-      billing: p.billing, source: 'upload', status: p.active ? 'active' : 'left', leftDate: p.active ? null : p.leftDate,
+      billing: p.billing, payRate: p.cost, source: 'upload', status: p.active ? 'active' : 'left', leftDate: p.active ? null : p.leftDate,
     });
+    await conn.query(
+      `UPDATE consultant_assignments SET employment_type = ?, supplier_id = ?, recruiter = ?, joined_text = ?, left_text = ? WHERE id = ?`,
+      [p.employmentType, p.supplierId, p.recruiter, p.joined, p.active ? null : p.leftText, id]);
   }
 
   await conn.query(

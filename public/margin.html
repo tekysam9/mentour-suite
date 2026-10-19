@@ -154,6 +154,13 @@
   .cl-diag-table-wrap { overflow-x: auto; }
   table.cl-subtable { width: 100%; border-collapse: collapse; font-size: 12px; background: var(--card); border-radius: 6px; overflow: hidden; }
   table.cl-subtable tbody td { padding: 8px 12px; border-bottom: 1px solid #F5F6F7; white-space: nowrap; max-width: 160px; overflow: hidden; text-overflow: ellipsis; font-size: 11px; }
+
+  .cl-editor { background: #fff; border: 1px solid #DFE2E6; border-radius: 8px; padding: 16px 18px; margin: 12px 0; text-align: left; }
+  .cl-ed-title { font-weight: 500; font-size: 16px; margin-bottom: 10px; color: #1E272E; }
+  .cl-ed-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 10px 14px; }
+  .cl-ed-f { display: flex; flex-direction: column; font-size: 12px; color: #5E6A75; gap: 3px; }
+  .cl-ed-f input, .cl-ed-f select { padding: 8px 10px; font-size: 14px; }
+  .cl-ed-actions { display: flex; gap: 8px; margin-top: 12px; align-items: center; }
 </style>
 <link rel="stylesheet" href="/shell.css">
 <link rel="stylesheet" href="/theme.css">
@@ -298,6 +305,10 @@
       return { ok: false, diagnostics: { sheetNames: wb.SheetNames, previews: previews } };
     }
 
+    return buildData(records);
+  }
+
+  function buildData(records) {
     var active = records.filter(function (r) { return r.status === 'Active'; });
     var left = records.filter(function (r) { return r.status === 'Left'; });
 
@@ -330,7 +341,7 @@
       ok: true,
       records: records,
       kpis: {
-        activeCount: active.length,
+        activeCount: Object.keys(active.reduce(function (m, r) { m[r.name] = 1; return m; }, {})).length,
         leftCount: left.length,
         avgCost: avg(active, 'cost'),
         avgBilling: avg(active, 'billing'),
@@ -373,6 +384,8 @@
     filters: { search: '', status: 'Active', program: 'All', employment: 'All' },
     sort: { key: 'margin', dir: 'desc' },
     expandedKey: null,
+    adding: false,
+    formError: null,
     saveStatus: null, // null | 'saving' | 'saved' | 'error'
   };
 
@@ -380,7 +393,7 @@
 
   var appEl = document.getElementById('app');
 
-  function recordKey(r, i) { return i + '::' + r.name; }
+  function recordKey(r, i) { return r.id ? 'r' + r.id : i + '::' + r.name; }
 
   /* =========================================================================
      FILTER / SORT
@@ -435,12 +448,15 @@
       return;
     }
     if (!state.data) {
-      appEl.innerHTML = renderHeader(false) + renderUploadScreen();
+      appEl.innerHTML = renderHeader(false) + '<div class="cl-hero"><div class="cl-hero-inner"><p class="cl-hero-copy">Loading\u2026</p></div></div>';
       return;
     }
     var filtered = getFilteredSorted();
     appEl.innerHTML =
       renderHeader(true) +
+      (state.adding ? renderEditor(null) : '') +
+      (state.error ? '<div class="cl-error"><span>\u26A0</span><span>' + escapeHtml(state.error) + '</span></div>' : '') +
+      (state.data.records.length ? '' : renderEmptyState()) +
       renderKpiStrip(state.data) +
       renderCharts(state.data) +
       renderFilterBar(state.data, filtered.length) +
@@ -483,15 +499,65 @@
           '<div class="cl-header-sub">Consultant roster &amp; gross margin dashboard</div>' +
         '</div>' +
         '<div class="cl-header-right">' +
-          '<span class="cl-header-file">' + escapeHtml(state.fileName) + '</span>' +
+          '<button class="cl-btn cl-btn-brass" data-action="add-placement" type="button">+ Add placement</button>' +
           '<button class="cl-btn" data-action="export-csv" type="button">Export CSV</button>' +
-          '<label class="cl-btn cl-btn-brass" style="cursor:pointer;">Replace file' +
+          '<label class="cl-btn" style="cursor:pointer;" title="Optional: read a roster workbook once to fill the database. Placements you have edited here are not overwritten.">Import from file' +
             '<input type="file" accept=".xlsx,.xls" style="display:none;" data-role="file-input">' +
           '</label>' +
           renderAccountBar() +
         '</div>' +
       '</div>'
     );
+  }
+
+  function uniqueList(field) {
+    var seen = {}, out = [];
+    ((state.data && state.data.records) || []).forEach(function (r) { var v = r[field]; if (v && !seen[v] && v !== '(unspecified)') { seen[v] = 1; out.push(v); } });
+    return out.sort();
+  }
+
+  function renderEmptyState() {
+    return '<div class="cl-hero"><div class="cl-hero-inner"><div class="cl-hero-kicker">Consultant Roster \u00b7 Gross Margin</div>' +
+      '<h1 class="cl-hero-title">No placements yet.</h1>' +
+      '<p class="cl-hero-copy">Add each consultant\u2019s placement (client, vendor, billing and pay rate) with <b>+ Add placement</b>. ' +
+      'To save typing, you can read an existing roster workbook once with <b>Import from file</b>; after that, everything is kept and edited here.</p></div></div>';
+  }
+
+  // One form for adding a placement (r = null) and editing one (r = record).
+  function renderEditor(r) {
+    var v = r || { name: '', client: '', program: '', cost: null, billing: null, status: 'Active', joined: '', recruiter: '', subvendorText: '', employmentType: 'Subvendor', leftDate: null, leftText: '' };
+    var prog = v.program === '(unspecified)' ? '' : v.program;
+    var sup = (v.subvendorText === 'W2' || v.subvendorText === '1099') ? '' : v.subvendorText;
+    function inp(f, label, val, attrs) {
+      return '<label class="cl-ed-f"><span>' + label + '</span><input data-f="' + f + '" value="' + escapeHtml(val === null || val === undefined ? '' : val) + '" ' + (attrs || '') + '></label>';
+    }
+    var empOpts = ['Subvendor', 'W2 (direct)', '1099 (direct)', 'Unspecified'].map(function (o) { return '<option' + (v.employmentType === o ? ' selected' : '') + '>' + o + '</option>'; }).join('');
+    var lists = '<datalist id="dl-names">' + uniqueList('name').map(function (x) { return '<option value="' + escapeHtml(x) + '">'; }).join('') + '</datalist>' +
+      '<datalist id="dl-clients">' + uniqueList('client').map(function (x) { return '<option value="' + escapeHtml(x) + '">'; }).join('') + '</datalist>' +
+      '<datalist id="dl-vendors">' + uniqueList('program').map(function (x) { return '<option value="' + escapeHtml(x) + '">'; }).join('') + '</datalist>' +
+      '<datalist id="dl-suppliers">' + uniqueList('subvendorText').filter(function (x) { return x !== 'W2' && x !== '1099'; }).map(function (x) { return '<option value="' + escapeHtml(x) + '">'; }).join('') + '</datalist>';
+    return '<div class="cl-editor" data-editor="' + (r ? r.id : 'new') + '">' +
+      '<div class="cl-ed-title">' + (r ? 'Edit placement' : 'Add a placement') + '</div>' + lists +
+      '<div class="cl-ed-grid">' +
+        (r ? '<div class="cl-ed-f"><span>Consultant</span><div style="padding:8px 0">' + escapeHtml(v.name) + ' <a href="/directory.html" style="font-size:12px">(rename in Directory)</a></div></div>'
+           : inp('name', 'Consultant *', v.name, 'list="dl-names" placeholder="Full name"')) +
+        inp('client', 'Client *', v.client, 'list="dl-clients" placeholder="e.g. RCA"') +
+        inp('vendor', 'Vendor', prog, 'list="dl-vendors" placeholder="e.g. CDW (bill-to)"') +
+        '<label class="cl-ed-f"><span>Employment</span><select data-f="employmentType">' + empOpts + '</select></label>' +
+        inp('supplier', 'Supplier (if subvendor)', sup, 'list="dl-suppliers" placeholder="Supplier company"') +
+        inp('billing', 'Billing $/hr', v.billing, 'type="number" step="0.01" min="0"') +
+        inp('cost', 'Pay / cost $/hr', v.cost, 'type="number" step="0.01" min="0"') +
+        inp('joined', 'Joined', v.joined, 'placeholder="e.g. Mar 2025"') +
+        inp('recruiter', 'Recruiter', v.recruiter, '') +
+        '<label class="cl-ed-f"><span>Status</span><select data-f="status"><option' + (v.status === 'Active' ? ' selected' : '') + '>Active</option><option' + (v.status === 'Left' ? ' selected' : '') + '>Left</option></select></label>' +
+        inp('leftDate', 'Last day (if left)', v.leftDate || '', 'type="date"') +
+        inp('leftText', 'Left reason / note', v.leftText, '') +
+      '</div>' +
+      (state.formError && state.formError.id === (r ? r.id : 'new') ? '<div class="cl-error" style="margin:8px 0"><span>\u26A0</span><span>' + escapeHtml(state.formError.msg) + '</span></div>' : '') +
+      '<div class="cl-ed-actions"><button class="cl-btn cl-btn-brass" data-action="save-placement" data-id="' + (r ? r.id : 'new') + '" type="button">' + (r ? 'Save changes' : 'Add placement') + '</button>' +
+      '<button class="cl-btn" data-action="cancel-editor" type="button">Cancel</button>' +
+      (r ? '<button class="cl-btn" data-action="delete-placement" data-id="' + r.id + '" type="button" style="margin-left:auto;color:#C62F25;border-color:#C62F25">Delete</button>' : '') +
+      '</div></div>';
   }
 
   function renderUploadScreen() {
@@ -717,7 +783,7 @@
         field('Employment / supplier', r.subvendorText) +
         field('Source tab', r.sourceSheet) +
         field('Employment type', r.employmentType) +
-      '</div></div></td></tr>'
+      '</div>' + renderEditor(r) + '</div></td></tr>'
     );
     return mainRow + expandRow;
   }
@@ -725,12 +791,11 @@
   function renderFooter(d) {
     return (
       '<div class="cl-footer">' +
-        '<b>Reading the numbers:</b> Cost and Billing are hourly rates ($/hr) straight from the workbook, not dollar ' +
-        'totals \u2014 there\u2019s no hours field in this file, so nothing here is extrapolated into a monthly or annual figure. ' +
+        '<b>Reading the numbers:</b> Cost (pay) and Billing are hourly rates ($/hr) you maintain here, not dollar ' +
+        'totals, so nothing is extrapolated into a monthly or annual figure. ' +
         'Margin is Billing minus Cost per hour. <b>Supplier / Employment</b> shows "W2 (direct)" or "1099 (direct)" when ' +
-        'the person is a direct hire rather than placed through a subvendor company. <b>Status</b> comes straight from the ' +
-        'workbook\u2019s "If LEFT" column for that row \u2014 a date or a leave reason means Left; "still working" means Active. ' +
-        'Click a row for the full client string, recruiter, and which tab it came from.' +
+        'the person is a direct hire rather than placed through a subvendor company. <b>Status</b> is Active until you mark a placement Left. ' +
+        'Click a row to edit it, close it out, or delete it; one consultant can have several placements, each with its own rates.' +
       '</div>'
     );
   }
@@ -751,15 +816,11 @@
         var wb = XLSX.read(bytes, { type: 'array', cellDates: true });
         var result = processWorkbook(wb);
         if (result.ok) {
-          state.data = result;
           state.diagnostics = null;
           state.fileName = file.name;
-          state.filters = { search: '', status: 'Active', program: 'All', employment: 'All' };
-          state.sort = { key: 'margin', dir: 'desc' };
           state.expandedKey = null;
-          saveToBackend(file.name, result);
+          saveToBackend(file.name, result); // fills the database, then the roster reloads from it
         } else {
-          state.data = null;
           state.diagnostics = result.diagnostics;
           state.fileName = file.name;
         }
@@ -787,12 +848,38 @@
       if (!res.ok) throw new Error('save failed');
       return res.json();
     }).then(function () {
-      state.saveStatus = 'saved';
-      render();
+      return loadRoster().then(function () { state.saveStatus = 'saved'; render(); });
     }).catch(function () {
       state.saveStatus = 'error';
       render();
     });
+  }
+
+  function loadRoster() {
+    return fetch('/api/roster').then(function (res) {
+      if (!res.ok) throw new Error('load failed');
+      return res.json();
+    }).then(function (body) {
+      var built = buildData(body.records || []);
+      state.data = built;
+    });
+  }
+
+  function savePlacement(id, box) {
+    var payload = {};
+    box.querySelectorAll('[data-f]').forEach(function (el) { payload[el.getAttribute('data-f')] = el.value; });
+    var isNew = id === 'new';
+    fetch(isNew ? '/api/roster' : '/api/roster/' + id, {
+      method: isNew ? 'POST' : 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+    }).then(function (res) {
+      return res.json().then(function (b) { if (!res.ok) throw new Error(b.error || 'Could not save.'); return b; });
+    }).then(function (b) {
+      state.adding = false; state.formError = null; state.error = null;
+      return loadRoster().then(function () {
+        if (isNew && b.record) { state.filters.status = 'All'; state.expandedKey = 'r' + b.record.id; }
+        render();
+      });
+    }).catch(function (err) { state.formError = { id: isNew ? 'new' : Number(id), msg: err.message }; render(); });
   }
 
   function exportCSV(list) {
@@ -842,13 +929,30 @@
       render();
       return;
     }
+    if (e.target.closest('.cl-editor')) { /* handled below */ }
     var row = e.target.closest('[data-row-key]');
-    if (row) {
+    if (row && !e.target.closest('.cl-editor')) {
       var k = row.getAttribute('data-row-key');
       state.expandedKey = (state.expandedKey === k) ? null : k;
       render();
       return;
     }
+    var addBtn = e.target.closest('[data-action="add-placement"]');
+    if (addBtn) { state.adding = true; state.formError = null; render(); window.scrollTo(0, 0); return; }
+    if (e.target.closest('[data-action="cancel-editor"]')) { state.adding = false; state.formError = null; render(); return; }
+    var saveBtn = e.target.closest('[data-action="save-placement"]');
+    if (saveBtn) { savePlacement(saveBtn.getAttribute('data-id'), saveBtn.closest('[data-editor]')); return; }
+    var delBtn = e.target.closest('[data-action="delete-placement"]');
+    if (delBtn) {
+      if (!window.confirm('Delete this placement? Its invoices and history stay, but it disappears from the roster.')) return;
+      fetch('/api/roster/' + delBtn.getAttribute('data-id'), { method: 'DELETE' }).then(function (res) {
+        if (!res.ok) throw new Error('delete failed');
+        state.expandedKey = null; return loadRoster();
+      }).then(render).catch(function () { state.error = 'Could not delete that placement.'; render(); });
+      return;
+    }
+    if (e.target.closest('.cl-editor')) return; // clicks inside the form never toggle rows
+
     var resetBtn = e.target.closest('[data-action="reset-filters"]');
     if (resetBtn) { state.filters = { search: '', status: 'Active', program: 'All', employment: 'All' }; render(); return; }
 
@@ -900,13 +1004,8 @@
     }).then(function (body) {
       if (!body) return;
       auth.user = body.user;
-      return fetch('/api/margin/latest').then(function (res) { return res.ok ? res.json() : { import: null }; });
-    }).then(function (latest) {
-      if (latest && latest.import) {
-        state.data = latest.import.data;
-        state.fileName = latest.import.file_name;
-        state.saveStatus = 'saved';
-      }
+      return loadRoster();
+    }).then(function () {
       render();
     }).catch(function () {
       window.location.href = '/login.html';

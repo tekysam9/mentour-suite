@@ -414,3 +414,6 @@ The UI uses a Workday-style theme: Roboto (self-hosted in `public/fonts`), blue 
 
 ## Consultants on several projects
 A consultant can have any number of client/vendor pairings, each with its own billing and pay rate (Directory > Consultants > Billing > "Paste several projects…", or add one at a time). Re-run `db/schema.sql` once to add the `pay_rate` column.
+
+## Margin runs from the database
+The Margin dashboard reads and edits placements (consultant + client + vendor, billing and pay rates, supplier, recruiter, status) straight from the database via `/api/roster`; no file is needed. "Import from file" is optional and only fills or refreshes placements that came from a file; placements edited in the app are never overwritten. Re-run `db/schema.sql` first (adds placement columns); existing placements are backfilled automatically from the latest Margin file on first load.

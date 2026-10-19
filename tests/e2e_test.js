@@ -378,6 +378,27 @@ async function main() {
       check('bad rate in bulk add is rejected', r.status === 400, r.body);
       for (const a of bulk) await owner.fetch('/api/directory/assignments/' + a.id, { method: 'DELETE' });
 
+      // Margin roster runs from the database: add, edit, close and delete placements without any file.
+      r = await owner.fetch('/api/roster', { method: 'POST', body: JSON.stringify({ name: 'Rob Rosales', client: 'RCA', vendor: 'CDW', employmentType: 'W2 (direct)', billing: 240, cost: 210, joined: 'Oct 2026', recruiter: 'Pat' }) });
+      const robRec = r.body.record;
+      check('roster: add a placement without a file', r.status === 201 && robRec.name === 'Rob Rosales' && robRec.margin === 30 && robRec.program === 'CDW' && robRec.subvendorText === 'W2', r.body);
+      r = await owner.fetch('/api/roster', { method: 'POST', body: JSON.stringify({ name: 'Rob Rosales', client: 'IBM', vendor: 'CDW', billing: 210, cost: 200 }) });
+      check('roster: same consultant, second project', r.status === 201 && r.body.record.consultantId === robRec.consultantId && r.body.record.id !== robRec.id, r.body);
+      r = await owner.fetch('/api/roster');
+      check('roster: lists both placements in the margin record shape', r.status === 200 && r.body.records.filter((x) => x.name === 'Rob Rosales').length === 2 && r.body.records.every((x) => 'margin' in x && 'subvendorText' in x), r.body.records && r.body.records.length);
+      r = await owner.fetch('/api/roster/' + robRec.id, { method: 'PATCH', body: JSON.stringify({ cost: 205, status: 'Left', leftDate: '2026-12-31' }) });
+      check('roster: edit cost and mark left', r.status === 200 && r.body.record.cost === 205 && r.body.record.margin === 35 && r.body.record.status === 'Left' && r.body.record.leftDate === '2026-12-31', r.body);
+      r = await owner.fetch('/api/roster/' + robRec.id, { method: 'PATCH', body: JSON.stringify({ client: 'IBM' }) });
+      check('roster: moving onto an existing client/vendor pairing is refused (409)', r.status === 409, r.body);
+      r = await owner.fetch('/api/roster', { method: 'POST', body: JSON.stringify({ name: 'X', client: 'Y', billing: 'abc' }) });
+      check('roster: bad rate rejected', r.status === 400, r.body);
+      r = await otherOrgUser.fetch('/api/roster/' + robRec.id, { method: 'PATCH', body: JSON.stringify({ cost: 1 }) });
+      check('roster: cross-tenant edit blocked (404)', r.status === 404, r.status);
+      r = await owner.fetch('/api/roster');
+      check('roster: another organization does not see these placements', (await otherOrgUser.fetch('/api/roster')).body.records.every((x) => x.name !== 'Rob Rosales'), 1);
+      r = await owner.fetch('/api/roster/' + robRec.id, { method: 'DELETE' });
+      check('roster: delete a placement', r.status === 200, r.body);
+
       // 22. Editing a consultant's contact details persists...
       r = await owner.fetch('/api/directory/consultants/' + jordanRecord.id, {
         method: 'PATCH', body: JSON.stringify({ email: 'jordan@acme.test', phone: '555-0100', address: '1 Acme Way' }),
