@@ -2322,6 +2322,22 @@ async function main() {
       await indJar.fetch('/api/roster/' + rcaRec.id, { method: 'PATCH', body: JSON.stringify({ status: 'Left', leftDate: '2026-11-30' }) });
       r = await indJar.fetch('/api/subvendor-invoices/generate', { method: 'POST', body: JSON.stringify({ periodMonth: '2026-12' }) });
       check('a placement marked Left stops being generated', r.status === 201 && r.body.created.length === 2, r.body);
+
+      // 46. Same consultant, different vendor on each project (and one client reached through two vendors).
+      const mvJar = makeJar();
+      r = await mvJar.fetch('/api/auth/signup', { method: 'POST', body: JSON.stringify({ orgName: 'Many Vendors Co', name: 'Mv Owner', email: 'mv@mvtest.test', password: 'manyvendorspass1' }) });
+      check('many-vendors org signup returns 201', r.status === 201, r);
+      for (const [client, vendor, bill] of [['Delta', 'Insight', 100], ['Epsilon', 'Softchoice', 110], ['Delta', 'SHI', 120], ['Zeta', '', 130]]) {
+        r = await mvJar.fetch('/api/roster', { method: 'POST', body: JSON.stringify({ name: 'Rob Rosales', client, vendor, billing: bill, cost: 80 }) });
+        if (r.status !== 201) check('placement ' + client + '/' + vendor + ' created', false, r.body);
+      }
+      r = await mvJar.fetch('/api/roster');
+      const mvRows = r.body.records.filter((x) => x.name === 'Rob Rosales');
+      check('one consultant holds four placements with different vendors (and one with none)',
+        mvRows.length === 4 && new Set(mvRows.map((x) => x.consultantId)).size === 1 && ['Insight', 'Softchoice', 'SHI', '(unspecified)'].every((v) => mvRows.some((x) => x.program === v)), mvRows.map((x) => x.client + '/' + x.program));
+      r = await mvJar.fetch('/api/invoices/generate', { method: 'POST', body: JSON.stringify({ periodMonth: '2026-09' }) });
+      check('each project invoices to its own vendor (client when it has none)',
+        r.status === 201 && r.body.created.length === 4 && ['Insight', 'Softchoice', 'SHI', 'Zeta'].every((n) => r.body.created.some((i) => i.bill_to_name === n)), r.body.created && r.body.created.map((i) => i.bill_to_name));
     } finally {
       await dbConn.end();
     }
