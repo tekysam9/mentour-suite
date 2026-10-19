@@ -2293,6 +2293,28 @@ async function main() {
       r = await pfOwner.fetch('/api/onboarding/people/' + ronRow.id, { method: 'PUT', body: JSON.stringify({ role: 'member' }) });
       r = await ron.fetch('/api/directory/consultants');
       check('a team member (not recruiter) regains full access', r.status === 200, r.status);
+
+      // 45. Independent of files: placements entered in the app drive supplier payments, one line per project.
+      const indJar = makeJar();
+      r = await indJar.fetch('/api/auth/signup', { method: 'POST', body: JSON.stringify({ orgName: 'No Files Co', name: 'Ind Owner', email: 'ind@indtest.test', password: 'independentpass1' }) });
+      check('no-files org signup returns 201', r.status === 201, r);
+      for (const [client, bill, pay] of [['RCA', 240, 210], ['IBM', 210, 200], ['Cisco', 260, 250]]) {
+        r = await indJar.fetch('/api/roster', { method: 'POST', body: JSON.stringify({ name: 'Rob Rosales', client, vendor: 'CDW', employmentType: 'Subvendor', supplier: 'Rosales Consulting LLC', billing: bill, cost: pay }) });
+        if (r.status !== 201) check('placement ' + client + ' created', false, r.body);
+      }
+      r = await indJar.fetch('/api/subvendor-invoices/generate', { method: 'POST', body: JSON.stringify({ periodMonth: '2026-11' }) });
+      check('supplier payments generate with no Ledger or Margin file: one line per project', r.status === 201 && r.body.created.length === 3, r.body);
+      r = await indJar.fetch('/api/subvendor-invoices?periodMonth=2026-11');
+      const robLines = (r.body.invoices || []).filter((i) => i.consultant_name === 'Rob Rosales');
+      check('each project line uses that placement’s own pay rate', robLines.length === 3 && [200, 210, 250].every((x) => robLines.some((i) => i.rate === x)) && robLines.every((i) => i.rate_source === 'placement' && i.project), robLines);
+      r = await indJar.fetch('/api/subvendor-invoices/generate', { method: 'POST', body: JSON.stringify({ periodMonth: '2026-11' }) });
+      check('re-running supplier generation does not duplicate lines', r.status === 201 && r.body.created.length === 0, r.body);
+      r = await indJar.fetch('/api/invoices/generate', { method: 'POST', body: JSON.stringify({ periodMonth: '2026-11' }) });
+      check('client invoices generate with no file: one per project at its billing rate', r.status === 201 && r.body.created.length === 3 && [210, 240, 260].every((x) => r.body.created.some((i) => Number(i.rate) === x)), r.body);
+      const rcaRec = (await indJar.fetch('/api/roster')).body.records.find((x) => x.client === 'RCA');
+      await indJar.fetch('/api/roster/' + rcaRec.id, { method: 'PATCH', body: JSON.stringify({ status: 'Left', leftDate: '2026-11-30' }) });
+      r = await indJar.fetch('/api/subvendor-invoices/generate', { method: 'POST', body: JSON.stringify({ periodMonth: '2026-12' }) });
+      check('a placement marked Left stops being generated', r.status === 201 && r.body.created.length === 2, r.body);
     } finally {
       await dbConn.end();
     }

@@ -614,3 +614,13 @@ ALTER TABLE consultant_assignments ADD COLUMN IF NOT EXISTS recruiter VARCHAR(25
 ALTER TABLE consultant_assignments ADD COLUMN IF NOT EXISTS joined_text VARCHAR(64) NULL;
 ALTER TABLE consultant_assignments ADD COLUMN IF NOT EXISTS left_text VARCHAR(255) NULL;
 ALTER TABLE consultant_assignments ADD CONSTRAINT fk_assignment_supplier FOREIGN KEY IF NOT EXISTS (supplier_id) REFERENCES subvendors(id) ON DELETE SET NULL;
+
+-- Supplier payments follow placements: one payment per (supplier, consultant, month,
+-- placement), so a consultant on several projects through one supplier gets a line per
+-- project, each at that placement's pay rate. assignment_key is 0 for lines not tied to a
+-- placement (file rows, older entries) and the assignment id otherwise.
+ALTER TABLE subvendor_invoices MODIFY rate_source ENUM('ledger', 'margin', 'hours_file', 'manual', 'placement') NOT NULL;
+ALTER TABLE subvendor_invoices ADD COLUMN IF NOT EXISTS assignment_id INT NULL;
+ALTER TABLE subvendor_invoices ADD COLUMN IF NOT EXISTS assignment_key INT NOT NULL DEFAULT 0;
+ALTER TABLE subvendor_invoices DROP INDEX IF EXISTS uq_subvendor_invoice;
+ALTER TABLE subvendor_invoices ADD UNIQUE KEY IF NOT EXISTS uq_subvendor_invoice_a (organization_id, subvendor_id, consultant_id, period_month, assignment_key);

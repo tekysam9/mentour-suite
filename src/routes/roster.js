@@ -66,6 +66,13 @@ async function backfillFromLatestImport(orgId) {
   await pool.query(`UPDATE consultant_assignments SET employment_type = 'Unspecified' WHERE organization_id = ? AND employment_type IS NULL`, [orgId]);
 }
 
+// A consultant is Active while at least one placement is; Inactive once all are marked Left.
+async function syncConsultantStatus(conn, consultantId) {
+  await conn.query(
+    `UPDATE consultants c SET c.status = IF(EXISTS (SELECT 1 FROM consultant_assignments a WHERE a.consultant_id = c.id AND a.status = 'active'), 'active', 'inactive')
+     WHERE c.id = ?`, [consultantId]);
+}
+
 async function loadOne(id, orgId) {
   const [rows] = await pool.query(`${SELECT} WHERE a.id = ? AND a.organization_id = ?`, [id, orgId]);
   return rows[0] ? toRecord(rows[0]) : null;
@@ -130,6 +137,7 @@ router.post('/', async (req, res, next) => {
       billing: f.billing, payRate: f.cost, source: 'manual', status: f.status, leftDate: f.status === 'left' ? f.leftDate : null });
     await conn.query(`UPDATE consultant_assignments SET employment_type = ?, supplier_id = ?, recruiter = ?, joined_text = ?, left_text = ? WHERE id = ?`,
       [f.employmentType, refs.supplierId, f.recruiter, f.joined, f.status === 'left' ? f.leftText : null, id]);
+    await syncConsultantStatus(conn, consultantId);
     await conn.commit();
     res.status(201).json({ record: await loadOne(id, orgId) });
   } catch (err) { try { await conn.rollback(); } catch (_) { /* no-op */ } next(err); } finally { conn.release(); }
@@ -161,6 +169,7 @@ router.patch('/:id', async (req, res, next) => {
     } else if (f.leftDate !== undefined) { sets.push('left_date = ?'); params.push(f.leftDate); }
     sets.push("source = 'manual'");
     await conn.query(`UPDATE consultant_assignments SET ${sets.join(', ')} WHERE id = ?`, [...params, current.id]);
+    await syncConsultantStatus(conn, current.consultant_id);
     await conn.commit();
     res.json({ record: await loadOne(current.id, orgId) });
   } catch (err) { try { await conn.rollback(); } catch (_) { /* no-op */ } next(err); } finally { conn.release(); }
@@ -168,8 +177,10 @@ router.patch('/:id', async (req, res, next) => {
 
 router.delete('/:id', async (req, res, next) => {
   try {
+    const [cur] = await pool.query('SELECT consultant_id FROM consultant_assignments WHERE id = ? AND organization_id = ?', [req.params.id, req.user.organization_id]);
     const [r] = await pool.query('DELETE FROM consultant_assignments WHERE id = ? AND organization_id = ?', [req.params.id, req.user.organization_id]);
     if (!r.affectedRows) return res.status(404).json({ error: 'Not found.' });
+    if (cur.length) await syncConsultantStatus(pool, cur[0].consultant_id);
     res.json({ ok: true });
   } catch (err) { next(err); }
 });

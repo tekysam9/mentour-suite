@@ -530,7 +530,7 @@
         '<td><select class="fin-select-input" data-svfield="subvendorId" aria-label="Supplier company">' +
           suppliers.map(function (x) { return '<option value="' + x.id + '"' + (x.id === inv.subvendor_id ? ' selected' : '') + '>' + escapeHtml(x.name) + '</option>'; }).join('') +
         '</select></td>' +
-        '<td>' + escapeHtml(inv.consultant_name) + '</td>' +
+        '<td>' + escapeHtml(inv.consultant_name) + (inv.project ? '<div style="font-size:11.5px;color:var(--text-muted)">' + escapeHtml(inv.project) + '</div>' : '') + '</td>' +
         '<td><input class="fin-date-input" type="month" data-svfield="periodMonth" value="' + escapeHtml(String(inv.period_month).slice(0, 7)) + '" aria-label="Month"></td>' +
         '<td><input class="fin-num-input" type="number" step="0.01" min="0" data-svfield="rate" value="' + (inv.rate !== null && inv.rate !== undefined ? inv.rate : '') + '" aria-label="Rate per hour"></td>';
     }
@@ -612,7 +612,7 @@
     if (!sv.invoices.length) {
       return '<div class="fin-empty-state">' + (sv.ledgerFile
         ? 'No supplier payments match this filter.'
-        : 'No Ledger file uploaded yet — upload your supplier payments workbook in Ledger and the paid months will appear here.') + '</div>';
+        : 'No supplier payments yet. Generate them for a month (from each placement\u2019s supplier and pay rate) or add one by hand.') + '</div>';
     }
     var total = sv.invoices.reduce(function (t, i) { return t + (Number(i.amount) || 0); }, 0);
     return (
@@ -650,7 +650,7 @@
     var sv = state.sv, gf = sv.generateForm;
     var file = sv.ledgerFile
       ? 'Paid months come from <strong>' + escapeHtml(sv.ledgerFile.file_name) + '</strong> (uploaded ' + escapeHtml(fmtDate(sv.ledgerFile.imported_at)) + ').'
-      : 'No Ledger file uploaded yet.';
+      : '';
     var unread = (sv.unreadable && sv.unreadable.length)
       ? '<div class="fin-readonly-note">' + sv.unreadable.length + ' payment row(s) have no month/year in the label and are not listed as invoices: ' +
         sv.unreadable.slice(0, 8).map(function (u) { return escapeHtml((u.subvendor || '') + (u.label ? '/' + u.label : '') + ' — ' + (u.consultant || '')); }).join('; ') +
@@ -658,7 +658,7 @@
       : '';
     return (
       '<h2 class="fin-subtitle">Supplier payments.</h2>' +
-      '<p class="fin-copy">What each subvendor invoices Mentour for each consultant, month by month. Months already paid are read straight from your supplier payments file (the month is the hours month in the label plus the Year column; unpaid red rows are left out) and can be edited right in the row (it keeps a copy that replaces the file’s row; Revert brings the file’s row back). For every month after a consultant’s last month on the file, generate invoices at each consultant’s rate on the Ledger file — or, if Ledger has none, the cost rate on the Gross Margin file — then enter the actual hours (amount recalculates) and track NET terms, payment and timesheet just like client invoices. ' + file + '</p>' +
+      '<p class="fin-copy">What each subvendor invoices Mentour for each consultant, month by month. Months already paid are read straight from your supplier payments file (the month is the hours month in the label plus the Year column; unpaid red rows are left out) and can be edited right in the row (it keeps a copy that replaces the file’s row; Revert brings the file’s row back). Generate each month’s invoices from your placements (Margin / Directory): one per active placement that has a supplier and a pay rate, at that placement’s pay rate — then enter the actual hours (amount recalculates) and track NET terms, payment and timesheet just like client invoices. ' + file + '</p>' +
       unread +
       '<div class="fin-readonly-note">Every field on a supplier payment can be changed: supplier, month, rate, hours, amount, dates, payment and notes. Just type in any cell, like on Client invoices — it saves as you go. Rows from your payments file keep an editable copy the first time you change them (Revert on that row restores the original). Changing the rate re-prices the hours.</div>' +
       svAddForm() +

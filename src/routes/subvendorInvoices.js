@@ -132,7 +132,7 @@ async function ledgerMonthlyRecords(conn, organizationId) {
 
   const [rows] = await conn.query(
     `SELECT l.id, l.consultant_id, l.subvendor_id, l.name, l.subvendor_text, l.month_label,
-            l.period_text, l.year_text, l.unpaid, l.amount, l.rate, l.hours, l.paid_date,
+            l.period_text, l.year_text, l.client_tag, l.unpaid, l.amount, l.rate, l.hours, l.paid_date,
             c.name AS consultant_name, c.status AS consultant_status, s.name AS subvendor_name
      FROM ledger_roster_entries l
      LEFT JOIN consultants c ON c.id = l.consultant_id
@@ -160,7 +160,7 @@ async function ledgerMonthlyRecords(conn, organizationId) {
       paid_in: r.month_label, label: r.period_text,
       subvendor_id: r.subvendor_id, subvendor_name: r.subvendor_name || r.subvendor_text || '(unspecified)',
       consultant_id: r.consultant_id, consultant_name: r.consultant_name || r.name,
-      consultant_status: r.consultant_status,
+      consultant_status: r.consultant_status, client_tag: r.client_tag,
       rate: r.rate === null ? null : Number(r.rate),
       hours: r.hours === null ? null : Number(r.hours),
       amount: r.amount === null ? null : Number(r.amount),
@@ -192,6 +192,7 @@ function paidInvoice(rec) {
     consultant_id: rec.consultant_id, consultant_name: rec.consultant_name,
     rate: rec.rate, hours: rec.hours, amount: rec.amount,
     rate_source: 'ledger', net_terms: null, issue_date: null, due_date: null,
+    client_tag: rec.client_tag || null, project: null,
     paid_date: rec.paid_date, status: 'paid', payment_status: 'paid', timesheet_submitted: null, notes: null,
   };
 }
@@ -215,10 +216,14 @@ router.get('/', async (req, res, next) => {
       .map((r) => r.subvendor_id + '|' + r.consultant_id + '|' + r.period_month));
 
     const [genRows] = await pool.query(
-      `SELECT i.*, c.name AS consultant_name, c.status AS consultant_status, s.name AS subvendor_name
+      `SELECT i.*, c.name AS consultant_name, c.status AS consultant_status, s.name AS subvendor_name,
+              cl.name AS project_client, pr.name AS project_vendor
        FROM subvendor_invoices i
        JOIN consultants c ON c.id = i.consultant_id
        JOIN subvendors s ON s.id = i.subvendor_id
+       LEFT JOIN consultant_assignments ca ON ca.id = i.assignment_id
+       LEFT JOIN clients cl ON cl.id = ca.client_id
+       LEFT JOIN programs pr ON pr.id = ca.program_id
        WHERE i.organization_id = ?`,
       [organizationId]
     );
@@ -240,6 +245,8 @@ router.get('/', async (req, res, next) => {
         paid_date: g.paid_date ? dateStr(g.paid_date) : null, overrides_ledger: !!g.overrides_ledger,
         status: g.payment_status, payment_status: g.payment_status,
         timesheet_submitted: g.timesheet_submitted, notes: g.notes,
+        assignment_id: g.assignment_id, project: g.project_client ? (g.project_vendor ? g.project_client + ' / ' + g.project_vendor : g.project_client) : null,
+        client_tag: g.project_client || null,
       }))
       .filter((g) => g.overrides_ledger || !paidKeys.has(keyOf(g.subvendor_id, g.consultant_id, g.period_month)));
 
@@ -295,9 +302,6 @@ router.post('/generate', async (req, res, next) => {
     // pairing key -> { subvendor_id, consultant_id, rate, source, ratePeriod }
     const pairs = new Map();
     const { records } = await ledgerMonthlyRecords(conn, organizationId);
-    if (!records.length) {
-      return res.status(400).json({ error: 'Upload your sub vendor payments file in Ledger first — invoices are generated for the months after each consultant\u2019s last month on it.' });
-    }
     const lastByPair = pairLastMonths(records);
     for (const r of records) {
       if (!r.subvendor_id || !r.consultant_id) continue;
@@ -322,7 +326,26 @@ router.post('/generate', async (req, res, next) => {
       }
     }
 
-    const ids = [...pairs.values()];
+    // Placements are the source of truth: every active placement with a supplier and a pay rate gets
+    // its own line each month at that placement's pay rate (a consultant on several projects through
+    // one supplier gets one line per project). Older file-derived pairs only fill in for pairs that
+    // have no placement.
+    const [placementRows] = await conn.query(
+      `SELECT a.id, a.consultant_id, a.supplier_id, a.pay_rate, a.source FROM consultant_assignments a
+       WHERE a.organization_id = ? AND a.supplier_id IS NOT NULL AND a.pay_rate IS NOT NULL AND a.status = 'active'`, [organizationId]);
+    const placementPairKeys = new Set(placementRows.map((a) => a.supplier_id + '|' + a.consultant_id));
+    // A placement a person entered or edited in the app uses its own pay rate. A placement seeded from a
+    // file keeps using the pair's latest Ledger rate when there is one (the file's newer rate wins over
+    // the Margin cost), else its pay rate.
+    const placementEntries = placementRows.map((a) => {
+      const legacy = pairs.get(a.supplier_id + '|' + a.consultant_id);
+      if (a.source !== 'manual' && legacy && legacy.source === 'ledger' && legacy.rate !== null) {
+        return { subvendor_id: a.supplier_id, consultant_id: a.consultant_id, rate: legacy.rate, source: 'ledger', assignmentId: a.id };
+      }
+      return { subvendor_id: a.supplier_id, consultant_id: a.consultant_id, rate: Number(a.pay_rate), source: a.source === 'manual' ? 'placement' : 'margin', assignmentId: a.id };
+    });
+    for (const k of [...pairs.keys()]) if (placementPairKeys.has(k)) pairs.delete(k);
+    const ids = [...pairs.values()].map((x) => Object.assign({ assignmentId: 0 }, x)).concat(placementEntries);
     const names = { c: new Map(), s: new Map() };
     if (ids.length) {
       const [cRows] = await conn.query('SELECT id, name, status FROM consultants WHERE organization_id = ? AND id IN (?)', [organizationId, [...new Set(ids.map((p) => p.consultant_id))]]);
@@ -348,12 +371,13 @@ router.post('/generate', async (req, res, next) => {
         continue;
       }
       if (p.rate === null) {
-        skipped.push({ consultant: label, reason: 'no rate on the Ledger or Margin file' });
+        skipped.push({ consultant: label, reason: 'no pay rate set' });
         continue;
       }
       const [existing] = await conn.query(
-        `SELECT id FROM subvendor_invoices WHERE organization_id = ? AND subvendor_id = ? AND consultant_id = ? AND period_month = ?`,
-        [organizationId, p.subvendor_id, p.consultant_id, periodMonth]
+        `SELECT id FROM subvendor_invoices WHERE organization_id = ? AND subvendor_id = ? AND consultant_id = ? AND period_month = ?
+           AND (assignment_key = ? OR assignment_key = 0)`,
+        [organizationId, p.subvendor_id, p.consultant_id, periodMonth, p.assignmentId]
       );
       if (existing.length) {
         skipped.push({ consultant: label, reason: 'already generated for this month' });
@@ -363,9 +387,9 @@ router.post('/generate', async (req, res, next) => {
       const [result] = await conn.query(
         `INSERT INTO subvendor_invoices
            (organization_id, invoice_number, subvendor_id, consultant_id, period_month, rate, hours, amount,
-            rate_source, net_terms, issue_date, due_date)
-         VALUES (?, '', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [organizationId, p.subvendor_id, p.consultant_id, periodMonth, p.rate, billable.hours, amount, p.source, netTerms, issueDate, dueDate]
+            rate_source, net_terms, issue_date, due_date, assignment_id, assignment_key)
+         VALUES (?, '', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [organizationId, p.subvendor_id, p.consultant_id, periodMonth, p.rate, billable.hours, amount, p.source, netTerms, issueDate, dueDate, p.assignmentId || null, p.assignmentId]
       );
       await conn.query('UPDATE subvendor_invoices SET invoice_number = ? WHERE id = ?',
         ['SVI-' + periodMonth.slice(0, 7).replace('-', '') + '-' + String(result.insertId).padStart(5, '0'), result.insertId]);
@@ -517,14 +541,20 @@ router.post('/', async (req, res, next) => {
     if (!sv.length) return res.status(400).json({ error: 'Choose a supplier company.' });
     const [co] = await pool.query('SELECT id FROM consultants WHERE id = ? AND organization_id = ?', [b.consultantId, orgId]);
     if (!co.length) return res.status(400).json({ error: 'Choose a consultant.' });
+    let assignmentId = 0;
+    if (b.assignmentId) {
+      const [as] = await pool.query('SELECT id FROM consultant_assignments WHERE id = ? AND organization_id = ? AND consultant_id = ?', [b.assignmentId, orgId, co[0].id]);
+      if (!as.length) return res.status(400).json({ error: 'That project isn’t one of this consultant’s placements.' });
+      assignmentId = as[0].id;
+    }
     let result;
     try {
       [result] = await pool.query(
         `INSERT INTO subvendor_invoices (organization_id, invoice_number, subvendor_id, consultant_id, period_month, rate, hours, amount,
-           rate_source, net_terms, issue_date, due_date, payment_status, paid_date, notes)
-         VALUES (?, '', ?, ?, ?, ?, ?, ?, 'manual', ?, ?, ?, ?, ?, ?)`,
+           rate_source, net_terms, issue_date, due_date, payment_status, paid_date, notes, assignment_id, assignment_key)
+         VALUES (?, '', ?, ?, ?, ?, ?, ?, 'manual', ?, ?, ?, ?, ?, ?, ?, ?)`,
         [orgId, sv[0].id, co[0].id, periodMonth, rate, hours, amount, netTerms, issueDate, dueDate, status,
-          status === 'paid' ? toDateOnly(new Date()) : null, b.notes ? String(b.notes).slice(0, 1000) : null]);
+          status === 'paid' ? toDateOnly(new Date()) : null, b.notes ? String(b.notes).slice(0, 1000) : null, assignmentId || null, assignmentId]);
     } catch (err) {
       if (err && err.code === 'ER_DUP_ENTRY') return res.status(409).json({ error: 'A payment for that supplier, consultant and month already exists. Edit it instead.' });
       throw err;
