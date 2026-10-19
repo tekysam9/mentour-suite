@@ -371,6 +371,9 @@ async function main() {
         ciscoA && Number(ciscoA.billing) === 260 && Number(ciscoA.pay_rate) === 250, bulk);
       r = await owner.fetch('/api/directory/assignments/' + rcaA.id, { method: 'PATCH', body: JSON.stringify({ pay_rate: 215 }) });
       check('editing pay rate leaves billing alone', Number(r.body.assignment.pay_rate) === 215 && Number(r.body.assignment.billing) === 240, r.body);
+      r = await owner.fetch('/api/directory/consultants/' + jordanRecord.id + '/assignments/bulk', { method: 'POST', body: JSON.stringify({ rows: [{ client: 'Texas, State of', vendor: 'New Vendor, Inc', billing: '77', pay_rate: '60' }] }) });
+      check('add-form row creates a new client and a new vendor under it (names may contain commas)',
+        r.status === 201 && (r.body.assignments || []).some((a) => a.client_name === 'Texas, State of' && a.program_name === 'New Vendor, Inc' && Number(a.billing) === 77 && Number(a.pay_rate) === 60), r.body);
       r = await owner.fetch('/api/directory/consultants/' + jordanRecord.id + '/assignments/bulk', { method: 'POST', body: JSON.stringify({ text: 'IBM, CDW, 215, 205' }) });
       const ibm = (r.body.assignments || []).filter((a) => a.client_name === 'IBM');
       check('re-adding an existing pairing updates it instead of duplicating', ibm.length === 1 && Number(ibm[0].billing) === 215 && Number(ibm[0].pay_rate) === 205, r.body);

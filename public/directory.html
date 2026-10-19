@@ -424,26 +424,20 @@
   function renderAssignAddRow(consultantId) {
     var clients = state.cache.clients || [];
     var programs = state.cache.programs || [];
-    if (!clients.length && !programs.length) {
-      return '<div class="dir-assign-empty">Loading clients…</div>';
-    }
-    var options = '<option value="">— choose a client or vendor —</option>';
-    if (clients.length) {
-      options += '<optgroup label="Client only">' + clients.map(function (c) {
-        return '<option value="client:' + c.id + '">' + escapeHtml(c.name) + '</option>';
-      }).join('') + '</optgroup>';
-    }
-    if (programs.length) {
-      options += '<optgroup label="Client / Vendor">' + programs.map(function (p) {
-        return '<option value="program:' + p.id + '">' + escapeHtml(p.client_name) + ' / ' + escapeHtml(p.name) + '</option>';
-      }).join('') + '</optgroup>';
-    }
-    return renderBulkAdd(consultantId) + '<div class="dir-row-actions dir-assign-add-row" style="margin-top:8px">' +
-      '<select data-role="new-assignment-target">' + options + '</select>' +
-      '<input type="number" step="0.01" placeholder="Billing $/hr" data-role="new-assignment-billing" style="width:110px">' +
-      '<input type="number" step="0.01" placeholder="Pay rate $/hr" data-role="new-assignment-pay" style="width:120px">' +
-      '<button class="dir-btn dir-btn-small dir-btn-primary" data-action="assign-add" data-consultant-id="' + consultantId + '">+ Add</button>' +
-    '</div>';
+    var vendorNames = {};
+    programs.forEach(function (p) { vendorNames[p.name] = 1; });
+    return renderBulkAdd(consultantId) +
+      '<div class="dir-assign-add-wrap" style="margin-top:10px">' +
+      '<div class="dir-assign-empty" style="padding:0 0 6px">Add a billing pairing. <b>Vendor</b> is who the invoice is billed to (e.g. CDW); <b>Client</b> is the end client (e.g. RCA). Pick an existing one or type a new name. With no vendor, the invoice goes to the client.</div>' +
+      '<div class="dir-row-actions dir-assign-add-row">' +
+        '<datalist id="dl-asg-clients">' + clients.map(function (c) { return '<option value="' + escapeHtml(c.name) + '">'; }).join('') + '</datalist>' +
+        '<datalist id="dl-asg-vendors">' + Object.keys(vendorNames).sort().map(function (n) { return '<option value="' + escapeHtml(n) + '">'; }).join('') + '</datalist>' +
+        '<input list="dl-asg-clients" placeholder="Client *" data-role="new-assignment-client" style="width:170px">' +
+        '<input list="dl-asg-vendors" placeholder="Vendor (bill-to)" data-role="new-assignment-vendor" style="width:170px">' +
+        '<input type="number" step="0.01" placeholder="Billing $/hr" data-role="new-assignment-billing" style="width:110px">' +
+        '<input type="number" step="0.01" placeholder="Pay rate $/hr" data-role="new-assignment-pay" style="width:120px">' +
+        '<button class="dir-btn dir-btn-small dir-btn-primary" data-action="assign-add" data-consultant-id="' + consultantId + '">+ Add</button>' +
+      '</div></div>';
   }
 
   function renderAssignmentsPanel(tab, consultant) {
@@ -850,39 +844,26 @@
     var assignAddBtn = e.target.closest('[data-action="assign-add"]');
     if (assignAddBtn) {
       var addConsultantId = assignAddBtn.getAttribute('data-consultant-id');
-      var wrap = assignAddBtn.closest('.dir-assign-add-row');
-      var targetSelect = wrap.querySelector('[data-role="new-assignment-target"]');
-      var billingInput = wrap.querySelector('[data-role="new-assignment-billing"]');
-      var targetVal = targetSelect ? targetSelect.value : '';
-      if (!targetVal) return;
-      var payInputNew = wrap.querySelector('[data-role="new-assignment-pay"]');
-      var payload = { billing: billingInput ? billingInput.value : '', pay_rate: payInputNew ? payInputNew.value : '' };
-      if (targetVal.indexOf('client:') === 0) {
-        payload.client_id = Number(targetVal.slice(7));
-      } else if (targetVal.indexOf('program:') === 0) {
-        var programId = Number(targetVal.slice(8));
-        payload.program_id = programId;
-        var prog = (state.cache.programs || []).find(function (p) { return p.id === programId; });
-        if (prog) payload.client_id = prog.client_id;
-      }
-      fetch('/api/directory/consultants/' + addConsultantId + '/assignments', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+      var wrap = assignAddBtn.closest('.dir-assign-add-wrap');
+      function val(role) { var el = wrap.querySelector('[data-role="' + role + '"]'); return el ? el.value.trim() : ''; }
+      var clientName = val('new-assignment-client');
+      if (!clientName) { state.assignmentStatus = 'error'; window.alert('Enter the client.'); return; }
+      fetch('/api/directory/consultants/' + addConsultantId + '/assignments/bulk', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ rows: [{ client: clientName, vendor: val('new-assignment-vendor'), billing: val('new-assignment-billing'), pay_rate: val('new-assignment-pay') }] }),
       }).then(function (res) {
-        if (!res.ok) throw new Error('add failed');
-        return res.json();
+        return res.json().then(function (b) { if (!res.ok) throw new Error(b.error || 'add failed'); return b; });
       }).then(function (body) {
-        var list = state.assignments[addConsultantId] || [];
-        list.push(body.assignment);
-        state.assignments[addConsultantId] = list;
-        var consultantList = state.cache.consultants || [];
-        var cRec = consultantList.find(function (c) { return c.id === Number(addConsultantId); });
-        if (cRec) {
-          cRec.assignment_count = list.length;
-          cRec.assignments = list;
-        }
-        render();
-      }).catch(function () {
+        var cid = Number(addConsultantId);
+        state.assignments[cid] = body.assignments;
+        var cRec = (state.cache.consultants || []).find(function (c) { return c.id === cid; });
+        if (cRec) { cRec.assignment_count = body.assignments.length; cRec.assignments = body.assignments; }
+        // New clients/vendors may have been created: refresh the pick lists.
+        delete state.cache.clients; delete state.cache.programs;
+        return new Promise(function (resolve) { ensureClientsAndProgramsLoaded(resolve); });
+      }).then(render).catch(function (err) {
         state.assignmentStatus = 'error';
+        window.alert(err.message);
         render();
       });
     }

@@ -14,7 +14,7 @@ const pool = require('../db');
 const { requireAuth } = require('../auth');
 const { TABLES: DIRECTORY_TABLES } = require('./directoryDedup');
 const { upsertAssignmentBilling } = require('./assignmentUpsert');
-const { findOrCreateDirectoryRecord } = require('./directoryUpsert');
+const { findOrCreateDirectoryRecord, normalizeName } = require('./directoryUpsert');
 const { aliasKey, splitClientText, isMissingTable, SCHEMA_NEEDED_MESSAGE } = require('./clientAliases');
 
 // Profile form data follows the surviving record when two records are merged:
@@ -330,6 +330,13 @@ router.post('/consultants/:id/assignments/bulk', async (req, res, next) => {
     const money = (v) => { const n = Number(String(v === undefined ? '' : v).replace(/[$,\s]/g, '')); return String(v || '').trim() === '' ? null : n; };
     const lines = String((req.body && req.body.text) || '').split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
     const rows = [];
+    // Structured rows (the add form sends these, so names may contain commas).
+    for (const x of Array.isArray(req.body && req.body.rows) ? req.body.rows : []) {
+      const client = normalizeName(x && x.client); if (!client) continue;
+      const billing = money(x.billing); const payRate = money(x.pay_rate);
+      if ((billing !== null && !Number.isFinite(billing)) || (payRate !== null && !Number.isFinite(payRate))) return res.status(400).json({ error: 'Billing and pay rate must be numbers.' });
+      rows.push({ client, vendor: normalizeName(x.vendor) || '', billing, payRate });
+    }
     for (const line of lines) {
       const cells = (line.includes('\t') ? line.split('\t') : line.split(',')).map((c) => c.trim().replace(/^\d+[.)]\s+/, ''));
       if (/^client$/i.test(cells[0])) continue; // header
