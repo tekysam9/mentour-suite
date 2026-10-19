@@ -2309,6 +2309,10 @@ async function main() {
       check('each project line uses that placement’s own pay rate', robLines.length === 3 && [200, 210, 250].every((x) => robLines.some((i) => i.rate === x)) && robLines.every((i) => i.rate_source === 'placement' && i.project), robLines);
       r = await indJar.fetch('/api/subvendor-invoices/generate', { method: 'POST', body: JSON.stringify({ periodMonth: '2026-11' }) });
       check('re-running supplier generation does not duplicate lines', r.status === 201 && r.body.created.length === 0, r.body);
+      r = await indJar.fetch('/api/subvendor-invoices', { method: 'POST', body: JSON.stringify({ consultantName: 'Sue Typed', subvendorName: 'Typed Supplies Inc', periodMonth: '2026-10', rate: 100, hours: 10, paymentStatus: 'paid' }) });
+      check('supplier payment can be added by typing names (consultant and supplier created)', r.status === 201, r.body);
+      r = await indJar.fetch('/api/subvendor-invoices?periodMonth=2026-10');
+      check('the typed payment is listed as paid, $1000', (r.body.invoices || []).some((i) => i.consultant_name === 'Sue Typed' && i.amount === 1000 && i.payment_status === 'paid'), r.body);
       r = await indJar.fetch('/api/invoices/generate', { method: 'POST', body: JSON.stringify({ periodMonth: '2026-11' }) });
       check('client invoices generate with no file: one per project at its billing rate', r.status === 201 && r.body.created.length === 3 && [210, 240, 260].every((x) => r.body.created.some((i) => Number(i.rate) === x)), r.body);
       const rcaRec = (await indJar.fetch('/api/roster')).body.records.find((x) => x.client === 'RCA');

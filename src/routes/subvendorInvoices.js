@@ -27,6 +27,7 @@ const pool = require('../db');
 const { requireAuth } = require('../auth');
 const { maxBillableHours } = require('./invoices');
 
+const { findOrCreateDirectoryRecord } = require('./directoryUpsert');
 const router = express.Router();
 router.use(requireAuth);
 
@@ -537,9 +538,13 @@ router.post('/', async (req, res, next) => {
     const issueDate = /^\d{4}-\d{2}-\d{2}$/.test(String(b.issueDate || '')) ? b.issueDate : lastDayOfMonth(periodMonth);
     const dueDate = /^\d{4}-\d{2}-\d{2}$/.test(String(b.dueDate || '')) ? b.dueDate : addDays(issueDate, Number(netTerms.slice(3)));
     const status = b.paymentStatus === 'paid' ? 'paid' : 'unpaid';
-    const [sv] = await pool.query('SELECT id FROM subvendors WHERE id = ? AND organization_id = ?', [b.subvendorId, orgId]);
+    // Names work too (the Ledger page types them): found by exact name, created when new.
+    let svId = b.subvendorId; let coId = b.consultantId;
+    if (!svId && b.subvendorName) { const r = await findOrCreateDirectoryRecord(pool, 'subvendors', { organizationId: orgId, name: b.subvendorName, status: 'active' }); svId = r && r.id; }
+    if (!coId && b.consultantName) { const r = await findOrCreateDirectoryRecord(pool, 'consultants', { organizationId: orgId, name: b.consultantName, status: 'active' }); coId = r && r.id; }
+    const [sv] = await pool.query('SELECT id FROM subvendors WHERE id = ? AND organization_id = ?', [svId, orgId]);
     if (!sv.length) return res.status(400).json({ error: 'Choose a supplier company.' });
-    const [co] = await pool.query('SELECT id FROM consultants WHERE id = ? AND organization_id = ?', [b.consultantId, orgId]);
+    const [co] = await pool.query('SELECT id FROM consultants WHERE id = ? AND organization_id = ?', [coId, orgId]);
     if (!co.length) return res.status(400).json({ error: 'Choose a consultant.' });
     let assignmentId = 0;
     if (b.assignmentId) {

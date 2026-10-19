@@ -417,3 +417,9 @@ A consultant can have any number of client/vendor pairings, each with its own bi
 
 ## Margin runs from the database
 The Margin dashboard reads and edits placements (consultant + client + vendor, billing and pay rates, supplier, recruiter, status) straight from the database via `/api/roster`; no file is needed. "Import from file" is optional and only fills or refreshes placements that came from a file; placements edited in the app are never overwritten. Re-run `db/schema.sql` first (adds placement columns); existing placements are backfilled automatically from the latest Margin file on first load.
+
+## Modules run from the database (no files needed)
+- **Margin**: placements (`/api/roster`) are added/edited in the page.
+- **Ledger**: built from supplier payment lines; **+ Add payment** records one (supplier and consultant can be typed; new names are created).
+- **Fin-Module**: client invoices and supplier payments generate from placements (billing rate / pay rate per project); supplier payments need no Ledger or Margin file. Hours are typed into each invoice.
+- File imports (Margin workbook, Ledger workbook, Import hours) are optional one-time shortcuts. Re-run `db/schema.sql` on deploy (adds placement columns and the per-project supplier-payment key).

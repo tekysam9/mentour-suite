@@ -188,6 +188,13 @@
   .cl-diag-sheet-sub { font-weight: 400; color: var(--text-muted); font-size: 11px; }
   .cl-diag-table-wrap { overflow-x: auto; }
   .cl-diag-table-wrap table.cl-subtable td { white-space: nowrap; max-width: 160px; overflow: hidden; text-overflow: ellipsis; font-size: 11px; }
+
+  .cl-editor { background: #fff; border: 1px solid #DFE2E6; border-radius: 8px; padding: 16px 18px; margin: 12px 0; text-align: left; }
+  .cl-ed-title { font-weight: 500; font-size: 16px; margin-bottom: 10px; color: #1E272E; }
+  .cl-ed-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 10px 14px; }
+  .cl-ed-f { display: flex; flex-direction: column; font-size: 12px; color: #5E6A75; gap: 3px; }
+  .cl-ed-f input, .cl-ed-f select { padding: 8px 10px; font-size: 14px; }
+  .cl-ed-actions { display: flex; gap: 8px; margin-top: 12px; align-items: center; }
 </style>
 <link rel="stylesheet" href="/shell.css">
 <link rel="stylesheet" href="/theme.css">
@@ -479,6 +486,14 @@
       return { ok: false, diagnostics: { sheetNames: wb.SheetNames, previews: previews } };
     }
 
+    return buildLedgerData(monthlyRecords, otherPayments, monthOrder, leftRecords);
+  }
+
+  // Everything the dashboard shows, built from payment lines (from the database or from a file).
+  function buildLedgerData(monthlyRecords, otherPayments, monthOrder, leftRecords) {
+    var consultants = buildConsultants(monthlyRecords, leftRecords || [], monthOrder)
+      .sort(function (a, b) { return b.totalCost - a.totalCost; });
+
     var monthlyTotals = monthOrder.map(function (m) {
       var value = 0;
       monthlyRecords.forEach(function (r) { if (r.month === m) value += (r.amount || 0); });
@@ -573,6 +588,9 @@
     sort: { key: 'totalCost', dir: 'desc' },
     expandedKey: null,
     otherOpen: false,
+    adding: false,
+    formError: null,
+    paymentCount: 0,
     saveStatus: null, // null | 'saving' | 'saved' | 'error'
   };
 
@@ -635,12 +653,21 @@
       return;
     }
     if (!state.data) {
-      appEl.innerHTML = renderHeader(false) + renderUploadScreen();
+      appEl.innerHTML = renderHeader(false) + '<div class="cl-hero"><div class="cl-hero-inner"><p class="cl-hero-copy">Loading\u2026</p></div></div>';
+      return;
+    }
+    if (!state.data.consultants.length) {
+      appEl.innerHTML = renderHeader(false) + (state.adding ? renderPaymentForm() : '') +
+        (state.error ? '<div class="cl-error"><span>\u26A0</span><span>' + escapeHtml(state.error) + '</span></div>' : '') +
+        '<div class="cl-hero"><div class="cl-hero-inner"><div class="cl-hero-kicker">Mentour Corp \u00b7 Supplier Ledger</div><h1 class="cl-hero-title">No payments yet.</h1>' +
+        '<p class="cl-hero-copy">Record what Mentour pays each supplier for each consultant with <b>+ Add payment</b>, or generate a month of payments from your placements in <a href="/invoices.html">Fin-Module \u203a Supplier payments</a>. ' +
+        'You can also read an old payments workbook once with <b>Import from file</b> to fill the database.</p></div></div>';
       return;
     }
     var filtered = getFilteredSorted();
     appEl.innerHTML =
       renderHeader(true) +
+      (state.adding ? renderPaymentForm() : '') +
       renderKpiStrip(state.data) +
       renderCharts(state.data) +
       renderFilterBar(state.data, filtered.length) +
@@ -674,7 +701,10 @@
             '<div class="cl-wordmark">Ledger.</div>' +
             '<div class="cl-header-sub">Consultant &amp; supplier cost dashboard</div>' +
           '</div>' +
-          '<div class="cl-header-right">' + renderAccountBar() + '</div>' +
+          '<div class="cl-header-right">' +
+            '<button class="cl-btn cl-btn-brass" data-action="add-payment" type="button">+ Add payment</button>' +
+            '<label class="cl-btn" style="cursor:pointer;">Import from file<input type="file" accept=".xlsx,.xls" style="display:none;" data-role="file-input"></label>' +
+            renderAccountBar() + '</div>' +
         '</div>'
       );
     }
@@ -686,9 +716,9 @@
           '<div class="cl-header-sub">Consultant &amp; supplier cost dashboard \u00b7 through ' + escapeHtml(d.kpis.latestMonth) + '</div>' +
         '</div>' +
         '<div class="cl-header-right">' +
-          '<span class="cl-header-file">' + escapeHtml(state.fileName) + '</span>' +
+          '<button class="cl-btn cl-btn-brass" data-action="add-payment" type="button">+ Add payment</button>' +
           '<button class="cl-btn" data-action="export-csv" type="button">Export CSV</button>' +
-          '<label class="cl-btn cl-btn-brass" style="cursor:pointer;">Replace file' +
+          '<label class="cl-btn" style="cursor:pointer;" title="Optional: read a payments workbook once to fill the database.">Import from file' +
             '<input type="file" accept=".xlsx,.xls" style="display:none;" data-role="file-input">' +
           '</label>' +
           renderAccountBar() +
@@ -773,10 +803,10 @@
       '<div class="cl-kpi-strip">' +
         tile('Consultants', d.kpis.totalConsultants, d.statusCounts.Active + ' active now') +
         tile('Active', d.statusCounts.Active, 'in ' + d.kpis.latestMonth) +
-        tile('Left', d.statusCounts.Left, 'confirmed on Left sheet') +
+        tile('Left', d.statusCounts.Left, 'all placements closed') +
         tile('No recent activity', d.statusCounts.Inactive, 'not seen lately') +
         tile('Suppliers', d.kpis.totalSubvendors, 'distinct companies') +
-        tile('Total cost YTD', fmtUSD(d.kpis.totalCost), d.kpis.monthsCovered + ' months') +
+        tile('Total paid to suppliers', fmtUSD(d.kpis.totalCost), d.kpis.monthsCovered + ' months') +
       '</div>'
     );
   }
@@ -1042,7 +1072,7 @@
       '<div class="cl-other">' +
         '<button class="cl-other-toggle" data-action="toggle-other" type="button">' +
           '<span>' + caret + '</span>' +
-          '<span>Other payments in this file (' + items.length + ') \u2014 rent, loans, data hosting, payroll, travel reimbursements</span>' +
+          '<span>Other payments (' + items.length + ') \u2014 rent, loans, data hosting, payroll, travel reimbursements</span>' +
           '<span class="cl-other-total">' + fmtUSD(d.kpis.otherTotal) + '</span>' +
         '</button>' +
         bodyHtml +
@@ -1053,14 +1083,12 @@
   function renderFooter(d) {
     return (
       '<div class="cl-footer">' +
-        '<b>Reading the numbers:</b> "Cost to Mentour Corp" sums the Amount column for every recorded payment. ' +
-        '"Billing rate" is the $/hr Rate the subvendor bills Mentour Corp for that consultant \u2014 click a row to see it ' +
-        'broken out by month, alongside the Rate \u00d7 Hours check figure (shown only where it differs from the amount ' +
-        'actually paid, e.g. a partial payment). <b>Client</b> is only tagged HCL / Non-HCL where the workbook itself ' +
-        'labeled a block that way; everything else is "Unspecified," not necessarily unknown. <b>Status</b> \u2014 Active ' +
-        'means a payment was recorded in ' + escapeHtml(d.kpis.latestMonth) + ', the most recent sheet; Left means ' +
-        'they\u2019re on the workbook\u2019s "Left" tab with no newer activity; "No recent activity" means neither is true, ' +
-        'which can also just mean no invoice arrived that month.' +
+        '<b>Reading the numbers:</b> "Cost to Mentour Corp" sums the Amount of every supplier payment line recorded through the latest month ' +
+        '(Fin-Module &rsaquo; Supplier payments is where lines are generated, edited and marked paid; <b>+ Add payment</b> records one here). ' +
+        '"Billing rate" is the $/hr the supplier charges Mentour for that consultant \u2014 click a row to see it broken out by month. ' +
+        '<b>Client</b> shows the project a payment belongs to when it came from a placement, otherwise "Unspecified". <b>Status</b> \u2014 Active ' +
+        'means a payment line exists for ' + escapeHtml(d.kpis.latestMonth) + ', the latest month; Left means every placement for that person is ' +
+        'marked Left in Margin; "No recent activity" means neither.' +
       '</div>'
     );
   }
@@ -1081,21 +1109,16 @@
         var wb = XLSX.read(bytes, { type: 'array', cellDates: true, cellStyles: true });
         var result = processWorkbook(wb);
         if (result.ok) {
-          state.data = result;
           state.diagnostics = null;
           state.fileName = file.name;
-          state.filters = { search: '', status: 'All', client: 'All', subvendor: 'All', month: 'All' };
-          state.sort = { key: 'totalCost', dir: 'desc' };
           state.expandedKey = null;
           state.otherOpen = false;
-          saveToBackend(file.name, result);
+          saveToBackend(file.name, result); // fills the database, then the dashboard reloads from it
         } else {
-          state.data = null;
           state.diagnostics = result.diagnostics;
           state.fileName = file.name;
         }
       } catch (err) {
-        state.data = null;
         state.diagnostics = null;
         state.error = (err && err.message) ? err.message : 'Could not parse this workbook.';
       } finally {
@@ -1122,12 +1145,91 @@
       if (!res.ok) throw new Error('save failed');
       return res.json();
     }).then(function () {
-      state.saveStatus = 'saved';
-      render();
+      return loadLedger().then(function () { state.saveStatus = 'saved'; render(); });
     }).catch(function () {
       state.saveStatus = 'error';
       render();
     });
+  }
+
+  var MONTH_ABBR = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  function monthLabelOf(pm) { return MONTH_ABBR[Number(pm.slice(5, 7)) - 1] + ' ' + pm.slice(0, 4); }
+
+  // Dashboard data straight from the database: supplier payment lines (Fin-Module > Supplier payments,
+  // which also holds anything imported from a file) plus placement status from Margin.
+  function loadLedger() {
+    return Promise.all([
+      fetch('/api/subvendor-invoices').then(function (res) { if (!res.ok) throw new Error('load failed'); return res.json(); }),
+      fetch('/api/roster').then(function (res) { return res.ok ? res.json() : { records: [] }; }),
+    ]).then(function (both) {
+      var now = new Date();
+      var thisMonth = now.getFullYear() + '-' + ('0' + (now.getMonth() + 1)).slice(-2);
+      var invoices = (both[0].invoices || []).filter(function (i) { return i.period_month.slice(0, 7) <= thisMonth; });
+      var months = {};
+      invoices.forEach(function (i) { months[i.period_month.slice(0, 7)] = true; });
+      var monthKeys = Object.keys(months).sort();
+      var monthOrder = monthKeys.map(function (k) { return monthLabelOf(k + '-01'); });
+      var records = invoices.map(function (i) {
+        return {
+          subvendor: i.subvendor_name || '(unspecified)', period: i.label || monthLabelOf(i.period_month), name: i.consultant_name,
+          amount: i.amount === null ? null : Number(i.amount), rate: i.rate === null ? null : Number(i.rate),
+          hours: i.hours === null ? null : Number(i.hours), verify: null, notes: i.notes || null,
+          paidDate: i.paid_date || null, month: monthLabelOf(i.period_month), clientTag: i.client_tag || i.project || 'Unspecified',
+          year: i.period_month.slice(0, 4), unpaid: i.payment_status === 'unpaid',
+        };
+      });
+      var data = buildLedgerData(records, [], monthOrder, []);
+      // A consultant whose placements are all marked Left in Margin shows as Left, not "no recent activity".
+      var placements = {};
+      (both[1].records || []).forEach(function (r) { var k = r.name.trim().toLowerCase(); (placements[k] = placements[k] || []).push(r.status); });
+      data.consultants.forEach(function (c) {
+        var list = placements[c.key];
+        if (c.status !== 'Active' && list && list.length && list.every(function (st) { return st === 'Left'; })) c.status = 'Left';
+      });
+      data.statusCounts = { Active: 0, Left: 0, Inactive: 0 };
+      data.consultants.forEach(function (c) { data.statusCounts[c.status] = (data.statusCounts[c.status] || 0) + 1; });
+      state.data = data;
+      state.paymentCount = invoices.length;
+      state.names = {
+        consultants: (both[1].records || []).map(function (r) { return r.name; }).concat(data.consultants.map(function (c) { return c.name; })),
+        suppliers: data.subvendorTotals.map(function (x) { return x.label; }),
+      };
+    });
+  }
+
+  function renderPaymentForm() {
+    var names = state.names || { consultants: [], suppliers: [] };
+    function uniq(a) { var seen = {}; return a.filter(function (x) { if (!x || seen[x]) return false; seen[x] = 1; return true; }).sort(); }
+    function dl(id, list) { return '<datalist id="' + id + '">' + uniq(list).map(function (x) { return '<option value="' + escapeHtml(x) + '">'; }).join('') + '</datalist>'; }
+    var now = new Date();
+    var defMonth = now.getFullYear() + '-' + ('0' + (now.getMonth() + 1)).slice(-2);
+    function f(key, label, attrs) { return '<label class="cl-ed-f"><span>' + label + '</span><input data-p="' + key + '" ' + (attrs || '') + '></label>'; }
+    return '<div class="cl-editor" data-payment-form>' +
+      '<div class="cl-ed-title">Add a supplier payment</div>' + dl('dl-pc', names.consultants) + dl('dl-ps', names.suppliers) +
+      '<div class="cl-ed-grid">' +
+        f('consultantName', 'Consultant *', 'list="dl-pc" placeholder="Full name"') +
+        f('subvendorName', 'Supplier company *', 'list="dl-ps" placeholder="Company paid"') +
+        f('periodMonth', 'Hours month *', 'type="month" value="' + defMonth + '"') +
+        f('rate', 'Rate $/hr *', 'type="number" step="0.01" min="0"') +
+        f('hours', 'Hours', 'type="number" step="0.01" min="0"') +
+        f('amount', 'Amount $ (blank = rate x hours)', 'type="number" step="0.01" min="0"') +
+        '<label class="cl-ed-f"><span>Payment</span><select data-p="paymentStatus"><option value="paid">Paid</option><option value="unpaid">Unpaid</option></select></label>' +
+        f('notes', 'Notes', '') +
+      '</div>' +
+      (state.formError ? '<div class="cl-error" style="margin:8px 0"><span>\u26A0</span><span>' + escapeHtml(state.formError) + '</span></div>' : '') +
+      '<div class="cl-ed-actions"><button class="cl-btn cl-btn-brass" data-action="save-payment" type="button">Add payment</button>' +
+      '<button class="cl-btn" data-action="cancel-payment" type="button">Cancel</button>' +
+      '<span style="margin-left:auto;font-size:12.5px;color:#5E6A75">To edit or delete a payment, use <a href="/invoices.html">Fin-Module \u203a Supplier payments</a>.</span></div></div>';
+  }
+
+  function savePayment(box) {
+    var payload = {};
+    box.querySelectorAll('[data-p]').forEach(function (el) { payload[el.getAttribute('data-p')] = el.value; });
+    fetch('/api/subvendor-invoices', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
+      .then(function (res) { return res.json().then(function (b) { if (!res.ok) throw new Error(b.error || 'Could not save.'); return b; }); })
+      .then(function () { state.adding = false; state.formError = null; return loadLedger(); })
+      .then(render)
+      .catch(function (err) { state.formError = err.message; render(); });
   }
 
   function exportCSV(consultants) {
@@ -1192,6 +1294,10 @@
       render();
       return;
     }
+    if (e.target.closest('[data-action="add-payment"]')) { state.adding = true; state.formError = null; render(); window.scrollTo(0, 0); return; }
+    if (e.target.closest('[data-action="cancel-payment"]')) { state.adding = false; state.formError = null; render(); return; }
+    var savePayBtn = e.target.closest('[data-action="save-payment"]');
+    if (savePayBtn) { savePayment(savePayBtn.closest('[data-payment-form]')); return; }
     var resetBtn = e.target.closest('[data-action="reset-filters"]');
     if (resetBtn) {
       state.filters = { search: '', status: 'All', client: 'All', subvendor: 'All', month: 'All' };
@@ -1265,13 +1371,8 @@
     }).then(function (body) {
       if (!body) return;
       auth.user = body.user;
-      return fetch('/api/ledger/latest').then(function (res) { return res.ok ? res.json() : { import: null }; });
-    }).then(function (latest) {
-      if (latest && latest.import) {
-        state.data = latest.import.data;
-        state.fileName = latest.import.file_name;
-        state.saveStatus = 'saved';
-      }
+      return loadLedger();
+    }).then(function () {
       render();
     }).catch(function () {
       window.location.href = '/login.html';

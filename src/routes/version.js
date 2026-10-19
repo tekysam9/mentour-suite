@@ -86,6 +86,9 @@ router.get('/', async (req, res) => {
     out.schema.personalInvites = pi[0].n === 3;
     const [od] = await pool.query(`SELECT COUNT(*) AS n FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = 'onboarding_documents'`);
     out.schema.onboardingDocuments = od[0].n === 1;
+    const [pl] = await pool.query(`SELECT COUNT(*) AS n FROM information_schema.columns WHERE table_schema = DATABASE() AND ((table_name = 'consultant_assignments' AND column_name IN ('pay_rate','employment_type','supplier_id','recruiter','joined_text','left_text')) OR (table_name = 'subvendor_invoices' AND column_name IN ('assignment_id','assignment_key')))`);
+    out.schema.placementColumns = pl[0].n === 8;
+    if (!out.schema.placementColumns) out.schema.ok = false;
     if (!out.schema.personalInvites || !out.schema.onboardingDocuments) out.schema.ok = false;
     if (!out.schema.onboardingTable || !out.schema.hrRole) out.schema.ok = false;
     if (!out.schema.profileTables || !out.schema.supplierProfiles) out.schema.ok = false;
