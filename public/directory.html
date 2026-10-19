@@ -286,7 +286,7 @@
     return {
       client: list.map(function (a) { return line(a, a.client_name ? escapeHtml(a.client_name) : dash); }).join('<br>'),
       program: list.map(function (a) { return line(a, a.program_name ? escapeHtml(a.program_name) : dash); }).join('<br>'),
-      billing: list.map(function (a) { return line(a, fmtMoney(a.billing) + (a.status === 'left' ? ' · left' + (a.left_date ? ' ' + escapeHtml(String(a.left_date).slice(0, 10)) : '') : '')); }).join('<br>'),
+      billing: list.map(function (a) { return line(a, fmtMoney(a.billing) + (a.pay_rate !== null && a.pay_rate !== undefined ? ' <span class="dir-assign-source">(pay ' + fmtMoney(a.pay_rate) + ')</span>' : '') + (a.status === 'left' ? ' · left' + (a.left_date ? ' ' + escapeHtml(String(a.left_date).slice(0, 10)) : '') : '')); }).join('<br>'),
     };
   }
 
@@ -408,6 +408,19 @@
   // their row rather than a field in the main table. Auto-populated from
   // uploads (see src/routes/assignmentUpsert.js); addable/editable by hand
   // here too, for a pairing no file covers yet.
+  // Paste several projects at once (e.g. straight from a spreadsheet or email):
+  // one per line as  Client, Vendor, Billing, Pay rate  (tabs or commas). Missing
+  // clients/vendors are created.
+  function renderBulkAdd(consultantId) {
+    var open = state.bulkOpen === consultantId;
+    if (!open) return '<div style="margin-top:8px"><button class="dir-btn dir-btn-small" data-action="bulk-open" data-consultant-id="' + consultantId + '">Paste several projects…</button></div>';
+    return '<div class="dir-bulk" style="margin-top:8px">' +
+      '<div class="dir-assign-empty" style="padding:0 0 6px">One project per line: <b>Client, Vendor, Billing $/hr, Pay rate $/hr</b> (tab- or comma-separated; a header line is ignored).</div>' +
+      '<textarea data-role="bulk-text" rows="6" style="width:100%;max-width:640px" placeholder="RCA, CDW, 240, 210&#10;IBM, CDW, 210, 200"></textarea>' +
+      '<div class="dir-row-actions" style="margin-top:6px"><button class="dir-btn dir-btn-small dir-btn-primary" data-action="bulk-save" data-consultant-id="' + consultantId + '">Add projects</button>' +
+      '<button class="dir-btn dir-btn-small" data-action="bulk-cancel">Cancel</button> <span data-role="bulk-msg" class="dir-btn-save-status"></span></div></div>';
+  }
+
   function renderAssignAddRow(consultantId) {
     var clients = state.cache.clients || [];
     var programs = state.cache.programs || [];
@@ -425,9 +438,10 @@
         return '<option value="program:' + p.id + '">' + escapeHtml(p.client_name) + ' / ' + escapeHtml(p.name) + '</option>';
       }).join('') + '</optgroup>';
     }
-    return '<div class="dir-row-actions dir-assign-add-row" style="margin-top:8px">' +
+    return renderBulkAdd(consultantId) + '<div class="dir-row-actions dir-assign-add-row" style="margin-top:8px">' +
       '<select data-role="new-assignment-target">' + options + '</select>' +
       '<input type="number" step="0.01" placeholder="Billing $/hr" data-role="new-assignment-billing" style="width:110px">' +
+      '<input type="number" step="0.01" placeholder="Pay rate $/hr" data-role="new-assignment-pay" style="width:120px">' +
       '<button class="dir-btn dir-btn-small dir-btn-primary" data-action="assign-add" data-consultant-id="' + consultantId + '">+ Add</button>' +
     '</div>';
   }
@@ -451,6 +465,9 @@
         var billingCell = editing
           ? '<input type="number" step="0.01" class="dir-field-input" data-assign-billing value="' + escapeHtml(a.billing === null ? '' : a.billing) + '" style="width:90px">'
           : fmtMoney(a.billing);
+        var payCell = editing
+          ? '<input type="number" step="0.01" class="dir-field-input" data-assign-pay value="' + escapeHtml(a.pay_rate === null || a.pay_rate === undefined ? '' : a.pay_rate) + '" style="width:90px">'
+          : fmtMoney(a.pay_rate === undefined ? null : a.pay_rate);
         var actions = editing
           ? '<button class="dir-btn dir-btn-small dir-btn-primary" data-action="assign-save" data-assignment-id="' + a.id + '">Save</button>' +
             '<button class="dir-btn dir-btn-small" data-action="assign-cancel">Cancel</button>'
@@ -461,11 +478,12 @@
           '<td>' + programCell + '</td>' +
           '<td>' + stateCell + '</td>' +
           '<td>' + billingCell + '</td>' +
+          '<td>' + payCell + '</td>' +
           '<td><span class="dir-assign-source">' + (a.source === 'upload' ? 'from upload' : 'manual') + '</span></td>' +
           '<td>' + actions + (state.assignmentStatus === 'error' && editing ? ' <span class="dir-btn-save-status" style="color:#C62F25">Couldn’t save</span>' : '') + '</td>' +
         '</tr>';
       }).join('');
-      body = '<table class="dir-assign-table"><thead><tr><th>Client</th><th>Vendor</th><th>Status</th><th>Billing</th><th></th><th></th></tr></thead><tbody>' + rows + '</tbody></table>' +
+      body = '<table class="dir-assign-table"><thead><tr><th>Client</th><th>Vendor</th><th>Status</th><th>Billing $/hr</th><th>Pay rate $/hr</th><th></th><th></th></tr></thead><tbody>' + rows + '</tbody></table>' +
         renderAssignAddRow(consultant.id);
     }
     return '<tr class="dir-assign-row"><td colspan="' + rowColspan(tab) + '">' + body + '</td></tr>';
@@ -759,10 +777,12 @@
       var assignmentId = assignSaveBtn.getAttribute('data-assignment-id');
       var billingInputEl = assignSaveBtn.closest('tr').querySelector('[data-assign-billing]');
       var billingVal = billingInputEl ? billingInputEl.value : '';
+      var payInputEl = assignSaveBtn.closest('tr').querySelector('[data-assign-pay]');
+      var payVal = payInputEl ? payInputEl.value : '';
       var consultantIdForSave = state.expandedAssignmentsId;
       state.assignmentStatus = 'saving';
       fetch('/api/directory/assignments/' + assignmentId, {
-        method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ billing: billingVal }),
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ billing: billingVal, pay_rate: payVal }),
       }).then(function (res) {
         if (!res.ok) throw new Error('save failed');
         return res.json();
@@ -806,6 +826,27 @@
       return;
     }
 
+    var bulkOpenBtn = e.target.closest('[data-action="bulk-open"]');
+    if (bulkOpenBtn) { state.bulkOpen = Number(bulkOpenBtn.getAttribute('data-consultant-id')); render(); return; }
+    if (e.target.closest('[data-action="bulk-cancel"]')) { state.bulkOpen = null; render(); return; }
+    var bulkSaveBtn = e.target.closest('[data-action="bulk-save"]');
+    if (bulkSaveBtn) {
+      var bulkCid = Number(bulkSaveBtn.getAttribute('data-consultant-id'));
+      var bulkWrap = bulkSaveBtn.closest('.dir-bulk');
+      var bulkMsg = bulkWrap.querySelector('[data-role="bulk-msg"]');
+      fetch('/api/directory/consultants/' + bulkCid + '/assignments/bulk', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: bulkWrap.querySelector('[data-role="bulk-text"]').value }),
+      }).then(function (res) { return res.json().then(function (b) { if (!res.ok) throw new Error(b.error || 'failed'); return b; }); })
+        .then(function (body) {
+          state.assignments[bulkCid] = body.assignments;
+          var cr = (state.cache.consultants || []).find(function (c) { return c.id === bulkCid; });
+          if (cr) { cr.assignment_count = body.assignments.length; cr.assignments = body.assignments; }
+          state.bulkOpen = null; render();
+        }).catch(function (err) { bulkMsg.style.color = '#C62F25'; bulkMsg.textContent = err.message; });
+      return;
+    }
+
     var assignAddBtn = e.target.closest('[data-action="assign-add"]');
     if (assignAddBtn) {
       var addConsultantId = assignAddBtn.getAttribute('data-consultant-id');
@@ -814,7 +855,8 @@
       var billingInput = wrap.querySelector('[data-role="new-assignment-billing"]');
       var targetVal = targetSelect ? targetSelect.value : '';
       if (!targetVal) return;
-      var payload = { billing: billingInput ? billingInput.value : '' };
+      var payInputNew = wrap.querySelector('[data-role="new-assignment-pay"]');
+      var payload = { billing: billingInput ? billingInput.value : '', pay_rate: payInputNew ? payInputNew.value : '' };
       if (targetVal.indexOf('client:') === 0) {
         payload.client_id = Number(targetVal.slice(7));
       } else if (targetVal.indexOf('program:') === 0) {

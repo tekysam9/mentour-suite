@@ -598,3 +598,8 @@ CREATE TABLE IF NOT EXISTS onboarding_documents (
   FOREIGN KEY (onboarding_id) REFERENCES onboardings(id) ON DELETE CASCADE,
   INDEX idx_onboarding_docs (onboarding_id, item_key)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Pay rate ($/hr Mentour pays the consultant or their supplier) per client/vendor
+-- pairing, so a consultant on several projects at once can have a different
+-- billing rate and pay rate on each. Nullable; additive and safe to re-run.
+ALTER TABLE consultant_assignments ADD COLUMN IF NOT EXISTS pay_rate DECIMAL(12,2) NULL AFTER billing;

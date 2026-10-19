@@ -411,3 +411,6 @@ Deploy: re-run `db/schema.sql` (new `onboardings` table, `users.role` gains `hr`
 
 ## Look and feel
 The UI uses a Workday-style theme: Roboto (self-hosted in `public/fonts`), blue primary, soft grey canvas, white cards, pill buttons. All overrides live in `public/theme.css`, linked last on every page.
+
+## Consultants on several projects
+A consultant can have any number of client/vendor pairings, each with its own billing and pay rate (Directory > Consultants > Billing > "Paste several projects…", or add one at a time). Re-run `db/schema.sql` once to add the `pay_rate` column.

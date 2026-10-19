@@ -358,6 +358,26 @@ async function main() {
       r = await owner.fetch('/api/directory/consultants/' + jordanRecord.id + '/assignments');
       check('deleted assignment no longer listed', r.body.assignments.length === 1, r.body.assignments);
 
+      // Several projects at once, each with its own billing and pay rate (Rob Rosales scenario).
+      r = await owner.fetch('/api/directory/consultants/' + jordanRecord.id + '/assignments/bulk', {
+        method: 'POST', body: JSON.stringify({ text: 'Client\tVendor\tBilling\tPay\\n1. RCA\tCDW\t$240\t$210\\nIBM, CDW, 210, 200\\nAustin Energy, CDW, 225, 210\\nPre-Sales, CDW, 235, 225\\nCisco, CDW, 260, 250'.replace(/\\n/g, '\n') }),
+      });
+      const bulk = r.body.assignments || [];
+      const rcaA = bulk.find((a) => a.client_name === 'RCA');
+      const ciscoA = bulk.find((a) => a.client_name === 'Cisco');
+      check('bulk add creates five new pairings', r.status === 201 && r.body.added === 5 && bulk.length === 6, r.body);
+      check('each pairing keeps its own billing and pay rate',
+        rcaA && Number(rcaA.billing) === 240 && Number(rcaA.pay_rate) === 210 && rcaA.program_name === 'CDW' &&
+        ciscoA && Number(ciscoA.billing) === 260 && Number(ciscoA.pay_rate) === 250, bulk);
+      r = await owner.fetch('/api/directory/assignments/' + rcaA.id, { method: 'PATCH', body: JSON.stringify({ pay_rate: 215 }) });
+      check('editing pay rate leaves billing alone', Number(r.body.assignment.pay_rate) === 215 && Number(r.body.assignment.billing) === 240, r.body);
+      r = await owner.fetch('/api/directory/consultants/' + jordanRecord.id + '/assignments/bulk', { method: 'POST', body: JSON.stringify({ text: 'IBM, CDW, 215, 205' }) });
+      const ibm = (r.body.assignments || []).filter((a) => a.client_name === 'IBM');
+      check('re-adding an existing pairing updates it instead of duplicating', ibm.length === 1 && Number(ibm[0].billing) === 215 && Number(ibm[0].pay_rate) === 205, r.body);
+      r = await owner.fetch('/api/directory/consultants/' + jordanRecord.id + '/assignments/bulk', { method: 'POST', body: JSON.stringify({ text: 'IBM, CDW, abc, 1' }) });
+      check('bad rate in bulk add is rejected', r.status === 400, r.body);
+      for (const a of bulk) await owner.fetch('/api/directory/assignments/' + a.id, { method: 'DELETE' });
+
       // 22. Editing a consultant's contact details persists...
       r = await owner.fetch('/api/directory/consultants/' + jordanRecord.id, {
         method: 'PATCH', body: JSON.stringify({ email: 'jordan@acme.test', phone: '555-0100', address: '1 Acme Way' }),

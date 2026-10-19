@@ -14,7 +14,7 @@
 // directory tables' contact fields.
 
 // status: 'active' (default) or 'left'; leftDate only matters for 'left'.
-async function upsertAssignmentBilling(conn, { organizationId, consultantId, clientId, programId, billing, source, status, leftDate }) {
+async function upsertAssignmentBilling(conn, { organizationId, consultantId, clientId, programId, billing, payRate, source, status, leftDate }) {
   if (!consultantId) return null;
   const src = source === 'manual' ? 'manual' : 'upload';
   const st = status === 'left' ? 'left' : 'active';
@@ -31,13 +31,15 @@ async function upsertAssignmentBilling(conn, { organizationId, consultantId, cli
       `UPDATE consultant_assignments SET billing = ?, source = ?, status = ?, left_date = ? WHERE id = ?`,
       [billing, src, st, leftOn, id]
     );
+    // pay_rate is only touched when the caller supplies one (uploads never do).
+    if (payRate !== undefined) await conn.query('UPDATE consultant_assignments SET pay_rate = ? WHERE id = ?', [payRate, id]);
     return id;
   }
 
   const [result] = await conn.query(
-    `INSERT INTO consultant_assignments (organization_id, consultant_id, client_id, program_id, billing, source, status, left_date)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-    [organizationId, consultantId, clientId, programId, billing, src, st, leftOn]
+    `INSERT INTO consultant_assignments (organization_id, consultant_id, client_id, program_id, billing, pay_rate, source, status, left_date)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [organizationId, consultantId, clientId, programId, billing, payRate === undefined ? null : payRate, src, st, leftOn]
   );
   return result.insertId;
 }

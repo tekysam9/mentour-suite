@@ -170,7 +170,7 @@ router.get('/consultants', async (req, res, next) => {
     // Client/Program and Billing column without a fetch per row — one
     // extra query here instead of N later.
     const [assignmentRows] = await pool.query(
-      `SELECT a.id, a.consultant_id, a.billing, a.source, a.status, a.left_date, a.client_id, a.program_id,
+      `SELECT a.id, a.consultant_id, a.billing, a.pay_rate, a.source, a.status, a.left_date, a.client_id, a.program_id,
          cl.name AS client_name, p.name AS program_name
        FROM consultant_assignments a
        LEFT JOIN clients cl ON cl.id = a.client_id
@@ -214,7 +214,7 @@ router.get('/consultants/:id/assignments', async (req, res, next) => {
     if (!consultant) return res.status(404).json({ error: 'Not found.' });
 
     const [rows] = await pool.query(
-      `SELECT a.id, a.billing, a.source, a.status, a.left_date, a.client_id, a.program_id,
+      `SELECT a.id, a.billing, a.pay_rate, a.source, a.status, a.left_date, a.client_id, a.program_id,
          cl.name AS client_name, p.name AS program_name
        FROM consultant_assignments a
        LEFT JOIN clients cl ON cl.id = a.client_id
@@ -242,6 +242,11 @@ router.post('/consultants/:id/assignments', async (req, res, next) => {
     if (billing !== null && !Number.isFinite(billing)) {
       return res.status(400).json({ error: 'Billing must be a number.' });
     }
+    const payRate = body.pay_rate === undefined ? undefined
+      : (body.pay_rate === null || body.pay_rate === '' ? null : Number(body.pay_rate));
+    if (payRate !== undefined && payRate !== null && !Number.isFinite(payRate)) {
+      return res.status(400).json({ error: 'Pay rate must be a number.' });
+    }
 
     if (clientId) {
       const [clientRows] = await pool.query('SELECT id FROM clients WHERE id = ? AND organization_id = ?', [clientId, req.user.organization_id]);
@@ -257,11 +262,11 @@ router.post('/consultants/:id/assignments', async (req, res, next) => {
 
     const assignmentId = await upsertAssignmentBilling(pool, {
       organizationId: req.user.organization_id, consultantId: Number(req.params.id),
-      clientId, programId, billing, source: 'manual', status: 'active',
+      clientId, programId, billing, payRate, source: 'manual', status: 'active',
     });
 
     const [rows] = await pool.query(
-      `SELECT a.id, a.billing, a.source, a.status, a.left_date, a.client_id, a.program_id,
+      `SELECT a.id, a.billing, a.pay_rate, a.source, a.status, a.left_date, a.client_id, a.program_id,
          cl.name AS client_name, p.name AS program_name
        FROM consultant_assignments a
        LEFT JOIN clients cl ON cl.id = a.client_id
@@ -277,14 +282,19 @@ router.post('/consultants/:id/assignments', async (req, res, next) => {
 
 router.patch('/assignments/:id', async (req, res, next) => {
   try {
-    const billing = req.body && req.body.billing !== undefined && req.body.billing !== null && req.body.billing !== ''
-      ? Number(req.body.billing) : null;
-    if (req.body && req.body.billing !== undefined && req.body.billing !== null && req.body.billing !== '' && !Number.isFinite(billing)) {
-      return res.status(400).json({ error: 'Billing must be a number.' });
+    const body = req.body || {};
+    const num = (v) => (v === undefined || v === null || v === '' ? null : Number(v));
+    const sets = []; const params = [];
+    for (const [key, col, label] of [['billing', 'billing', 'Billing'], ['pay_rate', 'pay_rate', 'Pay rate']]) {
+      if (body[key] === undefined) continue;
+      const v = num(body[key]);
+      if (v !== null && (!Number.isFinite(v) || v < 0)) return res.status(400).json({ error: label + ' must be a number.' });
+      sets.push(col + ' = ?'); params.push(v);
     }
+    if (!sets.length) return res.status(400).json({ error: 'Nothing to update.' });
     const [result] = await pool.query(
-      `UPDATE consultant_assignments SET billing = ?, source = 'manual' WHERE id = ? AND organization_id = ?`,
-      [billing, req.params.id, req.user.organization_id]
+      `UPDATE consultant_assignments SET ${sets.join(', ')}, source = 'manual' WHERE id = ? AND organization_id = ?`,
+      [...params, req.params.id, req.user.organization_id]
     );
     if (result.affectedRows === 0) return res.status(404).json({ error: 'Not found.' });
     const [rows] = await pool.query('SELECT * FROM consultant_assignments WHERE id = ?', [req.params.id]);
@@ -304,6 +314,60 @@ router.delete('/assignments/:id', async (req, res, next) => {
     res.json({ ok: true });
   } catch (err) {
     next(err);
+  }
+});
+
+// Adds several client/vendor pairings in one go (a consultant working on more
+// than one project at once). body: { text } -- one project per line:
+//   Client, Vendor, Billing $/hr, Pay rate $/hr   (tab- or comma-separated)
+// Missing clients and vendors are created; an existing pairing has its rates updated.
+router.post('/consultants/:id/assignments/bulk', async (req, res, next) => {
+  const conn = await pool.getConnection();
+  try {
+    const organizationId = req.user.organization_id;
+    const consultant = await findConsultant(req.params.id, organizationId);
+    if (!consultant) return res.status(404).json({ error: 'Not found.' });
+    const money = (v) => { const n = Number(String(v === undefined ? '' : v).replace(/[$,\s]/g, '')); return String(v || '').trim() === '' ? null : n; };
+    const lines = String((req.body && req.body.text) || '').split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+    const rows = [];
+    for (const line of lines) {
+      const cells = (line.includes('\t') ? line.split('\t') : line.split(',')).map((c) => c.trim().replace(/^\d+[.)]\s+/, ''));
+      if (/^client$/i.test(cells[0])) continue; // header
+      const [client, vendor, bill, pay] = cells;
+      if (!client) continue;
+      const billing = money(bill); const payRate = money(pay);
+      if ((billing !== null && !Number.isFinite(billing)) || (payRate !== null && !Number.isFinite(payRate))) {
+        return res.status(400).json({ error: `Couldn’t read the rates on: “${line}”. Use numbers like 240 or $240.` });
+      }
+      rows.push({ client, vendor: vendor || '', billing, payRate });
+    }
+    if (!rows.length) return res.status(400).json({ error: 'Add at least one line: Client, Vendor, Billing, Pay rate.' });
+
+    await conn.beginTransaction();
+    for (const r of rows) {
+      const client = await findOrCreateDirectoryRecord(conn, 'clients', { organizationId, name: r.client, status: 'active' });
+      const program = r.vendor && r.vendor.toLowerCase() !== r.client.toLowerCase()
+        ? await findOrCreateDirectoryRecord(conn, 'programs', { organizationId, clientId: client.id, name: r.vendor, status: 'active' }) : null;
+      await upsertAssignmentBilling(conn, {
+        organizationId, consultantId: consultant.id, clientId: client.id, programId: program ? program.id : null,
+        billing: r.billing, payRate: r.payRate, source: 'manual', status: 'active',
+      });
+    }
+    await conn.commit();
+    const [assignments] = await pool.query(
+      `SELECT a.id, a.billing, a.pay_rate, a.source, a.status, a.left_date, a.client_id, a.program_id,
+         cl.name AS client_name, p.name AS program_name
+       FROM consultant_assignments a
+       LEFT JOIN clients cl ON cl.id = a.client_id
+       LEFT JOIN programs p ON p.id = a.program_id
+       WHERE a.organization_id = ? AND a.consultant_id = ?
+       ORDER BY a.status, cl.name, p.name`, [organizationId, consultant.id]);
+    res.status(201).json({ assignments, added: rows.length });
+  } catch (err) {
+    try { await conn.rollback(); } catch (_) { /* no-op */ }
+    next(err);
+  } finally {
+    conn.release();
   }
 });
 
@@ -327,6 +391,9 @@ router.post('/consultants/:id/assignments/from-text', async (req, res, next) => 
     const billing = body.billing === null || body.billing === undefined || body.billing === '' ? null : Number(body.billing);
     if (billing !== null && (!Number.isFinite(billing) || billing < 0)) return res.status(400).json({ error: 'Billing must be a number.' });
 
+    const payRate = body.pay_rate === undefined || body.pay_rate === null || body.pay_rate === '' ? undefined : Number(body.pay_rate);
+    if (payRate !== undefined && (!Number.isFinite(payRate) || payRate < 0)) return res.status(400).json({ error: 'Pay rate must be a number.' });
+
     await conn.beginTransaction();
     const client = await findOrCreateDirectoryRecord(conn, 'clients', { organizationId, name: clientName, status: 'active' });
     const program = programName
@@ -347,12 +414,13 @@ router.post('/consultants/:id/assignments/from-text', async (req, res, next) => 
     } else {
       assignmentId = await upsertAssignmentBilling(conn, {
         organizationId, consultantId: consultant.id, clientId: client.id, programId: program ? program.id : null,
-        billing, source: 'manual', status: 'active',
+        billing, payRate, source: 'manual', status: 'active',
       });
     }
+    if (existed && payRate !== undefined) await conn.query('UPDATE consultant_assignments SET pay_rate = COALESCE(pay_rate, ?) WHERE id = ?', [payRate, assignmentId]);
     await conn.commit();
     const [rows] = await pool.query(
-      `SELECT a.id, a.billing, a.source, a.status, a.left_date, a.client_id, a.program_id,
+      `SELECT a.id, a.billing, a.pay_rate, a.source, a.status, a.left_date, a.client_id, a.program_id,
          cl.name AS client_name, p.name AS program_name
        FROM consultant_assignments a
        LEFT JOIN clients cl ON cl.id = a.client_id

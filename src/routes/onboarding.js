@@ -693,12 +693,14 @@ router.post('/:id/create-records', async (req, res, next) => {
       else { const [r] = await conn.query(`INSERT INTO programs (organization_id, client_id, name, status) VALUES (?, ?, ?, 'active')`, [orgId, clientId, vendorName]); programId = r.insertId; made.push('created the vendor'); }
     }
     const billing = data.bill_rate !== undefined ? data.bill_rate : null;
+    const prn = Number(data.pay_rate);
+    const payRateVal = data.pay_rate !== undefined && data.pay_rate !== '' && Number.isFinite(prn) ? prn : null;
     const asg = await find(`SELECT id FROM consultant_assignments WHERE organization_id = ? AND consultant_id = ? AND client_id = ? AND program_id <=> ?`, [orgId, consultantId, clientId, programId]);
     let assignmentId;
-    if (asg) { assignmentId = asg.id; await conn.query(`UPDATE consultant_assignments SET billing = ?, status = 'active', left_date = NULL WHERE id = ?`, [billing, assignmentId]); made.push('updated the billing pairing'); }
+    if (asg) { assignmentId = asg.id; await conn.query(`UPDATE consultant_assignments SET billing = ?, pay_rate = ?, status = 'active', left_date = NULL WHERE id = ?`, [billing, payRateVal, assignmentId]); made.push('updated the billing pairing'); }
     else {
-      const [r] = await conn.query(`INSERT INTO consultant_assignments (organization_id, consultant_id, client_id, program_id, billing, source) VALUES (?, ?, ?, ?, ?, 'manual')`,
-        [orgId, consultantId, clientId, programId, billing]);
+      const [r] = await conn.query(`INSERT INTO consultant_assignments (organization_id, consultant_id, client_id, program_id, billing, pay_rate, source) VALUES (?, ?, ?, ?, ?, ?, 'manual')`,
+        [orgId, consultantId, clientId, programId, billing, payRateVal]);
       assignmentId = r.insertId; made.push('added the billing pairing');
     }
 
