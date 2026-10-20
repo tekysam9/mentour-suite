@@ -11,7 +11,8 @@ const { FORMS, fieldsOfForm } = require('./formSpecs');
 
 const { cleanValue, secretClean, maskFor } = profiles.helpers;
 const router = express.Router();
-router.use(requireAuth);
+// The supplier portal (vendorPortal.js) sets req.vendorLink after checking a secure link; everyone else signs in.
+router.use((req, res, next) => (req.vendorLink ? next() : requireAuth(req, res, next)));
 
 const SCHEMA_MSG = 'Forms need the latest database update. Run db/schema.sql on the database, then try again.';
 const ENTITIES = ['consultants', 'clients', 'programs', 'subvendors'];
@@ -21,7 +22,7 @@ const OPTIONAL_SIG = { i9: ['reverify'] };
 
 // Who may type identifying numbers. The owner always; HR admins only on the banking form
 // (bank numbers). SSN / tax ID / document numbers stay owner-only. Nobody can read them back.
-const canEditSecrets = (req, form) => req.user.role === 'owner' || (form === 'banking' && req.user.role === 'hr');
+const canEditSecrets = (req, form) => !!req.vendorLink || req.user.role === 'owner' || (form === 'banking' && req.user.role === 'hr');
 const missingTable = (e) => e && e.code === 'ER_NO_SUCH_TABLE';
 
 async function loadRecord(entity, id, orgId) {
@@ -120,6 +121,8 @@ function checkParams(req, res) {
 router.get('/schema', (req, res) => {
   res.json({ forms: FORMS, encryptionConfigured: isConfigured(), canEditSecrets: req.user.role === 'owner', canEditSecretsFor: Object.fromEntries(Object.keys(FORMS).map((k) => [k, canEditSecrets(req, k)])) });
 });
+
+router.get('/bank-lookup/:rn', (req, res) => res.json(require('./abaLookup').lookup(req.params.rn)));
 
 router.get('/:entity/:id', async (req, res, next) => {
   try {

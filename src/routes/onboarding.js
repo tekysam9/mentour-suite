@@ -14,6 +14,8 @@ const { FORMS } = require('./formSpecs');
 const { splitClientText } = require('./clientAliases');
 const spec = require('./onboardingSpec');
 const { isConfigured, encryptBuffer, decryptBuffer } = require('../crypto');
+const crypto = require('crypto');
+const vendorItems = require('./vendorItems');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -613,6 +615,96 @@ router.delete('/:id/documents/:docId', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+// ------------------------------------------------- supplier requests (secure link)
+const sha256 = (t) => crypto.createHash('sha256').update(t).digest('hex');
+
+async function requestStatuses(row, items) {
+  // what has come back so far for each requested item
+  const out = {};
+  const states = await formStates(row.organization_id, [row]);
+  const docs = await docList(row.organization_id, [row.id]);
+  items.forEach((k) => {
+    const it = vendorItems.ITEMS[k];
+    if (it.kind === 'form') out[k] = row.supplier_id ? (states.get(`subvendors:${row.supplier_id}:${it.form}`) || 'not started') : 'not started';
+    else out[k] = docs.some((d) => d.item_key === it.itemKey) ? 'received' : 'waiting';
+  });
+  return out;
+}
+const itemDone = (k, st) => (vendorItems.ITEMS[k].kind === 'form' ? st === 'complete' : st === 'received');
+
+async function requestView(row, r) {
+  const items = String(r.items || '').split(',').filter((k) => vendorItems.ITEMS[k]);
+  const st = await requestStatuses(row, items);
+  const now = Date.now();
+  const expired = new Date(r.expires_at).getTime() < now;
+  return {
+    id: r.id, items: items.map((k) => ({ key: k, label: vendorItems.ITEMS[k].label, status: st[k], done: itemDone(k, st[k]) })),
+    message: r.message || '', createdBy: r.created_by, createdAt: r.created_at, expiresAt: r.expires_at, lastOpenedAt: r.last_opened_at, submittedAt: r.submitted_at,
+    state: r.revoked_at ? 'revoked' : expired ? 'expired' : 'open',
+  };
+}
+
+router.get('/:id/vendor-requests', async (req, res, next) => {
+  try {
+    if (!isHr(req)) return denyHr(res);
+    const row = await load(req, res); if (!row) return;
+    const [rs] = await pool.query('SELECT * FROM vendor_requests WHERE organization_id = ? AND onboarding_id = ? ORDER BY id DESC', [row.organization_id, row.id]);
+    const out = []; for (const r of rs) out.push(await requestView(row, r));
+    res.json({ requests: out, items: vendorItems.KEYS.map((k) => ({ key: k, label: vendorItems.ITEMS[k].label, help: vendorItems.ITEMS[k].help })) });
+  } catch (err) { if (missingTable(err)) return res.json({ requests: [], items: [], needsSchema: true }); next(err); }
+});
+
+router.post('/:id/vendor-requests', async (req, res, next) => {
+  try {
+    if (!isHr(req)) return denyHr(res);
+    const row = await load(req, res); if (!row) return;
+    if (row.worker_type !== 'C2C') return res.status(409).json({ error: 'Supplier requests are for C2C onboardings (the consultant’s own company).' });
+    if (row.status !== 'in_progress') return res.status(409).json({ error: 'Approve and start the onboarding before requesting details from the supplier.' });
+    const items = vendorItems.clean(req.body && req.body.items);
+    if (!items.length) return res.status(400).json({ error: 'Tick at least one item to request.' });
+    if (!isConfigured() && items.some((k) => k === 'banking' || k === 'coi' || k === 'vendor_agreement' || k === 'w9')) {
+      return res.status(503).json({ error: 'The server has no encryption key yet (FIELD_ENCRYPTION_KEY), so the supplier could not save tax IDs, bank numbers or documents. Set it first (see README-DEPLOY.md).' });
+    }
+    const days = Math.min(60, Math.max(1, Number(req.body && req.body.days) || 14));
+    const message = String((req.body && req.body.message) || '').trim().slice(0, 1000);
+    const data = parse(row.data, {});
+    let supplierId = row.supplier_id;
+    if (!supplierId) {
+      if (!data.employer_name) return res.status(422).json({ error: 'Fill in the consultant’s company (candidate employer) on the request first.' });
+      const [ex] = await pool.query('SELECT id FROM subvendors WHERE organization_id = ? AND LOWER(name) = LOWER(?)', [row.organization_id, data.employer_name]);
+      if (ex[0]) supplierId = ex[0].id;
+      else {
+        const [r] = await pool.query(`INSERT INTO subvendors (organization_id, name, status, email, phone) VALUES (?, ?, 'active', ?, ?)`,
+          [row.organization_id, oneLine(data.employer_name), data.employer_email || null, data.employer_phone || null]);
+        supplierId = r.insertId;
+      }
+      row.supplier_id = supplierId;
+    }
+    const token = crypto.randomBytes(32).toString('hex');
+    const expires = new Date(Date.now() + days * 86400000);
+    const [ins] = await pool.query(
+      'INSERT INTO vendor_requests (organization_id, onboarding_id, supplier_id, token_hash, items, message, expires_at, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+      [row.organization_id, row.id, supplierId, sha256(token), items.join(','), message || null, expires, who(req)]);
+    addLog(row, req, `Requested from the supplier (secure link, ${days} days): ${items.map((k) => vendorItems.ITEMS[k].label).join(', ')}.`);
+    await save(row, { supplier_id: supplierId, log: row.log });
+    const [rs] = await pool.query('SELECT * FROM vendor_requests WHERE id = ?', [ins.insertId]);
+    res.status(201).json({ request: await requestView(row, rs[0]), path: '/vendor.html?t=' + token, supplierEmail: data.employer_email || '', supplierContact: data.employer_contact || '', company: data.employer_name || '', consultant: row.consultant_name });
+  } catch (err) { if (missingTable(err)) return res.status(503).json({ error: SCHEMA_MSG }); next(err); }
+});
+
+router.delete('/:id/vendor-requests/:rid', async (req, res, next) => {
+  try {
+    if (!isHr(req)) return denyHr(res);
+    const row = await load(req, res); if (!row) return;
+    if (!/^\d+$/.test(req.params.rid)) return res.status(404).json({ error: 'Not found.' });
+    const [r] = await pool.query('UPDATE vendor_requests SET revoked_at = NOW() WHERE id = ? AND onboarding_id = ? AND organization_id = ? AND revoked_at IS NULL', [req.params.rid, row.id, row.organization_id]);
+    if (!r.affectedRows) return res.status(404).json({ error: 'That request is not open.' });
+    addLog(row, req, 'Supplier request link revoked.');
+    await save(row, { log: row.log });
+    res.json({ ok: true });
+  } catch (err) { next(err); }
+});
+
 // ----------------------------------------------------- directory records
 async function mergeProfile(conn, orgId, entity, id, patch) {
   const [r] = await conn.query(`SELECT data FROM record_profiles WHERE organization_id = ? AND entity = ? AND record_id = ?`, [orgId, entity, id]);
@@ -727,4 +819,5 @@ router.post('/:id/create-records', async (req, res, next) => {
   } finally { if (conn) conn.release(); }
 });
 
+router.helpers = { DOC_TYPES, DOC_MAX, parse, formStates, docList, requestView, sha256, SCHEMA_MSG };
 module.exports = router;

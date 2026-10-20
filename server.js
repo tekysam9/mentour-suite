@@ -35,6 +35,7 @@ app.use('/api/forms', formRoutes);
 app.use('/api/invoices', invoiceRoutes);
 app.use('/api/subvendor-invoices', subvendorInvoiceRoutes);
 app.use('/api/onboarding', onboardingRoutes);
+app.use('/api/vendor-portal', require('./src/routes/vendorPortal'));
 
 app.use(express.static(path.join(__dirname, 'public')));
 

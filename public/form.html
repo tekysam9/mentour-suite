@@ -64,6 +64,7 @@
 <div id="app"><div class="fm-loading">Loading…</div>
 </div>
 <script src="/shell.js"></script>
+<script src="/bankhelp.js"></script>
 <script>
 (function () {
   var q = new URLSearchParams(location.search);
@@ -141,12 +142,21 @@
       '<span class="fm-badge ' + (d.status === 'complete' ? 'complete' : '') + '">' + esc(d.status) + '</span></div>' +
       '<div class="fm-edition">' + esc(spec.edition) + (FORM === 'banking' ? '. Bank numbers are encrypted; only the last 4 are shown.' : '. This is an in-app record of the form; confirm the current edition with the IRS / USCIS.') + '</div>' +
       pre + enc + body +
-      '<div class="fm-bar"><button class="fm-btn fm-btn-primary" id="save-btn" type="button">Save draft</button><button class="fm-btn" id="print-btn" type="button">Print / save as PDF</button>' +
+      '<div class="fm-bar"><button class="fm-btn fm-btn-primary" id="save-btn" type="button">Save draft</button><button class="fm-btn" id="print-btn" type="button">Print / save as PDF</button>' + (FORM === 'banking' ? '<button class="fm-btn" id="review-btn" type="button">Review details</button>' : '') +
       '<span class="fm-msg ' + S.kind + '" role="status">' + esc(S.msg) + '</span></div></div>';
     document.getElementById('logout-btn').addEventListener('click', function () { fetch('/api/auth/logout', { method: 'POST' }).then(function () { location.href = '/login.html'; }); });
     document.getElementById('save-btn').addEventListener('click', function () { save().then(function (ok) { if (ok) setMsg('Saved.', 'ok'); }); });
     document.getElementById('print-btn').addEventListener('click', function () { window.print(); });
     applyShowIf();
+    if (FORM === 'banking') {
+      BankHelp.attach(appEl, function (rn) { return '/api/forms/bank-lookup/' + rn; });
+      document.getElementById('review-btn').addEventListener('click', function () {
+        var old = document.getElementById('bh-review'); if (old) { old.remove(); return; }
+        document.querySelector('.fm-bar').insertAdjacentHTML('beforebegin', BankHelp.reviewHtml(appEl, S.d));
+        document.querySelector('[data-bh-close]').addEventListener('click', function () { document.getElementById('bh-review').remove(); });
+        document.getElementById('bh-review').scrollIntoView({ behavior: 'smooth', block: 'center' });
+      });
+    }
     appEl.querySelectorAll('[data-key]').forEach(function (el) { el.addEventListener('change', applyShowIf); });
     appEl.querySelectorAll('[data-sign]').forEach(function (b) { b.addEventListener('click', function () { sign(b.getAttribute('data-sign')); }); });
     appEl.querySelectorAll('[data-reopen]').forEach(function (b) { b.addEventListener('click', function () { reopen(b.getAttribute('data-reopen')); }); });
@@ -171,6 +181,8 @@
     return { values: values, secrets: secrets };
   }
   function save() {
+    var mm = FORM === 'banking' ? BankHelp.mismatch(appEl) : '';
+    if (mm) { setMsg(mm, 'err'); return Promise.resolve(false); }
     setMsg('Saving…');
     return api('PUT', base(), collect()).then(function (r) {
       if (!r.ok) { setMsg(r.body.error || 'Could not save.', 'err'); return false; }

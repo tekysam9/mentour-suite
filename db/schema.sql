@@ -624,3 +624,25 @@ ALTER TABLE subvendor_invoices ADD COLUMN IF NOT EXISTS assignment_id INT NULL;
 ALTER TABLE subvendor_invoices ADD COLUMN IF NOT EXISTS assignment_key INT NOT NULL DEFAULT 0;
 ALTER TABLE subvendor_invoices DROP INDEX IF EXISTS uq_subvendor_invoice;
 ALTER TABLE subvendor_invoices ADD UNIQUE KEY IF NOT EXISTS uq_subvendor_invoice_a (organization_id, subvendor_id, consultant_id, period_month, assignment_key);
+
+-- Requests for a supplier's paperwork (W-9, banking, insurance certificate, vendor
+-- agreement) sent as a single-use secure link. Only a hash of the link is stored.
+CREATE TABLE IF NOT EXISTS vendor_requests (
+  id              INT AUTO_INCREMENT PRIMARY KEY,
+  organization_id INT NOT NULL,
+  onboarding_id   INT NOT NULL,
+  supplier_id     INT NOT NULL,
+  token_hash      CHAR(64) NOT NULL,
+  items           VARCHAR(255) NOT NULL,
+  message         VARCHAR(1000) NULL,
+  expires_at      DATETIME NOT NULL,
+  revoked_at      DATETIME NULL,
+  submitted_at    DATETIME NULL,
+  last_opened_at  DATETIME NULL,
+  created_by      VARCHAR(255) NULL,
+  created_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE,
+  FOREIGN KEY (onboarding_id) REFERENCES onboardings(id) ON DELETE CASCADE,
+  UNIQUE KEY uq_vendor_request_token (token_hash),
+  INDEX idx_vendor_request_ob (onboarding_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

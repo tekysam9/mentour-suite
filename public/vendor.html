@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="robots" content="noindex, nofollow">
+<meta name="referrer" content="no-referrer">
+<title>Documents requested — Mentour Suite</title>
+<link rel="stylesheet" href="/shared.css">
+<style>
+  body { background: var(--paper, #F0F1F2); margin: 0; }
+  .vp-top { background: #fff; border-bottom: 1px solid var(--line); padding: 14px 24px; }
+  .vp-top b { font-size: 16px; color: var(--ink); }
+  .vp-top span { color: var(--text-muted); font-size: 13px; margin-left: 10px; }
+  .vp-item { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 16px 20px; margin-bottom: 14px; }
+  .vp-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .vp-row h3 { margin: 0; font-size: 15px; color: var(--ink); }
+  .vp-row p { margin: 2px 0 0; font-size: 12.5px; color: var(--text-muted); }
+  .vp-msg { background: #E3F1FD; border-radius: 8px; padding: 10px 14px; font-size: 13.5px; line-height: 1.5; margin: 0 0 16px; white-space: pre-wrap; }
+  .vp-form { margin-top: 14px; border-top: 1px solid var(--line); padding-top: 14px; }
+  .vp-form .fm-card { background: var(--paper); }
+  .vp-lock { font-size: 12px; color: var(--text-muted); margin: 8px 0 18px; }
+  .fm-body { max-width: 900px; margin: 0 auto; padding: 32px 24px 64px; }
+  .fm-back { font-size: 12.5px; color: var(--pine); text-decoration: none; font-weight: 500; }
+  .fm-back:hover { text-decoration: underline; }
+  .fm-head { margin: 14px 0 6px; display: flex; justify-content: space-between; align-items: flex-end; gap: 16px; flex-wrap: wrap; }
+  .fm-kind { font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--text-muted); font-weight: 600; }
+  .fm-title { font-family: Roboto, 'Helvetica Neue', Arial, sans-serif; font-size: 30px; font-weight: 600; color: var(--ink); margin: 0; }
+  .fm-sub { color: var(--text-muted); font-size: 14px; margin: 2px 0 0; }
+  .fm-edition { font-size: 11.5px; color: var(--text-muted); margin: 8px 0 16px; }
+  .fm-card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 18px 20px; margin-bottom: 16px; }
+  .fm-card h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--text-muted); margin: 0 0 14px; font-weight: 700; }
+  .fm-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 14px 16px; }
+  .fm-field label { display: block; font-size: 11.5px; font-weight: 600; color: var(--text-muted); margin-bottom: 4px; line-height: 1.35; }
+  .fm-field input, .fm-field select, .fm-field textarea {
+    width: 100%; box-sizing: border-box; border: 1px solid var(--line); border-radius: 5px; padding: 7px 9px;
+    font-size: 13px; font-family: inherit; color: var(--text); background: var(--paper); outline: none;
+  }
+  .fm-field textarea { min-height: 70px; resize: vertical; }
+  .fm-field input:focus, .fm-field select:focus, .fm-field textarea:focus { border-color: var(--pine); }
+  .fm-field input:disabled, .fm-field select:disabled, .fm-field textarea:disabled { background: #EEF0F2; color: var(--text-muted); }
+  .fm-field.wide { grid-column: 1 / -1; }
+  .fm-attest { display: flex; gap: 10px; align-items: flex-start; font-size: 13px; line-height: 1.5; color: var(--text); font-weight: 400 !important; }
+  .fm-attest input { width: auto; margin-top: 3px; }
+  .fm-help { font-size: 11px; color: var(--text-muted); margin-top: 3px; line-height: 1.4; }
+  .fm-req { color: var(--brick); }
+  .fm-mask { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 13px; color: var(--ink); background: #E3F1FD; border-radius: 5px; padding: 6px 9px; display: inline-block; }
+  .fm-unset { font-size: 12px; color: var(--text-muted); font-style: italic; }
+  .fm-btn { border: 1px solid var(--line); background: var(--card); border-radius: 5px; padding: 8px 15px; font-size: 12.5px; font-weight: 600; cursor: pointer; font-family: inherit; color: var(--text); }
+  .fm-btn:hover { background: var(--paper); }
+  .fm-btn-primary { background: var(--pine); border-color: var(--pine); color: #FFFFFF; }
+  .fm-btn-primary:hover { background: #0B64C0; }
+  .fm-btn-small { padding: 4px 10px; font-size: 11.5px; }
+  .fm-bar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin: 4px 0 18px; }
+  .fm-msg { font-size: 12.5px; font-weight: 600; }
+  .fm-msg.ok { color: var(--pine); } .fm-msg.err { color: var(--brick); }
+  .fm-badge { display: inline-block; font-size: 11px; font-weight: 700; padding: 3px 10px; border-radius: 99px; background: #FFF5E5; color: #8A5A00; }
+  .fm-badge.complete { background: #E4F6E9; color: #1B7A3A; }
+  .fm-sign { border: 1px dashed var(--line); border-radius: 8px; padding: 14px 16px; margin: 4px 0 16px; background: var(--paper); }
+  .fm-sign h3 { margin: 0 0 8px; font-size: 13px; color: var(--ink); }
+  .fm-signed { font-size: 13px; color: var(--pine); font-weight: 600; }
+  .fm-signed .sig-name { font-family: 'Brush Script MT', 'Segoe Script', cursive; font-size: 24px; color: var(--ink); display: block; margin: 4px 0; font-weight: 400; }
+  .fm-signed small { color: var(--text-muted); font-weight: 400; display: block; }
+  .fm-banner { background: #FFF5E5; border: 1px solid #FFD9A3; color: #7A4A00; border-radius: 8px; padding: 10px 14px; font-size: 12.5px; margin-bottom: 14px; line-height: 1.5; }
+  .fm-loading { padding: 40px; text-align: center; color: var(--text-muted); }
+</style>
+<link rel="stylesheet" href="/theme.css">
+</head>
+<body>
+<div class="vp-top"><b id="org">Mentour Suite</b><span>Secure document request</span></div>
+<div class="fm-body" id="app"><div class="fm-loading">Loading…</div></div>
+<script src="/bankhelp.js"></script>
+<script>
+(function () {
+  var TOKEN = new URLSearchParams(location.search).get('t') || '';
+  var appEl = document.getElementById('app');
+  var P = null, open = null, F = null, msg = {}, kind = {};
+  function esc(s) { return s === null || s === undefined ? '' : String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;'); }
+  function api(m, u, b) {
+    return fetch('/api/vendor-portal/' + TOKEN + u, { method: m, headers: { 'Content-Type': 'application/json' }, body: b ? JSON.stringify(b) : undefined })
+      .then(function (r) { return r.json().catch(function () { return {}; }).then(function (j) { return { ok: r.ok, status: r.status, body: j }; }); });
+  }
+  function setMsg(k, t, c) { msg[k] = t; kind[k] = c || ''; var el = appEl.querySelector('[data-msg="' + k + '"]'); if (el) { el.textContent = t; el.className = 'fm-msg ' + (c || ''); } }
+
+  function load() {
+    return api('GET', '').then(function (r) {
+      if (!r.ok) { appEl.innerHTML = '<div class="fm-card"><h2>Link problem</h2><p style="margin:0;font-size:14px">' + esc(r.body.error || 'This link does not work.') + '</p></div>'; return; }
+      P = r.body; document.getElementById('org').textContent = P.organization || 'Mentour Suite'; render();
+    });
+  }
+  function badge(i) {
+    var t = i.done ? 'Done' : (i.status === 'not started' || i.status === 'waiting' ? 'To do' : 'In progress');
+    return '<span class="fm-badge ' + (i.done ? 'complete' : '') + '">' + t + '</span>';
+  }
+  function render() {
+    var req = P.request, all = req.items.every(function (i) { return i.done; });
+    var h = '<h1 class="fm-title" style="font-size:24px">Documents requested from ' + esc(P.company) + '</h1>' +
+      '<p class="fm-sub">' + esc(P.organization) + ' asked for the items below. You can do them in any order and come back to this link until ' + esc(String(req.expiresAt).slice(0, 10)) + '.</p>' +
+      '<div class="vp-lock">This page is private to you. Bank and tax numbers are encrypted when saved.</div>' +
+      (req.message ? '<div class="vp-msg">' + esc(req.message) + '</div>' : '');
+    if (!P.encryptionConfigured) h += '<div class="fm-banner">Secure storage is not ready on our side yet, so tax IDs, bank numbers and documents can’t be saved right now. Please tell your contact.</div>';
+    req.items.forEach(function (i) {
+      h += '<div class="vp-item" data-item="' + i.key + '"><div class="vp-row"><div><h3>' + esc(i.label) + '</h3><p>' + esc(i.help) + '</p></div><div>' + badge(i) + ' ';
+      if (i.kind === 'form') h += '<button class="fm-btn fm-btn-small" data-open="' + i.key + '" type="button">' + (open === i.key ? 'Close' : (i.done ? 'View' : 'Fill in')) + '</button>';
+      else h += '<label class="fm-btn fm-btn-small" style="cursor:pointer">' + (i.done ? 'Replace file' : 'Choose file') + '<input type="file" data-up="' + i.key + '" accept=".pdf,.jpg,.jpeg,.png,.docx" hidden></label>';
+      h += '</div></div>';
+      if (i.kind === 'upload') h += '<div style="margin-top:8px"><span class="fm-msg ' + (kind[i.key] || '') + '" data-msg="' + i.key + '">' + esc(msg[i.key] || (i.done ? 'Received. Thank you.' : 'PDF, JPG, PNG or Word, up to 10 MB.')) + '</span></div>';
+      if (i.kind === 'form' && open === i.key && F) h += '<div class="vp-form" id="vp-form"></div>';
+      h += '</div>';
+    });
+    h += '<div class="fm-bar"><button class="fm-btn fm-btn-primary" id="finish" type="button"' + (all ? '' : ' disabled') + '>' + (req.submittedAt ? 'Notify again that everything is done' : 'Everything is done') + '</button><span class="fm-msg ' + (kind.finish || '') + '" data-msg="finish">' + esc(msg.finish || (all ? '' : 'Complete every item above first.')) + '</span></div>';
+    appEl.innerHTML = h;
+    appEl.querySelectorAll('[data-open]').forEach(function (b) { b.addEventListener('click', function () { toggle(b.getAttribute('data-open')); }); });
+    appEl.querySelectorAll('[data-up]').forEach(function (inp) { inp.addEventListener('change', function () { upload(inp); }); });
+    document.getElementById('finish').addEventListener('click', function () {
+      api('POST', '/submit', {}).then(function (r) { setMsg('finish', r.ok ? 'Thank you. HR has been notified.' : (r.body.error || 'Could not send.'), r.ok ? 'ok' : 'err'); if (r.ok) load(); });
+    });
+    if (open && F) renderForm();
+  }
+  function toggle(k) { if (open === k) { open = null; F = null; render(); return; } open = k; loadForm(); }
+  function formKey() { return P.request.items.filter(function (i) { return i.key === open; })[0].form; }
+  function loadForm() {
+    return api('GET', '/forms/' + formKey()).then(function (r) {
+      if (!r.ok) { open = null; F = null; render(); setMsg('finish', r.body.error || 'Could not open the form.', 'err'); return; }
+      F = r.body; render();
+    });
+  }
+  function upload(inp) {
+    var k = inp.getAttribute('data-up'), file = inp.files && inp.files[0]; if (!file) return;
+    if (file.size > 10 * 1024 * 1024) { setMsg(k, 'That file is larger than 10 MB.', 'err'); return; }
+    setMsg(k, 'Uploading…');
+    var rd = new FileReader();
+    rd.onload = function () {
+      api('POST', '/documents', { item: k, filename: file.name, contentBase64: String(rd.result).split(',')[1] || '' }).then(function (r) {
+        if (!r.ok) { setMsg(k, r.body.error || 'Could not upload.', 'err'); return; }
+        msg[k] = 'Received ' + file.name + '. Thank you.'; kind[k] = 'ok'; load();
+      });
+    };
+    rd.readAsDataURL(file);
+  }
+
+  // ---- form rendering (same layout as the in-app form page)
+  function fieldHtml(d, lockedSet) {
+    var id = 'f-' + d.key, locked = lockedSet[d.key], req = d.required || d.requiredIf;
+    var label = '<label for="' + id + '">' + esc(d.label) + (req ? ' <span class="fm-req">*</span>' : '') + '</label>';
+    var help = d.help ? '<div class="fm-help">' + esc(d.help) + '</div>' : '';
+    if (d.kind === 'secret') {
+      var sec = F.secrets[d.key] || { set: false };
+      var shown = sec.set ? '<span class="fm-mask">' + esc(sec.masked) + '</span>' : '<span class="fm-unset">Not on file</span>';
+      var inp = !locked ? '<div style="margin-top:6px"><input id="' + id + '" data-secret="' + d.key + '" type="password" autocomplete="off" placeholder="' + (sec.set ? 'Type to replace' : 'Enter value') + '"></div>' : '<div class="fm-help">Locked by signature.</div>';
+      return '<div class="fm-field">' + label + shown + inp + help + '</div>';
+    }
+    var val = F.values[d.key]; if (val === undefined || val === null) val = '';
+    if (d.kind === 'attest') return '<div class="fm-field wide"><label class="fm-attest"><input type="checkbox" data-key="' + d.key + '"' + (val === true ? ' checked' : '') + (locked ? ' disabled' : '') + '><span>' + esc(d.label) + (req ? ' <span class="fm-req">*</span>' : '') + '</span></label></div>';
+    var c;
+    if (d.kind === 'select') c = '<select id="' + id + '" data-key="' + d.key + '"' + (locked ? ' disabled' : '') + '><option value="">—</option>' + d.options.map(function (o) { return '<option' + (o === val ? ' selected' : '') + ' value="' + esc(o) + '">' + esc(o) + '</option>'; }).join('') + '</select>';
+    else if (d.kind === 'bool') c = '<select id="' + id + '" data-key="' + d.key + '"' + (locked ? ' disabled' : '') + '><option value="false"' + (!val ? ' selected' : '') + '>No</option><option value="true"' + (val ? ' selected' : '') + '>Yes</option></select>';
+    else if (d.kind === 'textarea') c = '<textarea id="' + id + '" data-key="' + d.key + '"' + (locked ? ' disabled' : '') + '>' + esc(val) + '</textarea>';
+    else { var t = { email: 'email', date: 'date', number: 'number', phone: 'tel' }[d.kind] || 'text'; c = '<input id="' + id + '" data-key="' + d.key + '" type="' + t + '"' + (d.kind === 'number' ? ' step="any" min="0"' : '') + ' value="' + esc(val) + '"' + (locked ? ' disabled' : '') + '>'; }
+    return '<div class="fm-field' + (d.kind === 'textarea' ? ' wide' : '') + '">' + label + c + help + '</div>';
+  }
+  function signHtml(key) {
+    var sp = F.spec.signatures[key], sig = F.signatures[key];
+    if (sig) return '<div class="fm-sign"><h3>' + esc(sp.label) + '</h3><div class="fm-signed">Signed electronically<span class="sig-name">' + esc(sig.name) + '</span><small>' + esc(String(sig.at).replace('T', ' ').slice(0, 16)) + ' UTC</small></div></div>';
+    return '<div class="fm-sign"><h3>' + esc(sp.label) + '</h3><div class="fm-field"><label>Type the full legal name of the person signing</label><input type="text" data-typed="' + key + '" autocomplete="off"></div>' +
+      '<label class="fm-attest" style="margin:10px 0"><input type="checkbox" data-consent="' + key + '"><span>I agree that typing my name here is my electronic signature and has the same effect as signing by hand. I understand the sections above will be locked.</span></label>' +
+      '<button class="fm-btn fm-btn-primary" data-sign="' + key + '" type="button">Sign electronically</button></div>';
+  }
+  function renderForm() {
+    var host = document.getElementById('vp-form'); if (!host) return;
+    var spec = F.spec, locked = {}, shownSig = {}; F.locked.forEach(function (k) { locked[k] = true; });
+    var body = spec.sections.map(function (sec, i) {
+      var show = sec.showIf ? ' data-showif="' + esc(sec.showIf.key) + '" data-showin="' + esc(sec.showIf.in.join('|')) + '"' : '';
+      var html = '<div class="fm-card"' + show + '><h2>' + esc(sec.title) + '</h2><div class="fm-grid">' + sec.fields.map(function (f) { return fieldHtml(f, locked); }).join('') + '</div></div>';
+      var last = !spec.sections.slice(i + 1).some(function (s2) { return s2.signKey === sec.signKey; });
+      if (sec.signKey && last && !shownSig[sec.signKey]) { shownSig[sec.signKey] = 1; html += signHtml(sec.signKey); }
+      return html;
+    }).join('');
+    host.innerHTML = '<p class="fm-sub" style="margin-bottom:12px">' + esc(spec.subtitle) + '</p>' + body +
+      '<div class="fm-bar"><button class="fm-btn fm-btn-primary" id="save-btn" type="button">Save</button>' + (formKey() === 'banking' ? '<button class="fm-btn" id="review-btn" type="button">Review details</button>' : '') + '<span class="fm-msg ' + (kind.form || '') + '" data-msg="form">' + esc(msg.form || '') + '</span></div>';
+    document.getElementById('save-btn').addEventListener('click', function () { save().then(function (ok) { if (ok) setMsg('form', 'Saved.', 'ok'); }); });
+    applyShowIf();
+    if (formKey() === 'banking') {
+      BankHelp.attach(host, function (rn) { return '/api/vendor-portal/' + TOKEN + '/bank-lookup/' + rn; });
+      document.getElementById('review-btn').addEventListener('click', function () {
+        var old = document.getElementById('bh-review'); if (old) { old.remove(); return; }
+        host.querySelector('.fm-bar').insertAdjacentHTML('beforebegin', BankHelp.reviewHtml(host, F));
+        host.querySelector('[data-bh-close]').addEventListener('click', function () { document.getElementById('bh-review').remove(); });
+        document.getElementById('bh-review').scrollIntoView({ behavior: 'smooth', block: 'center' });
+      });
+    }
+    host.querySelectorAll('[data-key]').forEach(function (el) { el.addEventListener('change', applyShowIf); });
+    host.querySelectorAll('[data-sign]').forEach(function (b) { b.addEventListener('click', function () { sign(b.getAttribute('data-sign')); }); });
+  }
+  function applyShowIf() {
+    var host = document.getElementById('vp-form'); if (!host) return;
+    host.querySelectorAll('[data-showif]').forEach(function (card) {
+      var src = host.querySelector('[data-key="' + card.getAttribute('data-showif') + '"]');
+      var v = src ? src.value : (F.values[card.getAttribute('data-showif')] || '');
+      card.style.display = card.getAttribute('data-showin').split('|').indexOf(v) >= 0 ? '' : 'none';
+    });
+  }
+  function collect() {
+    var host = document.getElementById('vp-form'), values = {}, secrets = {};
+    host.querySelectorAll('[data-key]').forEach(function (el) { if (!el.disabled) values[el.getAttribute('data-key')] = el.type === 'checkbox' ? el.checked : el.value; });
+    host.querySelectorAll('[data-secret]').forEach(function (el) { if (el.value.trim()) secrets[el.getAttribute('data-secret')] = el.value.trim(); });
+    return { values: values, secrets: secrets };
+  }
+  function save() {
+    var mm = formKey() === 'banking' ? BankHelp.mismatch(document.getElementById('vp-form')) : '';
+    if (mm) { setMsg('form', mm, 'err'); return Promise.resolve(false); }
+    setMsg('form', 'Saving…');
+    return api('PUT', '/forms/' + formKey(), collect()).then(function (r) {
+      if (!r.ok) { setMsg('form', r.body.error || 'Could not save.', 'err'); return false; }
+      return api('GET', '/forms/' + formKey()).then(function (g) { if (g.ok) F = g.body; return true; });
+    });
+  }
+  function sign(key) {
+    var host = document.getElementById('vp-form');
+    var typed = host.querySelector('[data-typed="' + key + '"]').value, consent = host.querySelector('[data-consent="' + key + '"]').checked;
+    save().then(function (ok) {
+      if (!ok) return;
+      api('POST', '/forms/' + formKey() + '/sign', { signature: key, typedName: typed, consent: consent }).then(function (r) {
+        if (!r.ok) { setMsg('form', r.body.error || 'Could not sign.', 'err'); return; }
+        msg.form = 'Signed. Thank you.'; kind.form = 'ok';
+        load().then(function () { if (open) loadForm(); });
+      });
+    });
+  }
+  if (!/^[a-f0-9]{64}$/.test(TOKEN)) appEl.innerHTML = '<div class="fm-card"><h2>Link problem</h2><p style="margin:0">This link is incomplete. Please use the full link you were sent.</p></div>';
+  else load();
+})();
+</script>
+</body>
+</html>
