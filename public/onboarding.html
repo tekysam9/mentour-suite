@@ -410,6 +410,11 @@
         if (c.future === 'fillable-pdf') h += '<span class="ob-muted">Upload for now; a fillable, e-signable version is coming.</span>';
       }
       if (c.hint) h += '<span>' + esc(c.hint) + '</span>';
+      if (c.form && hr) {
+        var fs = c.form.status ? ' <span class="ob-chipf' + (c.form.status === 'complete' ? ' complete' : '') + '">' + esc(c.form.status) + '</span>' : '';
+        if (c.form.recordId) h += '<span><a class="ob-link" href="/form.html?type=' + esc(c.form.entity) + '&id=' + c.form.recordId + '&form=' + esc(c.form.form) + '">' + (c.form.status === 'complete' ? 'View' : 'Open &amp; fill in') + ' ' + esc(c.form.title || 'form') + '</a>' + fs + '</span>';
+        else h += '<span class="ob-muted">Create the directory records (below) to open the ' + esc(c.form.title || 'form') + '.</span>';
+      }
       if (live) {
         h += '<button class="ob-link" data-act="na" data-k="' + c.key + '" data-v="' + (c.na ? '0' : '1') + '">' + (c.na ? 'Applies after all' : 'Not applicable') + '</button>' +
           '<input type="text" data-act="cnote" data-k="' + c.key + '" placeholder="Note" value="' + esc(c.note) + '">';
