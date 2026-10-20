@@ -160,7 +160,7 @@
     if (hr && S.pending.length) {
       h += '<div class="ob-card ob-pending"><h2>Waiting for your approval (' + S.pending.length + ')</h2>';
       S.pending.forEach(function (o) {
-        h += '<div class="ob-row"><span class="nm">' + esc(o.consultantName) + '</span>' + badge('t-' + o.workerType, TYPE_LABEL[o.workerType]) +
+        h += '<div class="ob-row"><span class="nm">' + esc(o.consultantName) + '</span>' + badge('t-' + o.workerType, TYPE_LABEL[o.workerType]) + (o.newVendor ? ' <span class="ob-badge" style="background:#FFF1CC;color:#8A5A00">New vendor</span>' : '') +
           '<span class="sub">' + esc(o.endClient || 'No end client yet') + (o.startDate ? ' · starts ' + fmtDate(o.startDate) : '') + (o.recruiter ? ' · recruiter ' + esc(o.recruiter) : '') + '</span>' +
           '<button class="ob-btn small primary" data-act="open" data-id="' + o.id + '">Review</button></div>';
       });
@@ -382,6 +382,7 @@
   function sideHtml(o, hr) {
     var h = '';
     if (!o) return '<div class="ob-card"><h2>What happens next</h2><p class="ob-muted" style="margin:0;line-height:1.55">Save the draft, then send it to HR. HR will review the details, approve it, and work through the ' + esc(S.draft.workerType || 'W2/C2C/1099') + ' paperwork checklist.</p></div>';
+    if (hr && o.vendorCheck && o.vendorCheck.state !== 'ready') h += vendorBannerHtml(o);
     // checklist
     var cl = o.checklist || [], pr = o.progress || { done: 0, total: 0 };
     h += '<div class="ob-card"><h2>Paperwork checklist · ' + pr.done + ' of ' + pr.total + '</h2>';
@@ -451,11 +452,8 @@
       S.vr = r.ok ? r.body : null; renderDetail();
     });
   }
-  function vendorRequestHtml(o) {
-    var vr = S.vr, doneKeys = {};
-    (o.checklist || []).forEach(function (c) { if (c.done) doneKeys[c.key] = true; });
-    var h = '<div class="ob-card"><h2>Request from the supplier</h2>' +
-      '<p class="ob-muted" style="margin:0 0 10px;font-size:12.5px;line-height:1.5">Tick what ' + esc((o.data && o.data.employer_name) || 'the supplier') + ' should send. They get a private link (no login) to fill in the forms and upload the documents. What they send lands in the checklist above.</p>';
+  function linkBlockHtml() {
+    var h = '';
     if (S.vrLink) {
       var link = location.origin + S.vrLink.path;
       var mail = 'mailto:' + encodeURIComponent(S.vrLink.supplierEmail || '') + '?subject=' + encodeURIComponent('Documents needed for ' + S.vrLink.consultant + ' onboarding') +
@@ -465,6 +463,31 @@
         '<input type="text" readonly id="vr-link" value="' + esc(link) + '" style="width:100%;box-sizing:border-box;font-size:12px"> ' +
         '<div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap"><button class="ob-btn primary small" data-act="vr-copy">Copy link</button><a class="ob-btn small" href="' + esc(mail) + '">Open email draft</a><button class="ob-btn small" data-act="vr-hide">Done</button></div></div>';
     }
+    return h;
+  }
+  var ITEM_LABEL = { company: 'Company details', w9: 'W-9', banking: 'Bank details', coi: 'Insurance certificate', vendor_agreement: 'Vendor agreement' };
+  function vendorBannerHtml(o) {
+    var vc = o.vendorCheck, reqs = (S.vr && S.vr.requests) || [];
+    var openReq = reqs.filter(function (r) { return r.state === 'open'; })[0];
+    var h = '<div class="ob-card" style="border:2px solid #E8A200;background:#FFF8E6"><h2 style="color:#8A5A00">' + (vc.state === 'new' ? 'New vendor — not in the Directory' : 'Vendor paperwork incomplete') + '</h2>' +
+      '<p style="margin:0 0 10px;font-size:13px;line-height:1.5"><b>' + esc(vc.name) + '</b> ' + (vc.state === 'new' ? 'is not a supplier company in the Directory yet. Send the vendor an onboarding link so they can give their company details, W-9, bank details, insurance certificate and agreement. You can approve this request meanwhile.' : 'is in the Directory but is still missing: ' + vc.missing.map(function (k) { return ITEM_LABEL[k]; }).join(', ') + '. Send them a link to complete it.') + '</p>' +
+      linkBlockHtml();
+    if (hr()) h += '<div class="ob-f wide"><label for="vb-email">Send the link to this email (edit if needed)</label><input id="vb-email" type="email" value="' + esc(vc.email) + '" placeholder="vendor@company.com"></div>' +
+      '<div style="margin-top:10px"><button class="ob-btn primary" data-act="vb-send">' + (openReq ? 'Create a new link' : 'Create vendor onboarding link') + '</button></div>';
+    if (reqs.length) h += reqs.slice(0, 3).map(function (r) {
+      var done = r.items.filter(function (i) { return i.done; }).length;
+      return '<div style="font-size:12.5px;margin-top:10px"><b>' + done + ' of ' + r.items.length + ' received</b> · ' + (r.state === 'open' ? 'link open until ' + esc(String(r.expiresAt).slice(0, 10)) : r.state) + (r.lastOpenedAt ? ' · opened ' + fmtWhen(r.lastOpenedAt) : ' · not opened yet') + (r.submittedAt ? ' · vendor says all done' : '') + '</div>';
+    }).join('');
+    return h + '</div>';
+  }
+  function hr() { return isHr(); }
+
+  function vendorRequestHtml(o) {
+    var vr = S.vr, doneKeys = {};
+    (o.checklist || []).forEach(function (c) { if (c.done) doneKeys[c.key] = true; });
+    var h = '<div class="ob-card"><h2>Request from the supplier</h2>' +
+      '<p class="ob-muted" style="margin:0 0 10px;font-size:12.5px;line-height:1.5">Tick what ' + esc((o.data && o.data.employer_name) || 'the supplier') + ' should send. They get a private link (no login) to fill in the forms and upload the documents. What they send lands in the checklist above.</p>';
+    h += linkBlockHtml();
     h += '<div class="vr-pick">' + vr.items.map(function (it) {
       var chk = !doneKeys[VR_CHECK[it.key]];
       return '<label style="display:flex;gap:8px;align-items:flex-start;margin:6px 0;font-size:13px"><input type="checkbox" data-act="vr-pick" data-k="' + it.key + '"' + (chk ? ' checked' : '') + '><span><b>' + esc(it.label) + '</b>' + (doneKeys[VR_CHECK[it.key]] ? ' <span class="ob-chipf complete">already done</span>' : '') + '<br><span class="ob-muted" style="font-size:12px">' + esc(it.help) + '</span></span></label>';
@@ -552,6 +575,15 @@
       api('POST', '/api/onboarding/' + S.ob.id + '/vendor-requests', { items: picks, message: document.getElementById('vr-msg').value, days: Number(document.getElementById('vr-days').value) }).then(function (r) {
         if (!r.ok) { if (r.status === 499) return; note(r.body.error || 'Could not create the link.', 'err'); renderDetail(); return; }
         S.vrLink = r.body; note('Secure link created.');
+        api('GET', '/api/onboarding/' + S.ob.id).then(function (g) { if (g.ok) setOb(g.body); loadVr(); renderDetail(); });
+      });
+      return;
+    }
+    if (act === 'vb-send') {
+      var vc2 = S.ob.vendorCheck;
+      api('POST', '/api/onboarding/' + S.ob.id + '/vendor-requests', { items: vc2.suggest, email: document.getElementById('vb-email').value, days: 14 }).then(function (r) {
+        if (!r.ok) { if (r.status === 499) return; note(r.body.error || 'Could not create the link.', 'err'); renderDetail(); return; }
+        S.vrLink = r.body; note('Vendor onboarding link created.');
         api('GET', '/api/onboarding/' + S.ob.id).then(function (g) { if (g.ok) setOb(g.body); loadVr(); renderDetail(); });
       });
       return;

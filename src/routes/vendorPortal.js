@@ -10,7 +10,8 @@ const ob = require('./onboarding');
 const formsRouter = require('./forms');
 const vendorItems = require('./vendorItems');
 
-const { DOC_TYPES, DOC_MAX, parse, requestView, sha256, SCHEMA_MSG } = ob.helpers;
+const { DOC_TYPES, DOC_MAX, parse, requestView, sha256, SCHEMA_MSG, mergeProfile } = ob.helpers;
+const PAY_TERMS = ['Due on receipt', 'Net 15', 'Net 30', 'Net 45', 'Net 60', 'Net 90', 'Other'];
 const router = express.Router();
 
 router.use((req, res, next) => {
@@ -54,7 +55,37 @@ router.get('/:token', async (req, res, next) => {
     const [sup] = await pool.query('SELECT name FROM subvendors WHERE id = ? AND organization_id = ?', [r.supplier_id, r.organization_id]);
     const view = await requestView(Object.assign({}, req.vrow, { supplier_id: r.supplier_id }), r);
     view.items = view.items.map((i) => Object.assign(i, { kind: vendorItems.ITEMS[i.key].kind, form: vendorItems.ITEMS[i.key].form || null, help: vendorItems.ITEMS[i.key].help }));
-    res.json({ organization: org[0] ? org[0].name : '', company: sup[0] ? sup[0].name : '', request: view, encryptionConfigured: isConfigured() });
+    res.json({ organization: org[0] ? org[0].name : '', company: sup[0] ? sup[0].name : '', request: view, encryptionConfigured: isConfigured(), payTerms: PAY_TERMS });
+  } catch (err) { next(err); }
+});
+
+const one = (v, n) => String(v === undefined || v === null ? '' : v).replace(/\s+/g, ' ').trim().slice(0, n);
+router.get('/:token/company', async (req, res, next) => {
+  try {
+    if (!req.vitems.includes('company')) return res.status(404).json({ error: 'Not requested.' });
+    const r = req.vreq;
+    const [sv] = await pool.query('SELECT name, email, phone, address FROM subvendors WHERE id = ? AND organization_id = ?', [r.supplier_id, r.organization_id]);
+    const [pr] = await pool.query(`SELECT data FROM record_profiles WHERE organization_id = ? AND entity = 'subvendors' AND record_id = ?`, [r.organization_id, r.supplier_id]);
+    const p = parse(pr[0] && pr[0].data, {});
+    const addr = String((sv[0] && sv[0].address) || '');
+    const street = addr.split(',')[0] || '';
+    res.json({ values: { contact_name: p.contact_name || '', email: (sv[0] && sv[0].email) || '', phone: (sv[0] && sv[0].phone) || '', street, city: p.city || '', state: p.state || '', postal_code: p.postal_code || '', payment_terms: p.payment_terms || '' } });
+  } catch (err) { next(err); }
+});
+router.put('/:token/company', async (req, res, next) => {
+  try {
+    if (!req.vitems.includes('company')) return res.status(404).json({ error: 'Not requested.' });
+    const b = (req.body && req.body.values) || {};
+    const v = { contact_name: one(b.contact_name, 120), email: one(b.email, 255), phone: one(b.phone, 40), street: one(b.street, 200), city: one(b.city, 80), state: one(b.state, 40), postal_code: one(b.postal_code, 20), payment_terms: one(b.payment_terms, 40) };
+    if (!v.contact_name || !v.street || !v.city || !v.state) return res.status(400).json({ error: 'Fill in the contact name, street address, city and state.' });
+    if (v.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v.email)) return res.status(400).json({ error: 'Enter a valid email address.' });
+    if (v.payment_terms && !PAY_TERMS.includes(v.payment_terms)) return res.status(400).json({ error: 'Choose one of the listed payment terms.' });
+    const r = req.vreq;
+    const address = [v.street, [v.city, v.state, v.postal_code].filter(Boolean).join(' ')].filter(Boolean).join(', ');
+    await pool.query('UPDATE subvendors SET email = COALESCE(NULLIF(?, \'\'), email), phone = COALESCE(NULLIF(?, \'\'), phone), address = ? WHERE id = ? AND organization_id = ?', [v.email, v.phone, address, r.supplier_id, r.organization_id]);
+    await mergeProfile(pool, r.organization_id, 'subvendors', r.supplier_id, { contact_name: v.contact_name, city: v.city, state: v.state, postal_code: v.postal_code, payment_terms: v.payment_terms });
+    await addLog(req.vrow, 'Company details entered by the supplier.');
+    res.json({ ok: true });
   } catch (err) { next(err); }
 });
 
@@ -108,6 +139,7 @@ router.post('/:token/submit', async (req, res, next) => {
     const left = view.items.filter((i) => !i.done);
     if (left.length) return res.status(409).json({ error: 'Still to do: ' + left.map((i) => i.label).join(', ') + '.' });
     await pool.query('UPDATE vendor_requests SET submitted_at = NOW() WHERE id = ?', [req.vreq.id]);
+    await pool.query(`UPDATE subvendors SET status = 'active' WHERE id = ? AND organization_id = ? AND (status IS NULL OR status = 'inactive')`, [req.vreq.supplier_id, req.vreq.organization_id]);
     await addLog(req.vrow, 'The supplier marked everything requested as complete.');
     res.json({ ok: true });
   } catch (err) { next(err); }

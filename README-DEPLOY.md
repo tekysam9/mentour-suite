@@ -426,3 +426,6 @@ The Margin dashboard reads and edits placements (consultant + client + vendor, b
 
 ## Confirmation before changes
 `public/confirm.js` (loaded by `shell.js`) asks "are you sure?" with the details before any add, edit, delete or generate request to `/api` goes out. Cancel sends nothing. Sign-in/out, previews (`apply:false`) and email parsing are not asked about.
+
+## New vendors and supplier paperwork (secure link)
+When a C2C request names a company that is not a supplier in the Directory (or lacks a completed W-9, banking form or company details), HR sees a highlighted banner on the request, with an editable email and a button that creates a private, no-login link (copy it or open the pre-filled email). The vendor gives company details, signs the W-9 and banking forms and uploads the insurance certificate and agreement. They appear in the Directory as inactive until the vendor presses "Everything is done". Needs `FIELD_ENCRYPTION_KEY` and a re-run of `db/schema.sql` (new `vendor_requests` table). Routing numbers are matched to banks from `src/data/aba.json` (rebuild with `scripts/build-aba.js`).

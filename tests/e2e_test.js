@@ -2181,6 +2181,69 @@ async function main() {
         check('another organisation cannot see the requests', r.status === 404, r.body);
       }
 
+      // ---- new vendors: HR is prompted at approval time and sends an onboarding link
+      {
+        const anon2 = async (pth, opts = {}) => {
+          const res = await fetch(BASE + pth, Object.assign({}, opts, { headers: { 'Content-Type': 'application/json' } }));
+          let body = null; try { body = await res.json(); } catch (e) { /* none */ }
+          return { status: res.status, body };
+        };
+        const nd = Object.assign({}, obF, { consultant_name: 'Nora Newvendor', email: 'nora@brandnew.test', employer_name: 'Brandnew Tech Inc.', employer_email: 'old@brandnew.test', invoicing_method: 'QuickBooks' });
+        r = await obRec.fetch('/api/onboarding', { method: 'POST', body: JSON.stringify({ workerType: 'C2C', data: nd }) });
+        const nId = r.body.id;
+        await obRec.fetch('/api/onboarding/' + nId + '/status', { method: 'POST', body: JSON.stringify({ status: 'submitted' }) });
+        r = await pfOwner.fetch('/api/onboarding/' + nId);
+        check('HR sees the vendor flagged as new, with the suggested items and email', r.body.vendorCheck && r.body.vendorCheck.state === 'new' && r.body.vendorCheck.email === 'old@brandnew.test' && r.body.vendorCheck.suggest.length === 5, r.body.vendorCheck);
+        r = await obRec.fetch('/api/onboarding/' + nId);
+        check('the recruiter sees nothing about it', r.status === 200 && r.body.vendorCheck === undefined, r.body.vendorCheck);
+        r = await pfOwner.fetch('/api/onboarding?status=submitted');
+        check('the pending list flags the new vendor for HR', r.body.onboardings.find((o) => o.id === nId).newVendor === true, r.body.onboardings);
+        r = await obRec.fetch('/api/onboarding?status=all');
+        check('the recruiter’s list carries no vendor flag', r.body.onboardings.every((o) => !o.newVendor), r.body.onboardings);
+        r = await pfOwner.fetch('/api/onboarding/' + nId + '/vendor-requests', { method: 'POST', body: JSON.stringify({ items: ['company', 'w9'], email: 'not-an-email' }) });
+        check('a bad email is refused', r.status === 400, r.body);
+        r = await pfOwner.fetch('/api/onboarding/' + nId + '/vendor-requests', { method: 'POST', body: JSON.stringify({ items: ['company', 'w9', 'banking', 'coi', 'vendor_agreement'], email: 'ap@brandnew.test', days: 14 }) });
+        check('HR sends the link while the request is still pending approval, to an edited email', r.status === 201 && r.body.supplierEmail === 'ap@brandnew.test', r.body);
+        const nTok = r.body.path.split('=')[1], NP = '/api/vendor-portal/' + nTok;
+        r = await pfOwner.fetch('/api/onboarding/' + nId);
+        check('the edited email is remembered on the request', r.body.data.employer_email === 'ap@brandnew.test' && r.body.status === 'submitted', r.body.data.employer_email);
+        const [[nSup]] = await dbConn.query(`SELECT id, status FROM subvendors WHERE name = 'Brandnew Tech Inc.'`);
+        check('the vendor is in the Directory but inactive until they finish', nSup && nSup.status === 'inactive', nSup);
+        r = await pfOwner.fetch('/api/onboarding/' + nId);
+        check('the banner now shows the vendor as incomplete', r.body.vendorCheck.state === 'incomplete' && r.body.vendorCheck.missing.includes('company'), r.body.vendorCheck);
+        r = await anon2(NP + '/company', { method: 'PUT', body: JSON.stringify({ values: { contact_name: 'Bo Brandnew' } }) });
+        check('company details need contact and address', r.status === 400, r.body);
+        r = await anon2(NP + '/company', { method: 'PUT', body: JSON.stringify({ values: { contact_name: 'Bo Brandnew', email: 'ap@brandnew.test', phone: '555-0100', street: '9 Oak Ave', city: 'Dallas', state: 'TX', postal_code: '75001', payment_terms: 'Net 30' } }) });
+        check('the vendor gives their company details', r.status === 200, r.body);
+        r = await anon2(NP + '/company');
+        check('the details read back', r.body.values.city === 'Dallas' && r.body.values.street === '9 Oak Ave' && r.body.values.payment_terms === 'Net 30', r.body);
+        r = await pfOwner.fetch('/api/profiles/subvendors/' + nSup.id);
+        check('the Directory profile carries the contact and payment terms', r.body.values.contact_name === 'Bo Brandnew' && r.body.values.payment_terms === 'Net 30', r.body.values);
+        r = await anon2(NP + '/submit', { method: 'POST', body: '{}' });
+        check('the vendor cannot finish with items outstanding', r.status === 409 && /Form W-9/.test(r.body.error), r.body);
+        const pdf3 = Buffer.concat([Buffer.from('%PDF-1.4\n'), require('crypto').randomBytes(300), Buffer.from('\n%%EOF')]);
+        await anon2(NP + '/forms/w9', { method: 'PUT', body: JSON.stringify({ values: { name: 'Brandnew Tech Inc.', tax_class: 'C corporation', address: '9 Oak Ave', city: 'Dallas', state: 'TX', zip: '75001', tin_type: 'Employer identification number', cert1: true, cert3: true, cert4: true }, secrets: { tin: '98-7654321' } }) });
+        await anon2(NP + '/forms/w9/sign', { method: 'POST', body: JSON.stringify({ signature: 'payee', typedName: 'Bo Brandnew', consent: true }) });
+        await anon2(NP + '/forms/banking', { method: 'PUT', body: JSON.stringify({ values: { method: 'ACH', bank_name: 'Bank of America', ach_type: 'Savings', ach_holder: 'Brandnew Tech Inc.', payee_attest: true }, secrets: { ach_routing: '026009593', ach_account: '1122334455' } }) });
+        await anon2(NP + '/forms/banking/sign', { method: 'POST', body: JSON.stringify({ signature: 'payee', typedName: 'Bo Brandnew', consent: true }) });
+        for (const [item, nm] of [['coi', 'coi.pdf'], ['vendor_agreement', 'agr.pdf']]) await anon2(NP + '/documents', { method: 'POST', body: JSON.stringify({ item, filename: nm, contentBase64: pdf3.toString('base64') }) });
+        r = await anon2(NP + '/submit', { method: 'POST', body: '{}' });
+        check('the vendor finishes everything', r.status === 200, r.body);
+        const [[nSup2]] = await dbConn.query('SELECT status, address FROM subvendors WHERE id = ?', [nSup.id]);
+        check('the vendor becomes an active supplier company with its address', nSup2.status === 'active' && /Dallas/.test(nSup2.address), nSup2);
+        r = await pfOwner.fetch('/api/onboarding/' + nId);
+        check('the banner clears once the vendor is complete', r.body.vendorCheck.state === 'ready', r.body.vendorCheck);
+        r = await pfOwner.fetch('/api/onboarding?status=submitted');
+        check('the pending list no longer flags it', r.body.onboardings.find((o) => o.id === nId).newVendor === false, r.body.onboardings);
+
+        // a known company written differently is recognised; one missing paperwork is flagged
+        const kd = Object.assign({}, obF, { consultant_name: 'Kay Known', email: 'kay@v.test', employer_name: 'Vendorix, L.L.C.', invoicing_method: 'QuickBooks' });
+        r = await obRec.fetch('/api/onboarding', { method: 'POST', body: JSON.stringify({ workerType: 'C2C', data: kd }) });
+        const kId = r.body.id;
+        r = await pfOwner.fetch('/api/onboarding/' + kId);
+        check('"Vendorix, L.L.C." is recognised as the existing Vendorix LLC, but missing company details', r.body.vendorCheck.state === 'incomplete' && r.body.vendorCheck.supplierName === 'Vendorix LLC' && r.body.vendorCheck.missing.join() === 'company', r.body.vendorCheck);
+      }
+
       // W2 and 1099 get their own checklists
       r = await obRec.fetch('/api/onboarding', { method: 'POST', body: JSON.stringify({ workerType: 'W2', data: { consultant_name: 'Wendy Wtwo', h1b_filing_required: 'Yes', start_date: '2026-11-02', end_client: 'Acme', bill_rate: 80, pay_rate: 55, recruiter: 'Rita', invoicing_method: 'Client portal', job_title: 'QA Lead', work_state: 'NJ' } }) });
       const w2Id = r.body.id;

@@ -214,6 +214,7 @@ async function present(row, extra, req) {
     consultantId: row.consultant_id, supplierId: row.supplier_id, data: pub, meta: data._meta || {},
     checklist: items, progress: progress(items), margin: hide ? null : margin(data), warnings: warningsFor(row.worker_type, data),
     hiddenFields: hide ? Object.fromEntries(SENSITIVE.filter((k) => full[k] !== undefined).map((k) => [k, true])) : {},
+    vendorCheck: hide ? undefined : await vendorCheck(row, full),
     log: parse(row.log, []).slice(-60).reverse(), createdBy: row.created_by,
     submittedAt: row.submitted_at, completedAt: row.completed_at, createdAt: row.created_at, updatedAt: row.updated_at,
   }, extra || {});
@@ -377,6 +378,7 @@ router.get('/', async (req, res, next) => {
     const states = await formStates(req.user.organization_id, rows);
     const docs = await docList(req.user.organization_id, rows.map((r) => r.id));
     const [counts] = await pool.query(`SELECT status, COUNT(*) n FROM onboardings WHERE organization_id = ?${isHr(req) ? '' : ' AND created_by_id = ?'} GROUP BY status`, [req.user.organization_id].concat(isHr(req) ? [] : [req.user.id]));
+    const names = isHr(req) ? await supplierNames(req.user.organization_id) : null;
     res.json({
       counts: Object.fromEntries(counts.map((c) => [c.status, Number(c.n)])),
       onboardings: rows.map((r) => {
@@ -385,6 +387,7 @@ router.get('/', async (req, res, next) => {
           id: r.id, workerType: r.worker_type, status: r.status, consultantName: r.consultant_name,
           startDate: dateStr(r.start_date), endClient: data.end_client || '', recruiter: data.recruiter || '',
           progress: progress(checklistView(r, data, parse(r.checklist, {}), states, docs)), updatedAt: r.updated_at,
+          newVendor: !!(names && r.worker_type === 'C2C' && ['submitted', 'in_progress'].includes(r.status) && data.employer_name && r.status !== 'complete' && !names.some((x) => x.id === r.supplier_id || (x.key && x.key === normCompany(data.employer_name)))),
         };
       }),
     });
@@ -615,22 +618,56 @@ router.delete('/:id/documents/:docId', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+
+// ---- is the consultant's company a new vendor (or one without its paperwork)?
+const normCompany = (n) => String(n || '').toLowerCase().replace(/[.,'’]/g, '').replace(/&/g, ' and ').replace(/\b(l\s?l\s?c|inc|incorporated|corp|corporation|co|company|ltd|limited|llp|lp|pllc|pc)\b/g, ' ').replace(/[^a-z0-9]+/g, ' ').trim();
+async function supplierNames(orgId) {
+  const [r] = await pool.query('SELECT id, name FROM subvendors WHERE organization_id = ?', [orgId]);
+  return r.map((x) => ({ id: x.id, name: x.name, key: normCompany(x.name) }));
+}
+async function vendorCheck(row, data, names) {
+  if (row.worker_type !== 'C2C' || !data.employer_name || !['draft', 'submitted', 'in_progress'].includes(row.status)) return null;
+  const key = normCompany(data.employer_name);
+  const all = names || await supplierNames(row.organization_id);
+  const hit = all.find((x) => x.id === row.supplier_id) || all.find((x) => x.key && x.key === key);
+  const out = { name: data.employer_name, email: data.employer_email || '', state: 'new', supplierId: null, missing: [] };
+  if (!hit) { out.suggest = ['company', 'w9', 'banking', 'coi', 'vendor_agreement']; return out; }
+  out.supplierId = hit.id; out.supplierName = hit.name;
+  const [fr] = await pool.query(`SELECT form_type, signatures FROM record_forms WHERE organization_id = ? AND entity = 'subvendors' AND record_id = ? AND form_type IN ('w9','banking')`, [row.organization_id, hit.id]);
+  const st = {}; fr.forEach((f) => { st[f.form_type] = forms.helpers.statusOf(f.form_type, true, parse(f.signatures, {})); });
+  if (st.w9 !== 'complete') out.missing.push('w9');
+  if (st.banking !== 'complete') out.missing.push('banking');
+  if (!(await companyComplete(row.organization_id, hit.id))) out.missing.push('company');
+  if (!out.missing.length) { out.state = 'ready'; return out; }
+  out.state = 'incomplete'; out.suggest = out.missing.concat(['coi', 'vendor_agreement'].filter(() => false));
+  return out;
+}
+
 // ------------------------------------------------- supplier requests (secure link)
 const sha256 = (t) => crypto.createHash('sha256').update(t).digest('hex');
+
+// the supplier's company details are complete once a contact and a full address are on file
+async function companyComplete(orgId, supplierId) {
+  const [sv] = await pool.query('SELECT address FROM subvendors WHERE id = ? AND organization_id = ?', [supplierId, orgId]);
+  const [pr] = await pool.query(`SELECT data FROM record_profiles WHERE organization_id = ? AND entity = 'subvendors' AND record_id = ?`, [orgId, supplierId]);
+  const p = parse(pr[0] && pr[0].data, {});
+  return !!(sv[0] && sv[0].address && p.contact_name && p.city && p.state);
+}
 
 async function requestStatuses(row, items) {
   // what has come back so far for each requested item
   const out = {};
   const states = await formStates(row.organization_id, [row]);
   const docs = await docList(row.organization_id, [row.id]);
-  items.forEach((k) => {
+  for (const k of items) {
     const it = vendorItems.ITEMS[k];
-    if (it.kind === 'form') out[k] = row.supplier_id ? (states.get(`subvendors:${row.supplier_id}:${it.form}`) || 'not started') : 'not started';
+    if (it.kind === 'company') out[k] = row.supplier_id && (await companyComplete(row.organization_id, row.supplier_id)) ? 'complete' : 'not started';
+    else if (it.kind === 'form') out[k] = row.supplier_id ? (states.get(`subvendors:${row.supplier_id}:${it.form}`) || 'not started') : 'not started';
     else out[k] = docs.some((d) => d.item_key === it.itemKey) ? 'received' : 'waiting';
-  });
+  }
   return out;
 }
-const itemDone = (k, st) => (vendorItems.ITEMS[k].kind === 'form' ? st === 'complete' : st === 'received');
+const itemDone = (k, st) => st === 'complete' || st === 'received';
 
 async function requestView(row, r) {
   const items = String(r.items || '').split(',').filter((k) => vendorItems.ITEMS[k]);
@@ -659,7 +696,7 @@ router.post('/:id/vendor-requests', async (req, res, next) => {
     if (!isHr(req)) return denyHr(res);
     const row = await load(req, res); if (!row) return;
     if (row.worker_type !== 'C2C') return res.status(409).json({ error: 'Supplier requests are for C2C onboardings (the consultant’s own company).' });
-    if (row.status !== 'in_progress') return res.status(409).json({ error: 'Approve and start the onboarding before requesting details from the supplier.' });
+    if (row.status !== 'in_progress' && row.status !== 'submitted') return res.status(409).json({ error: 'Send details requests only while the request is waiting for approval or in progress.' });
     const items = vendorItems.clean(req.body && req.body.items);
     if (!items.length) return res.status(400).json({ error: 'Tick at least one item to request.' });
     if (!isConfigured() && items.some((k) => k === 'banking' || k === 'coi' || k === 'vendor_agreement' || k === 'w9')) {
@@ -668,13 +705,17 @@ router.post('/:id/vendor-requests', async (req, res, next) => {
     const days = Math.min(60, Math.max(1, Number(req.body && req.body.days) || 14));
     const message = String((req.body && req.body.message) || '').trim().slice(0, 1000);
     const data = parse(row.data, {});
+    const emailIn = String((req.body && req.body.email) || '').trim();
+    if (emailIn && !EMAIL_RE.test(emailIn)) return res.status(400).json({ error: 'Enter a valid email address for the supplier.' });
+    if (emailIn && emailIn !== data.employer_email) { data.employer_email = emailIn; addLog(row, req, `Supplier email set to ${emailIn}.`); await save(row, { data: JSON.stringify(data) }); }
     let supplierId = row.supplier_id;
     if (!supplierId) {
       if (!data.employer_name) return res.status(422).json({ error: 'Fill in the consultant’s company (candidate employer) on the request first.' });
       const [ex] = await pool.query('SELECT id FROM subvendors WHERE organization_id = ? AND LOWER(name) = LOWER(?)', [row.organization_id, data.employer_name]);
       if (ex[0]) supplierId = ex[0].id;
       else {
-        const [r] = await pool.query(`INSERT INTO subvendors (organization_id, name, status, email, phone) VALUES (?, ?, 'active', ?, ?)`,
+        // listed as inactive until the supplier submits their onboarding
+        const [r] = await pool.query(`INSERT INTO subvendors (organization_id, name, status, email, phone) VALUES (?, ?, 'inactive', ?, ?)`,
           [row.organization_id, oneLine(data.employer_name), data.employer_email || null, data.employer_phone || null]);
         supplierId = r.insertId;
       }
@@ -819,5 +860,5 @@ router.post('/:id/create-records', async (req, res, next) => {
   } finally { if (conn) conn.release(); }
 });
 
-router.helpers = { DOC_TYPES, DOC_MAX, parse, formStates, docList, requestView, sha256, SCHEMA_MSG };
+router.helpers = { DOC_TYPES, DOC_MAX, parse, formStates, docList, requestView, sha256, SCHEMA_MSG, mergeProfile, companyComplete };
 module.exports = router;
