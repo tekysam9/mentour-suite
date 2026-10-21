@@ -2244,6 +2244,25 @@ async function main() {
         check('"Vendorix, L.L.C." is recognised as the existing Vendorix LLC, but missing company details', r.body.vendorCheck.state === 'incomplete' && r.body.vendorCheck.supplierName === 'Vendorix LLC' && r.body.vendorCheck.missing.join() === 'company', r.body.vendorCheck);
       }
 
+      // ---- vendor named only in "Pay to", and adding a vendor straight to the Directory
+      {
+        const pd = Object.assign({}, obF, { consultant_name: 'Pat Payto', email: 'pat@v.test', pay_to: 'ABc Corp', invoicing_method: 'QuickBooks' });
+        delete pd.employer_name;
+        r = await pfOwner.fetch('/api/onboarding', { method: 'POST', body: JSON.stringify({ workerType: 'C2C', data: pd }) });
+        const pId = r.body.id;
+        check('saving shows the new vendor straight away, even when it is only in "Pay to"', r.status === 201 && r.body.vendorCheck && r.body.vendorCheck.state === 'new' && r.body.vendorCheck.name === 'ABc Corp', r.body.vendorCheck);
+        r = await obRec.fetch('/api/onboarding/' + pId + '/add-vendor', { method: 'POST', body: '{}' });
+        check('a recruiter cannot add the vendor', r.status === 403, r.body);
+        r = await pfOwner.fetch('/api/onboarding/' + pId + '/add-vendor', { method: 'POST', body: JSON.stringify({ email: 'bad' }) });
+        check('add-vendor refuses a bad email', r.status === 400, r.body);
+        r = await pfOwner.fetch('/api/onboarding/' + pId + '/add-vendor', { method: 'POST', body: JSON.stringify({ email: 'ap@abc.test' }) });
+        check('HR adds the vendor to the Directory in one click', r.status === 201 && r.body.supplierId && r.body.vendorCheck.state === 'incomplete', r.body.vendorCheck);
+        r = await pfOwner.fetch('/api/directory/subvendors');
+        check('ABc Corp is now a supplier company with the email', r.body.subvendors.some((x) => x.name === 'ABc Corp' && x.email === 'ap@abc.test'), r.body.subvendors.map((x) => x.name));
+        r = await pfOwner.fetch('/api/onboarding/' + pId + '/add-vendor', { method: 'POST', body: '{}' });
+        check('adding again links, never duplicates', r.status === 200 && (await dbConn.query(`SELECT COUNT(*) n FROM subvendors WHERE name = 'ABc Corp'`))[0][0].n === 1, r.body);
+      }
+
       // W2 and 1099 get their own checklists
       r = await obRec.fetch('/api/onboarding', { method: 'POST', body: JSON.stringify({ workerType: 'W2', data: { consultant_name: 'Wendy Wtwo', h1b_filing_required: 'Yes', start_date: '2026-11-02', end_client: 'Acme', bill_rate: 80, pay_rate: 55, recruiter: 'Rita', invoicing_method: 'Client portal', job_title: 'QA Lead', work_state: 'NJ' } }) });
       const w2Id = r.body.id;

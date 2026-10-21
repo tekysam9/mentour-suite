@@ -176,7 +176,7 @@ function checklistView(row, data, storedRaw, states, docs) {
       out.autoDone = out.form.status === 'complete';
       if (c.formOnly) { out.formOnly = true; out.legacyDone = !!st.done && !out.autoDone; }
     } else if (c.auto === 'records') {
-      out.autoDone = !!(row.consultant_id && meta.assignmentId && (row.worker_type !== 'C2C' || !data.employer_name || row.supplier_id));
+      out.autoDone = !!(row.consultant_id && meta.assignmentId && (row.worker_type !== 'C2C' || !vendorOf(row.worker_type, Object.assign({ consultant_name: row.consultant_name }, data)) || row.supplier_id));
     }
     if (c.answer) out.done = !out.na && !!out.value;
     else if (c.formOnly) out.done = !out.na && (!!out.autoDone || !!st.done); // st.done only from before the form existed
@@ -387,7 +387,7 @@ router.get('/', async (req, res, next) => {
           id: r.id, workerType: r.worker_type, status: r.status, consultantName: r.consultant_name,
           startDate: dateStr(r.start_date), endClient: data.end_client || '', recruiter: data.recruiter || '',
           progress: progress(checklistView(r, data, parse(r.checklist, {}), states, docs)), updatedAt: r.updated_at,
-          newVendor: !!(names && r.worker_type === 'C2C' && ['submitted', 'in_progress'].includes(r.status) && data.employer_name && r.status !== 'complete' && !names.some((x) => x.id === r.supplier_id || (x.key && x.key === normCompany(data.employer_name)))),
+          newVendor: !!(names && r.worker_type === 'C2C' && ['submitted', 'in_progress'].includes(r.status) && vendorOf('C2C', Object.assign({ consultant_name: r.consultant_name }, data)) && r.status !== 'complete' && !names.some((x) => x.id === r.supplier_id || (x.key && x.key === normCompany(vendorOf('C2C', Object.assign({ consultant_name: r.consultant_name }, data)))))),
         };
       }),
     });
@@ -621,16 +621,24 @@ router.delete('/:id/documents/:docId', async (req, res, next) => {
 
 // ---- is the consultant's company a new vendor (or one without its paperwork)?
 const normCompany = (n) => String(n || '').toLowerCase().replace(/[.,'’]/g, '').replace(/&/g, ' and ').replace(/\b(l\s?l\s?c|inc|incorporated|corp|corporation|co|company|ltd|limited|llp|lp|pllc|pc)\b/g, ' ').replace(/[^a-z0-9]+/g, ' ').trim();
+// The vendor / company a C2C request pays: the consultant's company, or the "Pay to" name when that is a company.
+const vendorOf = (type, d) => {
+  if (type !== 'C2C' || !d) return '';
+  if (d.employer_name) return String(d.employer_name).trim();
+  const pt = String(d.pay_to || '').trim();
+  return pt && normCompany(pt) !== normCompany(d.consultant_name) ? pt : '';
+};
 async function supplierNames(orgId) {
   const [r] = await pool.query('SELECT id, name FROM subvendors WHERE organization_id = ?', [orgId]);
   return r.map((x) => ({ id: x.id, name: x.name, key: normCompany(x.name) }));
 }
 async function vendorCheck(row, data, names) {
-  if (row.worker_type !== 'C2C' || !data.employer_name || !['draft', 'submitted', 'in_progress'].includes(row.status)) return null;
-  const key = normCompany(data.employer_name);
+  const vname = vendorOf(row.worker_type, Object.assign({ consultant_name: row.consultant_name }, data));
+  if (!vname || !['draft', 'submitted', 'in_progress'].includes(row.status)) return null;
+  const key = normCompany(vname);
   const all = names || await supplierNames(row.organization_id);
   const hit = all.find((x) => x.id === row.supplier_id) || all.find((x) => x.key && x.key === key);
-  const out = { name: data.employer_name, email: data.employer_email || '', state: 'new', supplierId: null, missing: [] };
+  const out = { name: vname, email: data.employer_email || '', state: 'new', supplierId: null, missing: [] };
   if (!hit) { out.suggest = ['company', 'w9', 'banking', 'coi', 'vendor_agreement']; return out; }
   out.supplierId = hit.id; out.supplierName = hit.name;
   const [fr] = await pool.query(`SELECT form_type, signatures FROM record_forms WHERE organization_id = ? AND entity = 'subvendors' AND record_id = ? AND form_type IN ('w9','banking')`, [row.organization_id, hit.id]);
@@ -710,13 +718,14 @@ router.post('/:id/vendor-requests', async (req, res, next) => {
     if (emailIn && emailIn !== data.employer_email) { data.employer_email = emailIn; addLog(row, req, `Supplier email set to ${emailIn}.`); await save(row, { data: JSON.stringify(data) }); }
     let supplierId = row.supplier_id;
     if (!supplierId) {
-      if (!data.employer_name) return res.status(422).json({ error: 'Fill in the consultant’s company (candidate employer) on the request first.' });
-      const [ex] = await pool.query('SELECT id FROM subvendors WHERE organization_id = ? AND LOWER(name) = LOWER(?)', [row.organization_id, data.employer_name]);
+      const vname = vendorOf(row.worker_type, Object.assign({ consultant_name: row.consultant_name }, data));
+      if (!vname) return res.status(422).json({ error: 'Fill in the consultant’s company (candidate employer) on the request first.' });
+      const [ex] = await pool.query('SELECT id FROM subvendors WHERE organization_id = ? AND LOWER(name) = LOWER(?)', [row.organization_id, vname]);
       if (ex[0]) supplierId = ex[0].id;
       else {
         // listed as inactive until the supplier submits their onboarding
         const [r] = await pool.query(`INSERT INTO subvendors (organization_id, name, status, email, phone) VALUES (?, ?, 'inactive', ?, ?)`,
-          [row.organization_id, oneLine(data.employer_name), data.employer_email || null, data.employer_phone || null]);
+          [row.organization_id, oneLine(vname), data.employer_email || null, data.employer_phone || null]);
         supplierId = r.insertId;
       }
       row.supplier_id = supplierId;
@@ -729,7 +738,31 @@ router.post('/:id/vendor-requests', async (req, res, next) => {
     addLog(row, req, `Requested from the supplier (secure link, ${days} days): ${items.map((k) => vendorItems.ITEMS[k].label).join(', ')}.`);
     await save(row, { supplier_id: supplierId, log: row.log });
     const [rs] = await pool.query('SELECT * FROM vendor_requests WHERE id = ?', [ins.insertId]);
-    res.status(201).json({ request: await requestView(row, rs[0]), path: '/vendor.html?t=' + token, supplierEmail: data.employer_email || '', supplierContact: data.employer_contact || '', company: data.employer_name || '', consultant: row.consultant_name });
+    res.status(201).json({ request: await requestView(row, rs[0]), path: '/vendor.html?t=' + token, supplierEmail: data.employer_email || '', supplierContact: data.employer_contact || '', company: vendorOf(row.worker_type, Object.assign({ consultant_name: row.consultant_name }, data)), consultant: row.consultant_name });
+  } catch (err) { if (missingTable(err)) return res.status(503).json({ error: SCHEMA_MSG }); next(err); }
+});
+
+// Add the request's vendor to the Directory now (without sending a link).
+router.post('/:id/add-vendor', async (req, res, next) => {
+  try {
+    if (!isHr(req)) return denyHr(res);
+    const row = await load(req, res); if (!row) return;
+    const data = parse(row.data, {});
+    const vname = vendorOf(row.worker_type, Object.assign({ consultant_name: row.consultant_name }, data));
+    if (!vname) return res.status(422).json({ error: 'There is no vendor / company name on this request.' });
+    const emailIn = String((req.body && req.body.email) || '').trim();
+    if (emailIn && !EMAIL_RE.test(emailIn)) return res.status(400).json({ error: 'Enter a valid email address.' });
+    const [ex] = await pool.query('SELECT id FROM subvendors WHERE organization_id = ? AND LOWER(name) = LOWER(?)', [row.organization_id, vname]);
+    let id = ex[0] && ex[0].id;
+    if (!id) {
+      const [r] = await pool.query(`INSERT INTO subvendors (organization_id, name, status, email, phone) VALUES (?, ?, 'active', ?, ?)`, [row.organization_id, oneLine(vname), emailIn || data.employer_email || null, data.employer_phone || null]);
+      id = r.insertId;
+    }
+    if (emailIn) { data.employer_email = emailIn; }
+    addLog(row, req, `Vendor “${vname}” ${ex[0] ? 'linked' : 'added to the Directory'}.`);
+    await save(row, { supplier_id: id, data: JSON.stringify(data), log: row.log });
+    const [rows] = await pool.query('SELECT * FROM onboardings WHERE id = ?', [row.id]);
+    res.status(ex[0] ? 200 : 201).json(await present(rows[0], { allowedNext: NEXT[rows[0].status] }, req));
   } catch (err) { if (missingTable(err)) return res.status(503).json({ error: SCHEMA_MSG }); next(err); }
 });
 
@@ -796,9 +829,10 @@ router.post('/:id/create-records', async (req, res, next) => {
 
     // Supplier company (the consultant's own company, C2C)
     let supplierId = null;
-    if (row.worker_type === 'C2C' && data.employer_name) {
+    const vnameRec = vendorOf(row.worker_type, Object.assign({ consultant_name: row.consultant_name }, data));
+    if (row.worker_type === 'C2C' && vnameRec) {
       const eAddr = [data.employer_address, [data.employer_city, data.employer_state, data.employer_zip].filter(Boolean).join(' ')].filter(Boolean).join(', ');
-      const sup = await find(`SELECT id FROM subvendors WHERE organization_id = ? AND LOWER(name) = LOWER(?)`, [orgId, data.employer_name]);
+      const sup = await find(`SELECT id FROM subvendors WHERE organization_id = ? AND LOWER(name) = LOWER(?)`, [orgId, vnameRec]);
       if (sup) {
         supplierId = sup.id;
         await conn.query(`UPDATE subvendors SET status = 'active', email = COALESCE(NULLIF(email, ''), ?), phone = COALESCE(NULLIF(phone, ''), ?), address = COALESCE(NULLIF(address, ''), ?) WHERE id = ?`,
@@ -806,7 +840,7 @@ router.post('/:id/create-records', async (req, res, next) => {
         made.push('linked the supplier company');
       } else {
         const [r] = await conn.query(`INSERT INTO subvendors (organization_id, name, status, email, phone, address) VALUES (?, ?, 'active', ?, ?, ?)`,
-          [orgId, data.employer_name, data.employer_email || null, data.employer_phone || null, eAddr || null]);
+          [orgId, vnameRec, data.employer_email || null, data.employer_phone || null, eAddr || null]);
         supplierId = r.insertId; made.push('created the supplier company');
       }
       await mergeProfile(conn, orgId, 'subvendors', supplierId, {
