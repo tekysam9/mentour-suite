@@ -20,6 +20,7 @@
     upload: '<path d="M12 16V4M7 9l5-5 5 5M4 20h16"/>',
     history: '<path d="M3 12a9 9 0 1 0 3-6.7M3 4v5h5M12 7v5l3 2"/>',
     clipboard: '<rect x="6" y="4" width="12" height="17" rx="2"/><path d="M9 4h6v3H9zM9 12h6M9 16h4"/>',
+    help: '<circle cx="12" cy="12" r="9"/><path d="M9.5 9.5a2.5 2.5 0 1 1 3.5 2.3c-.6.3-1 .9-1 1.6v.6M12 17h.01"/>',
     menu: '<path d="M4 6h16M4 12h16M4 18h16"/>',
     panel: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/>'
   };
@@ -44,7 +45,9 @@
     { label: 'Supplier payments', href: '/invoices.html#subvendor', icon: 'pay', page: ['/invoices.html'], tab: 'subvendor', crumb: ['Fin-Module', 'Supplier payments'] },
     { label: 'Year & month view', href: '/invoices.html#history', icon: 'calendar', page: ['/invoices.html'], tab: 'history', crumb: ['Fin-Module', 'Year & month view'] },
     { label: 'Import hours', href: '/invoices.html#import', icon: 'upload', page: ['/invoices.html'], tab: 'import', crumb: ['Fin-Module', 'Import hours'] },
-    { label: 'Import history', href: '/invoices.html#hximport', icon: 'history', page: ['/invoices.html'], tab: 'hximport', crumb: ['Fin-Module', 'Import history'] }
+    { label: 'Import history', href: '/invoices.html#hximport', icon: 'history', page: ['/invoices.html'], tab: 'hximport', crumb: ['Fin-Module', 'Import history'] },
+    { section: 'Support', everyone: true },
+    { label: 'Help', href: '/help.html', icon: 'help', page: ['/help.html'], crumb: ['Support', 'Help'], everyone: true }
   ];
   var BADGES = {};
   var ROLE = ls('ms-role'); // a recruiter login sees only the Onboarding module
@@ -91,7 +94,7 @@
     var cur = currentItem();
     var out = '';
     NAV.forEach(function (n) {
-      if (ROLE === 'recruiter' && !(n.section === 'People' || n.badgeKey)) return;
+      if (ROLE === 'recruiter' && !(n.section === 'People' || n.badgeKey || n.everyone)) return;
       if (n.section) { out += '<div class="app-nav-label">' + esc(n.section) + '</div>'; return; }
       var child = n.href.indexOf('#') !== -1;
       out += '<a href="' + n.href + '" class="' + (child ? 'child' : '') + (n === cur ? ' active' : '') + '"' + (n === cur ? ' aria-current="page"' : '') + ' title="' + esc(n.label) + '">' + svg(n.icon) + '<span>' + esc(n.label) + '</span>' + (n.badgeKey && BADGES[n.badgeKey] ? '<em class="app-badge" title="Waiting for HR approval">' + BADGES[n.badgeKey] + '</em>' : '') + '</a>';
@@ -135,7 +138,7 @@
     document.getElementById('app-uname').textContent = n;
     ls('ms-role', u.role);
     if (u.role !== ROLE) { ROLE = u.role; paintNav(); }
-    if (u.role === 'recruiter' && location.pathname !== '/onboarding.html') location.replace('/onboarding.html');
+    if (u.role === 'recruiter' && location.pathname !== '/onboarding.html' && location.pathname !== '/help.html') location.replace('/onboarding.html');
     document.getElementById('app-uorg').textContent = (u.organization && u.organization.name) || '';
   }).catch(function () { /* the page itself redirects to login */ });
 

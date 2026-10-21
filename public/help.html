@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Help — Mentour Suite</title>
+<link rel="stylesheet" href="/shared.css">
+<link rel="stylesheet" href="/shell.css">
+<link rel="stylesheet" href="/theme.css">
+<style>
+  .help-wrap { max-width: 860px; padding: 8px 4px 48px; }
+  .help-wrap h1 { margin: 0 0 4px; }
+  .help-role { display: inline-block; margin: 0 0 18px; padding: 3px 10px; border-radius: 999px; background: #E8F1FD; color: #0B5CAD; font-size: 13px; font-weight: 600; }
+  .help-toc { background: #fff; border: 1px solid #E3E6EA; border-radius: 10px; padding: 14px 20px; margin: 0 0 22px; }
+  .help-toc ol { margin: 6px 0 0; padding-left: 20px; columns: 2; }
+  .help-toc a { color: #0B5CAD; text-decoration: none; }
+  .help-sec { background: #fff; border: 1px solid #E3E6EA; border-radius: 10px; padding: 18px 22px; margin: 0 0 16px; line-height: 1.55; }
+  .help-sec h2 { margin: 0 0 10px; font-size: 19px; }
+  .help-sec h3 { margin: 16px 0 6px; font-size: 15px; }
+  .help-note { background: #FFF7E6; border-left: 3px solid #E0A100; padding: 8px 12px; border-radius: 4px; }
+  .help-sec table { border-collapse: collapse; width: 100%; font-size: 14px; }
+  .help-sec td, .help-sec th { border: 1px solid #E3E6EA; padding: 6px 8px; text-align: left; vertical-align: top; }
+  .help-sec th { background: #F5F7F9; }
+  @media (max-width: 700px) { .help-toc ol { columns: 1; } }
+</style>
+</head>
+<body>
+<div id="app"><p style="padding:24px">Loading help…</p></div>
+<script src="/shell.js"></script>
+<script src="/help-content.js"></script>
+<script>
+(function () {
+  function esc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
+  function block(b) {
+    if (b.h) return '<h3>' + esc(b.h) + '</h3>';
+    if (b.p) return '<p>' + esc(b.p) + '</p>';
+    if (b.note) return '<p class="help-note">' + esc(b.note) + '</p>';
+    if (b.steps) return '<ol>' + b.steps.map(function (x) { return '<li>' + esc(x) + '</li>'; }).join('') + '</ol>';
+    if (b.bullets) return '<ul>' + b.bullets.map(function (x) { return '<li>' + esc(x) + '</li>'; }).join('') + '</ul>';
+    if (b.table) return '<table><tr>' + b.table[0].map(function (c) { return '<th>' + esc(c) + '</th>'; }).join('') + '</tr>' +
+      b.table.slice(1).map(function (r) { return '<tr>' + r.map(function (c) { return '<td>' + esc(c) + '</td>'; }).join('') + '</tr>'; }).join('') + '</table>';
+    return ''; // screenshots are in the Word manuals only
+  }
+  fetch('/api/auth/me').then(function (r) {
+    if (r.status !== 200) { location.href = '/login.html'; return null; }
+    return r.json();
+  }).then(function (d) {
+    if (!d || !d.user) return;
+    var role = d.user.role, H = window.MS_HELP, secs = H.forRole(role);
+    var html = '<div class="help-wrap" id="help"><h1>Help</h1>' +
+      '<div class="help-role" id="help-role">Showing help for: ' + esc(H.ROLE_NAMES[role] || role) + '</div>' +
+      '<nav class="help-toc"><b>Contents</b><ol>' + secs.map(function (s) { return '<li><a href="#help-' + s.id + '">' + esc(s.title) + '</a></li>'; }).join('') + '</ol></nav>' +
+      secs.map(function (s) { return '<section class="help-sec" id="help-' + s.id + '" data-sec="' + s.id + '"><h2>' + esc(s.title) + '</h2>' + s.body.map(block).join('') + '</section>'; }).join('') +
+      '</div>';
+    document.getElementById('app').innerHTML = html;
+  });
+})();
+</script>
+</body>
+</html>

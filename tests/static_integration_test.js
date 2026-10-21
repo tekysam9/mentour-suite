@@ -115,6 +115,24 @@ async function main() {
       CA.aliasKey('ROSE/ University of MO') === CA.aliasKey('rose /university  of mo'));
     check('invoices.html reads every sheet via ImportHours.parseHoursSheets', invHtml.includes('ImportHours.parseHoursSheets(wb.SheetNames.map('));
 
+    // In-app Help page: served, linked from the shell for every role, and filtered by role
+    for (const p of ['/help.html', '/help-content.js']) { const r = await fetch(BASE + p); check('GET ' + p + ' -> 200', r.status === 200, r.status); }
+    const HELP = require('../public/help-content.js');
+    const ids = (role) => HELP.forRole(role).map((x) => x.id);
+    const txt = (role) => JSON.stringify(HELP.forRole(role));
+    check('help: every role gets sign-in and confirmation sections', ['owner', 'hr', 'recruiter', 'member'].every((r) => ids(r).includes('signin') && ids(r).includes('confirm')));
+    check('help: recruiter sees only onboarding (no Ledger / Margin / Directory / Fin-Module / HR sections)',
+      ['ledger', 'margin', 'directory', 'invoices', 'import', 'supplier', 'home', 'onb-hr', 'checklist', 'forms', 'vendor-link', 'people'].every((k) => !ids('recruiter').includes(k)) && ids('recruiter').includes('onb-recruiter'));
+    check('help: recruiter text never shows the banking form steps', !/ACH or Wire, then enter the bank details/.test(txt('recruiter')) && /Handled by HR/.test(txt('recruiter')));
+    check('help: HR admin and owner get checklist, forms, vendor link and people sections', ['owner', 'hr'].every((r) => ['onb-hr', 'checklist', 'forms', 'vendor-link', 'people', 'invoices', 'ledger'].every((k) => ids(r).includes(k))));
+    check('help: owner-only blocks hidden from HR admin', !/Change anyone’s role/.test(txt('hr')) && /Change anyone’s role/.test(txt('owner')));
+    check('help: an unknown role gets no sections', ids('nobody').length === 0);
+    const shellJs = fs.readFileSync(path.join(pubDir, 'shell.js'), 'utf8');
+    check('shell: Help link in the menu for everyone', /label: 'Help', href: '\/help.html'[^}]*everyone: true/.test(shellJs) && shellJs.includes('n.everyone'));
+    check('shell: recruiters are not redirected away from Help', shellJs.includes("location.pathname !== '/help.html'"));
+    const helpHtml = fs.readFileSync(path.join(pubDir, 'help.html'), 'utf8');
+    check('help.html filters by the signed-in role', helpHtml.includes('/api/auth/me') && helpHtml.includes('forRole(role)'));
+
     // "/" should serve index.html (express.static default)
     const rootRes = await fetch(BASE + '/');
     check('GET / -> 200 (serves index.html)', rootRes.status === 200);
