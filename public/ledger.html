@@ -397,10 +397,11 @@
       else if (lastMonthIdx === -1) status = 'Left';
       else status = 'Inactive';
 
-      var totalCost = 0, totalHours = 0;
+      var totalCost = 0, totalHours = 0, paidCost = 0, unpaidCost = 0, unpaidCount = 0;
       var rates = [];
       c.placements.forEach(function (p) {
         totalCost += (p.amount || 0);
+        if (p.unpaid) { unpaidCost += (p.amount || 0); unpaidCount += 1; } else paidCost += (p.amount || 0);
         totalHours += (p.hours || 0);
         if (p.rate !== null && p.rate !== undefined) rates.push(p.rate);
       });
@@ -419,7 +420,7 @@
 
       return {
         key: c.key, name: c.name, placements: sorted, leftFlag: c.leftFlag, leftNote: c.leftNote,
-        status: status, totalCost: totalCost, totalHours: totalHours, minRate: minRate, maxRate: maxRate,
+        status: status, totalCost: totalCost, paidCost: paidCost, unpaidCost: unpaidCost, unpaidCount: unpaidCount, totalHours: totalHours, minRate: minRate, maxRate: maxRate,
         subvendors: subvendors, clientTags: clientTags, currentSubvendor: currentSubvendor,
         currentClient: currentClient, lastActiveMonth: lastActiveMonth, placementCount: c.placements.length,
       };
@@ -519,8 +520,8 @@
     var statusCounts = { Active: 0, Left: 0, Inactive: 0 };
     consultants.forEach(function (c) { statusCounts[c.status] = (statusCounts[c.status] || 0) + 1; });
 
-    var totalCost = 0;
-    allPlacements.forEach(function (p) { totalCost += (p.amount || 0); });
+    var totalCost = 0, unpaidTotal = 0, unpaidCount = 0;
+    allPlacements.forEach(function (p) { totalCost += (p.amount || 0); if (p.unpaid) { unpaidTotal += (p.amount || 0); unpaidCount += 1; } });
     var otherTotal = 0;
     otherPayments.forEach(function (r) { otherTotal += (r.amount || 0); });
 
@@ -533,6 +534,7 @@
         totalConsultants: consultants.length,
         totalSubvendors: subvendorOrder.length,
         totalCost: totalCost,
+        unpaidTotal: unpaidTotal, paidTotal: totalCost - unpaidTotal, unpaidCount: unpaidCount, paymentCount: allPlacements.length,
         otherTotal: otherTotal,
         monthsCovered: monthOrder.length,
         latestMonth: monthOrder[monthOrder.length - 1] || '\u2014',
@@ -584,7 +586,7 @@
     loading: false,
     error: null,
     diagnostics: null,
-    filters: { search: '', status: 'All', client: 'All', subvendor: 'All', month: 'All' },
+    filters: { search: '', status: 'All', client: 'All', subvendor: 'All', month: 'All', payment: 'All' },
     sort: { key: 'totalCost', dir: 'desc' },
     expandedKey: null,
     otherOpen: false,
@@ -602,6 +604,26 @@
      FILTER / SORT
      ========================================================================= */
 
+  // paid / unpaid selection for one payment line
+  function paymentMatches(p) {
+    var f = state.filters.payment;
+    return f === 'All' || (f === 'unpaid' ? !!p.unpaid : !p.unpaid);
+  }
+  // every payment line that passes the month / client / supplier / paid-unpaid filters, for the consultants currently listed
+  function matchingPayments(consultants) {
+    var f = state.filters, out = [];
+    consultants.forEach(function (c) {
+      c.placements.forEach(function (p) {
+        if (f.month !== 'All' && p.month !== f.month) return;
+        if (f.client !== 'All' && p.clientTag !== f.client) return;
+        if (f.subvendor !== 'All' && p.subvendor !== f.subvendor) return;
+        if (!paymentMatches(p)) return;
+        out.push({ c: c, p: p });
+      });
+    });
+    return out;
+  }
+
   function getFilteredSorted() {
     if (!state.data) return [];
     var list = state.data.consultants;
@@ -617,6 +639,9 @@
     if (state.filters.subvendor !== 'All') list = list.filter(function (c) { return c.subvendors.indexOf(state.filters.subvendor) > -1; });
     if (state.filters.month !== 'All') list = list.filter(function (c) {
       return c.placements.some(function (p) { return p.month === state.filters.month; });
+    });
+    if (state.filters.payment !== 'All') list = list.filter(function (c) {
+      return c.placements.some(function (p) { return paymentMatches(p); });
     });
 
     var dir = state.sort.dir === 'asc' ? 1 : -1;
@@ -671,6 +696,7 @@
       renderKpiStrip(state.data) +
       renderCharts(state.data) +
       renderFilterBar(state.data, filtered.length) +
+      renderSummaryBar(filtered) +
       renderTableSection(filtered) +
       renderOtherPayments(state.data) +
       renderFooter(state.data);
@@ -801,12 +827,12 @@
     }
     return (
       '<div class="cl-kpi-strip">' +
-        tile('Consultants', d.kpis.totalConsultants, d.statusCounts.Active + ' active now') +
-        tile('Active', d.statusCounts.Active, 'in ' + d.kpis.latestMonth) +
-        tile('Left', d.statusCounts.Left, 'all placements closed') +
-        tile('No recent activity', d.statusCounts.Inactive, 'not seen lately') +
+        tile('Consultants', d.kpis.totalConsultants, d.statusCounts.Active + ' active · ' + d.statusCounts.Left + ' left') +
         tile('Suppliers', d.kpis.totalSubvendors, 'distinct companies') +
-        tile('Total paid to suppliers', fmtUSD(d.kpis.totalCost), d.kpis.monthsCovered + ' months') +
+        tile('All payments', fmtUSD(d.kpis.totalCost), d.kpis.paymentCount + ' payments · ' + d.kpis.monthsCovered + ' months') +
+        '<div class="cl-kpi cl-kpi-paid"><div class="cl-kpi-top">Paid</div><div class="cl-kpi-value" style="color:#1B7A3A">' + fmtUSD(d.kpis.paidTotal) + '</div><div class="cl-kpi-sub">' + (d.kpis.paymentCount - d.kpis.unpaidCount) + ' payments</div></div>' +
+        '<div class="cl-kpi cl-kpi-unpaid"><div class="cl-kpi-top">Unpaid</div><div class="cl-kpi-value" style="color:' + (d.kpis.unpaidCount ? '#B3261E' : 'inherit') + '">' + fmtUSD(d.kpis.unpaidTotal) + '</div><div class="cl-kpi-sub">' + d.kpis.unpaidCount + ' payment' + (d.kpis.unpaidCount === 1 ? '' : 's') + ' <a href="#" data-action="show-unpaid" style="color:var(--pine)">show only these</a></div></div>' +
+        tile('Latest month', d.kpis.latestMonth, 'in the data') +
       '</div>'
     );
   }
@@ -929,6 +955,9 @@
           opt('All', 'All subvendors', f.subvendor) +
           subvendorOptions.map(function (s) { return opt(s, s, f.subvendor); }).join('') +
         '</select>' +
+        '<select data-filter="payment">' +
+          opt('All', 'Paid and unpaid', f.payment) + opt('paid', 'Paid only', f.payment) + opt('unpaid', 'Unpaid only', f.payment) +
+        '</select>' +
         '<select data-filter="month">' +
           opt('All', 'Any month', f.month) +
           d.monthOrder.map(function (m) { return opt(m, m, f.month); }).join('') +
@@ -937,6 +966,17 @@
         '<button class="cl-reset" data-action="reset-filters" type="button">Reset</button>' +
       '</div>'
     );
+  }
+
+  // Totals for exactly what the filters above are showing
+  function renderSummaryBar(filtered) {
+    var m = matchingPayments(filtered), total = 0, paid = 0, unpaid = 0, nUnpaid = 0;
+    m.forEach(function (x) { var a = x.p.amount || 0; total += a; if (x.p.unpaid) { unpaid += a; nUnpaid += 1; } else paid += a; });
+    var chip = function (label, val, color) { return '<span style="display:inline-flex;gap:6px;align-items:baseline;margin-right:22px"><span style="color:#5E6A75;font-size:12px">' + label + '</span><b style="font-size:16px;color:' + color + '">' + fmtUSD(val) + '</b></span>'; };
+    return '<div class="cl-summary" style="display:flex;align-items:center;flex-wrap:wrap;gap:4px;padding:10px 24px;background:#F7FAFE;border-bottom:1px solid var(--line)">' +
+      '<span style="font-size:12px;color:#5E6A75;margin-right:16px">Totals for what is shown (' + m.length + ' payment' + (m.length === 1 ? '' : 's') + '):</span>' +
+      chip('Total', total, 'var(--ink)') + chip('Paid', paid, '#1B7A3A') + chip('Unpaid (' + nUnpaid + ')', unpaid, unpaid ? '#B3261E' : 'var(--ink)') +
+      '<button class="cl-btn" data-action="export-payments" type="button" style="margin-left:auto">Export these payments (CSV)</button></div>';
   }
 
   function renderTableSection(filtered) {
@@ -992,7 +1032,8 @@
         '<td>' + clientBadge(c.currentClient, false) + '</td>' +
         '<td>' + statusBadge(c.status) + '</td>' +
         '<td class="cl-mono">' + escapeHtml(c.lastActiveMonth) + '</td>' +
-        '<td class="cl-mono cl-cost-cell">' + fmtUSD(c.totalCost) + '</td>' +
+        '<td class="cl-mono cl-cost-cell">' + fmtUSD(c.totalCost) +
+          (c.unpaidCount ? '<div style="font-size:11px;font-weight:600;color:#B3261E">' + fmtUSD(c.unpaidCost) + ' unpaid</div>' : '') + '</td>' +
         '<td class="cl-mono">' + fmtRate(c) + '</td>' +
         '<td class="cl-mono">' + (c.totalHours ? Math.round(c.totalHours) : '\u2014') + '</td>' +
       '</tr>'
@@ -1011,9 +1052,10 @@
         '</div>';
     }
 
-    var placementRows = c.placements.map(function (p) {
+    var placementRows = c.placements.filter(paymentMatches).map(function (p) {
       var check = (p.verify !== null && p.amount !== null && Math.abs(p.verify - p.amount) > 0.5) ? fmtUSD2(p.verify) : '\u2014';
-      var notesOrPaid = p.notes ? escapeHtml(p.notes) : (p.paidDate ? ('Paid ' + fmtDate(p.paidDate)) : '\u2014');
+      var payBadge = p.unpaid ? '<span style="font-weight:700;color:#B3261E">Unpaid</span> ' : '<span style="font-weight:700;color:#1B7A3A">Paid</span> ';
+      var notesOrPaid = payBadge + (p.notes ? escapeHtml(p.notes) : (p.paidDate ? (fmtDate(p.paidDate)) : ''));
       return (
         '<tr>' +
           '<td>' + escapeHtml(p.month) + '</td>' +
@@ -1232,6 +1274,20 @@
       .catch(function (err) { if (/^Cancelled/.test(err.message)) return; state.formError = err.message; render(); });
   }
 
+  function exportPayments(consultants) {
+    var header = ['Consultant', 'Month', 'Supplier', 'Client', 'Period', 'Rate ($/hr)', 'Hours', 'Amount', 'Payment', 'Paid date', 'Notes'];
+    var rows = matchingPayments(consultants).map(function (x) {
+      var p = x.p;
+      return [x.c.name, p.month, p.subvendor, p.clientTag, p.period || '', p.rate !== null && p.rate !== undefined ? p.rate : '', p.hours !== null && p.hours !== undefined ? p.hours : '',
+        p.amount !== null && p.amount !== undefined ? Number(p.amount).toFixed(2) : '', p.unpaid ? 'Unpaid' : 'Paid', p.paidDate ? fmtDate(p.paidDate) : '', p.notes || ''];
+    });
+    var csv = [header].concat(rows).map(function (r) { return r.map(function (cell) { return '"' + String(cell).replace(/"/g, '""') + '"'; }).join(','); }).join('\n');
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8;' }));
+    a.download = 'ledger-payments' + (state.filters.payment !== 'All' ? '-' + state.filters.payment : '') + '.csv';
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  }
+
   function exportCSV(consultants) {
     var header = ['Consultant', 'Supplier', 'Client', 'Status', 'Last active month', 'Total cost to Mentour', 'Billing rate ($/hr)', 'Total hours', 'Placements'];
     var rows = consultants.map(function (c) {
@@ -1300,10 +1356,13 @@
     if (savePayBtn) { savePayment(savePayBtn.closest('[data-payment-form]')); return; }
     var resetBtn = e.target.closest('[data-action="reset-filters"]');
     if (resetBtn) {
-      state.filters = { search: '', status: 'All', client: 'All', subvendor: 'All', month: 'All' };
+      state.filters = { search: '', status: 'All', client: 'All', subvendor: 'All', month: 'All', payment: 'All' };
       render();
       return;
     }
+    if (e.target.closest('[data-action="show-unpaid"]')) { e.preventDefault(); state.filters.payment = 'unpaid'; render(); return; }
+    var exportPayBtn = e.target.closest('[data-action="export-payments"]');
+    if (exportPayBtn) { exportPayments(getFilteredSorted()); return; }
     var exportBtn = e.target.closest('[data-action="export-csv"]');
     if (exportBtn) {
       exportCSV(getFilteredSorted());
