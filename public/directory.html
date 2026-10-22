@@ -136,6 +136,7 @@
     loading: false,
     editingId: null, // record id currently being edited, or null
     saveStatus: null, // 'saving' | 'saved' | 'error' | null, for the row being edited
+    search: '',
     statusFilter: 'active', // 'all' | 'active' | 'inactive' | 'none' (not set)
     dupeBusyId: null, // flag_id currently being merged/dismissed, or null
     expandedAssignmentsId: null, // consultant id whose Assignments panel is open, or null
@@ -299,16 +300,25 @@
   }
 
   function renderTable(tab, allRecords) {
-    var records = state.statusFilter === 'all' ? allRecords
+    // A search looks through everyone, whatever their status; otherwise the status filter applies.
+    var q = state.search.trim().toLowerCase();
+    var records = q ? allRecords.filter(function (r) {
+        return String(r.name || '').toLowerCase().indexOf(q) > -1 || String(r.email || '').toLowerCase().indexOf(q) > -1;
+      })
+      : state.statusFilter === 'all' ? allRecords
       : allRecords.filter(function (r) {
         return state.statusFilter === 'none' ? (r.status !== 'active' && r.status !== 'inactive') : r.status === state.statusFilter;
       });
+    var hiddenNote = (!q && state.statusFilter !== 'all' && allRecords.length > records.length)
+      ? '<div class="dir-hidden-note" style="margin:0 0 10px;padding:9px 14px;background:#FFF8E6;border:1px solid #F2D58A;border-radius:8px;font-size:13px;color:#7A4A00">' +
+        (allRecords.length - records.length) + ' more ' + tab.label.toLowerCase() + ' are not shown because they are inactive or have no status set. ' +
+        '<a href="#" data-action="dir-show-all" style="color:var(--pine);font-weight:600">Show all</a></div>' : '';
 
     if (!allRecords.length) {
       return '<div class="dir-empty-state">No ' + tab.label.toLowerCase() + ' yet — upload a file in Ledger or Margin and they’ll show up here automatically.</div>';
     }
     if (!records.length) {
-      return '<div class="dir-empty-state">No ' + (state.statusFilter === 'none' ? 'status-not-set' : state.statusFilter) + ' ' + tab.label.toLowerCase() + '.</div>';
+      return hiddenNote + '<div class="dir-empty-state">' + (q ? 'Nothing matches “' + escapeHtml(state.search.trim()) + '”.' : 'No ' + (state.statusFilter === 'none' ? 'status-not-set' : state.statusFilter) + ' ' + tab.label.toLowerCase() + '.') + '</div>';
     }
     var extraCol = tab.key === 'programs' ? '<th>Client</th>'
       : tab.key === 'consultants' ? '<th>Client</th><th>Vendor</th><th>Billing</th>' : '';
@@ -361,7 +371,7 @@
       return out;
     }).join('');
 
-    return '<div class="dir-table-wrap"><table class="dir-table"><thead><tr>' +
+    return hiddenNote + '<div class="dir-table-wrap"><table class="dir-table"><thead><tr>' +
       '<th>Name</th>' + extraCol + '<th>Status</th><th>Email</th><th>Phone</th><th>Address</th><th>Seen in</th><th></th>' +
       '</tr></thead><tbody>' + rows + '</tbody></table></div>';
   }
@@ -512,7 +522,7 @@
       var addLabel = { consultants: 'consultant', clients: 'client', programs: 'vendor', subvendors: 'supplier company' }[activeTab.key];
       var addBtn = addLabel ? '<a class="dir-btn dir-btn-primary dir-add-btn" href="/record.html?type=' + activeTab.key + '&new=1">+ Add ' + addLabel + '</a>' : '';
       controls = addBtn +
-        '<div class="dir-controls"><select data-filter="status">' +
+        '<div class="dir-controls"><input type="search" id="dir-search" placeholder="Search by name or email (all statuses)…" value="' + escapeHtml(state.search) + '" style="min-width:260px;margin-right:10px"><select data-filter="status">' +
           '<option value="all"' + (state.statusFilter === 'all' ? ' selected' : '') + '>All statuses</option>' +
           '<option value="active"' + (state.statusFilter === 'active' ? ' selected' : '') + '>Active</option>' +
           '<option value="inactive"' + (state.statusFilter === 'inactive' ? ' selected' : '') + '>Inactive</option>' +
@@ -873,6 +883,18 @@
     }
   });
 
+  appEl.addEventListener('input', function (e) {
+    if (e.target.id !== 'dir-search') return;
+    var pos = e.target.selectionStart;
+    state.search = e.target.value;
+    render();
+    var el = document.getElementById('dir-search');
+    if (el) { el.focus(); try { el.setSelectionRange(pos, pos); } catch (x) { /* ignore */ } }
+  });
+  appEl.addEventListener('click', function (e) {
+    if (e.target.closest('[data-action="dir-show-all"]')) { e.preventDefault(); state.statusFilter = 'all'; render(); }
+  });
+
   appEl.addEventListener('change', function (e) {
     var statusSelect = e.target.closest('[data-filter="status"]');
     if (statusSelect) {
@@ -888,6 +910,7 @@
     state.editingId = null;
     state.saveStatus = null;
     state.statusFilter = 'active';
+    state.search = '';
     if (fromClick) { try { history.replaceState(null, '', '#' + key); } catch (e) { /* ignore */ } window.dispatchEvent(new Event('shell-nav')); }
     loadTab(key);
   }
