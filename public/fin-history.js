@@ -126,6 +126,7 @@ function renderHistoryTab() {
     histCard('Consultants', histFmt(s.consultants), 'with an invoice') +
     histCard('Hours', histFmt(Math.round(s.hours * 100) / 100), '') +
     histCard('Billed', histMoney(s.amount), '') +
+    histCard('Paid', histMoney(s.amount - s.unpaidAmount), s.amount ? Math.round((s.amount - s.unpaidAmount) / s.amount * 100) + '% of billed' : '') +
     histCard('Unpaid', histMoney(s.unpaidAmount), s.amount ? Math.round(s.unpaidAmount / s.amount * 100) + '% of billed' : '') +
   '</div>';
 

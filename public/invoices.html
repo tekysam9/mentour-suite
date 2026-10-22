@@ -246,7 +246,7 @@
     },
     sv: {
       loading: false, loaded: false, invoices: [], subvendors: [], ledgerFile: null,
-      periodFilter: '', subvendorFilter: '', kindFilter: 'all',
+      periodFilter: '', subvendorFilter: '', kindFilter: 'all', paymentFilter: 'all',
       generateForm: { periodMonth: '', netTerms: 'NET30', issueDate: '', includeInactive: false },
       generationStart: null, savedId: null,
       generating: false, generateResult: null,
@@ -305,6 +305,14 @@
     return Number(n).toLocaleString('en-US', { maximumFractionDigits: 2 });
   }
 
+  // Total / Paid / Unpaid for the rows being shown
+  function paySummaryStrip(label, total, paid, unpaid, nPaid, nUnpaid) {
+    var chip = function (l, v, n, color) { return '<span style="display:inline-flex;gap:6px;align-items:baseline;margin-right:26px"><span style="color:#5E6A75;font-size:12px">' + l + (n !== null ? ' (' + n + ')' : '') + '</span><b style="font-size:17px;color:' + color + '">$' + money(v) + '</b></span>'; };
+    return '<div class="fin-pay-summary" style="display:flex;flex-wrap:wrap;align-items:baseline;gap:4px;padding:10px 16px;margin:0 0 10px;background:#F7FAFE;border:1px solid var(--line);border-radius:8px">' +
+      '<span style="font-size:12px;color:#5E6A75;margin-right:18px">' + label + '</span>' +
+      chip('Total', total, nPaid + nUnpaid, 'var(--ink)') + chip('Paid', paid, nPaid, '#1B7A3A') + chip('Unpaid', unpaid, nUnpaid, unpaid ? '#B3261E' : 'var(--ink)') + '</div>';
+  }
+
   // All shown invoices grouped by invoice month (newest first): a month header
   // row, the invoices (S.No. runs on across the whole list), a subtotal row per
   // month and a grand total at the bottom. Totals follow the active filters
@@ -324,24 +332,27 @@
       byKey[k].rows.push(inv);
     });
     groups.sort(function (a, b) { return b.key.localeCompare(a.key); });
-    var sno = 0, gHours = 0, gAmount = 0;
-    var sumCells = function (label, hours, amount, cls) {
+    var sno = 0, gHours = 0, gAmount = 0, gPaid = 0, gUnpaid = 0, gNPaid = 0, gNUnpaid = 0;
+    var sumCells = function (label, hours, amount, cls, paid, unpaid) {
       return '<tr class="' + cls + '"><td colspan="7" style="text-align:right">' + label + '</td>' +
-        '<td class="fin-num">' + fmtHours(hours) + ' h</td><td class="fin-num">$' + money(amount) + '</td><td colspan="' + (COLS - 9) + '"></td></tr>';
+        '<td class="fin-num">' + fmtHours(hours) + ' h</td><td class="fin-num">$' + money(amount) + '</td><td colspan="' + (COLS - 9) + '" style="font-weight:600;font-size:12px">' +
+        '<span style="color:#1B7A3A">Paid $' + money(paid) + '</span> · <span style="color:' + (unpaid ? '#B3261E' : 'inherit') + '">Unpaid $' + money(unpaid) + '</span></td></tr>';
     };
     var body = groups.map(function (g) {
-      var h = 0, a = 0;
+      var h = 0, a = 0, gp = 0, gu = 0;
       var rows = g.rows.map(function (inv) {
         h += Number(inv.hours) || 0; a += Number(inv.amount) || 0;
+        if (inv.payment_status === 'paid') { gp += Number(inv.amount) || 0; gNPaid += 1; } else { gu += Number(inv.amount) || 0; gNUnpaid += 1; }
         return renderRow(inv, sno++);
       }).join('');
-      gHours += h; gAmount += a;
+      gHours += h; gAmount += a; gPaid += gp; gUnpaid += gu;
       return '<tr class="fin-month-row"><td colspan="' + COLS + '">' + escapeHtml(ImportHours.monthKeyLabel(g.key)) +
           '<span class="fin-src">Hours for ' + escapeHtml(ImportHours.monthKeyLabel(ImportHours.hoursMonthKey(g.key))) + ' · ' + g.rows.length + ' invoice' + (g.rows.length === 1 ? '' : 's') + '</span></td></tr>' +
-        rows + sumCells('Subtotal ' + escapeHtml(ImportHours.monthKeyLabel(g.key)), h, a, 'fin-subtotal-row');
+        rows + sumCells('Subtotal ' + escapeHtml(ImportHours.monthKeyLabel(g.key)), h, a, 'fin-subtotal-row', gp, gu);
     }).join('');
-    var grand = sumCells('Total — ' + state.invoices.length + ' invoice' + (state.invoices.length === 1 ? '' : 's') + ' across ' + groups.length + ' month' + (groups.length === 1 ? '' : 's'), gHours, gAmount, 'fin-grand-row');
+    var grand = sumCells('Total — ' + state.invoices.length + ' invoice' + (state.invoices.length === 1 ? '' : 's') + ' across ' + groups.length + ' month' + (groups.length === 1 ? '' : 's'), gHours, gAmount, 'fin-grand-row', gPaid, gUnpaid);
     return (
+      paySummaryStrip('Client invoices shown:', gAmount, gPaid, gUnpaid, gNPaid, gNUnpaid) +
       '<div class="fin-table-wrap"><table class="fin-table"><thead><tr>' +
         '<th>S.No.</th><th>Invoice #</th><th>Consultant</th><th>Client / Vendor</th><th>Invoice month</th><th title="Billed one month in arrears: the hours on this invoice are for the month before">Hours for</th><th>Rate</th>' +
         '<th>Hours</th><th>Amount</th><th>Net terms</th><th>Due date</th><th>Payment</th><th>Timesheet</th><th>Notes</th><th></th>' +
@@ -606,6 +617,9 @@
     '</div>';
   }
 
+  // rows read from a payments file are paid by definition; generated / hand-entered ones carry a status
+  function svIsPaid(i) { return i.kind === 'paid' || i.payment_status === 'paid'; }
+
   function svTable() {
     var sv = state.sv;
     if (sv.loading) return '<div class="fin-loading">Loading…</div>';
@@ -614,14 +628,18 @@
         ? 'No supplier payments match this filter.'
         : 'No supplier payments yet. Generate them for a month (from each placement\u2019s supplier and pay rate) or add one by hand.') + '</div>';
     }
-    var total = sv.invoices.reduce(function (t, i) { return t + (Number(i.amount) || 0); }, 0);
+    var shown = sv.invoices.filter(function (i) { return sv.paymentFilter === 'all' || (sv.paymentFilter === 'paid') === svIsPaid(i); });
+    var total = 0, paid = 0, unpaid = 0, nPaid = 0, nUnpaid = 0;
+    shown.forEach(function (i) { var a = Number(i.amount) || 0; total += a; if (svIsPaid(i)) { paid += a; nPaid += 1; } else { unpaid += a; nUnpaid += 1; } });
+    if (!shown.length) return paySummaryStrip('Supplier payments shown:', 0, 0, 0, 0, 0) + '<div class="fin-empty-state">No supplier payments match this payment filter.</div>';
     return (
+      paySummaryStrip('Supplier payments shown:', total, paid, unpaid, nPaid, nUnpaid) +
       '<div class="fin-table-wrap"><table class="fin-table"><thead><tr>' +
         '<th>S.No.</th><th>Invoice #</th><th>Supplier</th><th>Consultant</th><th>Month</th><th>Rate</th>' +
         '<th>Hours</th><th>Amount</th><th>Net terms</th><th>Issue date</th><th>Due date</th><th>Payment</th><th>Paid on</th><th>Timesheet</th><th>Notes</th><th>Source</th><th></th>' +
       '</tr></thead><tbody>' +
-      sv.invoices.map(svRow).join('') +
-      '<tr class="fin-total-row"><td colspan="7">Total (' + sv.invoices.length + ')</td><td class="fin-num">$' + money(total) + '</td><td colspan="7"></td></tr>' +
+      shown.map(svRow).join('') +
+      '<tr class="fin-total-row"><td colspan="7">Total (' + shown.length + ')</td><td class="fin-num">$' + money(total) + '</td><td colspan="7" style="font-size:12px"><span style="color:#1B7A3A">Paid $' + money(paid) + '</span> · <span style="color:' + (unpaid ? '#B3261E' : 'inherit') + '">Unpaid $' + money(unpaid) + '</span></td></tr>' +
       '</tbody></table></div>'
     );
   }
@@ -684,6 +702,11 @@
           sv.subvendors.map(function (x) {
             return '<option value="' + x.id + '"' + (String(sv.subvendorFilter) === String(x.id) ? ' selected' : '') + '>' + escapeHtml(x.name) + '</option>';
           }).join('') +
+        '</select>' +
+        '<select id="svfilter-payment">' +
+          '<option value="all"' + (sv.paymentFilter === 'all' ? ' selected' : '') + '>Paid and unpaid</option>' +
+          '<option value="unpaid"' + (sv.paymentFilter === 'unpaid' ? ' selected' : '') + '>Unpaid only</option>' +
+          '<option value="paid"' + (sv.paymentFilter === 'paid' ? ' selected' : '') + '>Paid only</option>' +
         '</select>' +
         '<select id="svfilter-kind">' +
           '<option value="all"' + (sv.kindFilter === 'all' ? ' selected' : '') + '>All</option>' +
@@ -1402,6 +1425,8 @@
     if (svPeriod) { state.sv.periodFilter = svPeriod.value; loadSubvendor(); return; }
     var svSub = e.target.closest('#svfilter-subvendor');
     if (svSub) { state.sv.subvendorFilter = svSub.value; loadSubvendor(); return; }
+    var svPay = e.target.closest('#svfilter-payment');
+    if (svPay) { state.sv.paymentFilter = svPay.value; render(); return; }
     var svKind = e.target.closest('#svfilter-kind');
     if (svKind) { state.sv.kindFilter = svKind.value; loadSubvendor(); return; }
     var svInactive = e.target.closest('#svgen-include-inactive');
