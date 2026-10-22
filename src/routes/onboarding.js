@@ -16,6 +16,8 @@ const spec = require('./onboardingSpec');
 const { isConfigured, encryptBuffer, decryptBuffer } = require('../crypto');
 const crypto = require('crypto');
 const vendorItems = require('./vendorItems');
+const { flagLikelyDuplicates, similarity, SIMILARITY_THRESHOLD } = require('./directoryDedup');
+const flagNew = (conn, orgId, tableName, id, name, scopeClientId) => flagLikelyDuplicates(conn, { organizationId: orgId, tableName, newId: id, newName: name, scopeClientId }).catch(() => {});
 
 const router = express.Router();
 router.use(requireAuth);
@@ -387,6 +389,7 @@ router.get('/', async (req, res, next) => {
           id: r.id, workerType: r.worker_type, status: r.status, consultantName: r.consultant_name,
           startDate: dateStr(r.start_date), endClient: data.end_client || '', recruiter: data.recruiter || '',
           progress: progress(checklistView(r, data, parse(r.checklist, {}), states, docs)), updatedAt: r.updated_at,
+          vendorFlag: (() => { const vn = names && r.worker_type === 'C2C' && ['submitted', 'in_progress'].includes(r.status) ? vendorOf('C2C', Object.assign({ consultant_name: r.consultant_name }, data)) : ''; if (!vn || names.some((x) => x.id === r.supplier_id || (x.key && x.key === normCompany(vn)))) return null; return names.some((x) => similarity(vn, x.name) >= SIMILARITY_THRESHOLD) ? 'similar' : 'new'; })(),
           newVendor: !!(names && r.worker_type === 'C2C' && ['submitted', 'in_progress'].includes(r.status) && vendorOf('C2C', Object.assign({ consultant_name: r.consultant_name }, data)) && r.status !== 'complete' && !names.some((x) => x.id === r.supplier_id || (x.key && x.key === normCompany(vendorOf('C2C', Object.assign({ consultant_name: r.consultant_name }, data)))))),
         };
       }),
@@ -639,7 +642,13 @@ async function vendorCheck(row, data, names) {
   const all = names || await supplierNames(row.organization_id);
   const hit = all.find((x) => x.id === row.supplier_id) || all.find((x) => x.key && x.key === key);
   const out = { name: vname, email: data.employer_email || '', state: 'new', supplierId: null, missing: [] };
-  if (!hit) { out.suggest = ['company', 'w9', 'banking', 'coi', 'vendor_agreement']; return out; }
+  if (!hit) {
+    out.suggest = ['company', 'w9', 'banking', 'coi', 'vendor_agreement'];
+    // not an exact match, but is it probably an existing supplier written differently?
+    const near = all.map((x) => ({ id: x.id, name: x.name, score: similarity(vname, x.name) })).filter((x) => x.score >= SIMILARITY_THRESHOLD).sort((a, b) => b.score - a.score).slice(0, 3);
+    if (near.length) { out.state = 'similar'; out.candidates = near.map((x) => ({ id: x.id, name: x.name })); }
+    return out;
+  }
   out.supplierId = hit.id; out.supplierName = hit.name;
   const [fr] = await pool.query(`SELECT form_type, signatures FROM record_forms WHERE organization_id = ? AND entity = 'subvendors' AND record_id = ? AND form_type IN ('w9','banking')`, [row.organization_id, hit.id]);
   const st = {}; fr.forEach((f) => { st[f.form_type] = forms.helpers.statusOf(f.form_type, true, parse(f.signatures, {})); });
@@ -727,6 +736,7 @@ router.post('/:id/vendor-requests', async (req, res, next) => {
         const [r] = await pool.query(`INSERT INTO subvendors (organization_id, name, status, email, phone) VALUES (?, ?, 'inactive', ?, ?)`,
           [row.organization_id, oneLine(vname), data.employer_email || null, data.employer_phone || null]);
         supplierId = r.insertId;
+        await flagNew(pool, row.organization_id, 'subvendors', supplierId, vname);
       }
       row.supplier_id = supplierId;
     }
@@ -752,14 +762,20 @@ router.post('/:id/add-vendor', async (req, res, next) => {
     if (!vname) return res.status(422).json({ error: 'There is no vendor / company name on this request.' });
     const emailIn = String((req.body && req.body.email) || '').trim();
     if (emailIn && !EMAIL_RE.test(emailIn)) return res.status(400).json({ error: 'Enter a valid email address.' });
-    const [ex] = await pool.query('SELECT id FROM subvendors WHERE organization_id = ? AND LOWER(name) = LOWER(?)', [row.organization_id, vname]);
+    let [ex] = await pool.query('SELECT id, name FROM subvendors WHERE organization_id = ? AND LOWER(name) = LOWER(?)', [row.organization_id, vname]);
+    const useId = req.body && /^\d+$/.test(String(req.body.useSupplierId || '')) ? Number(req.body.useSupplierId) : null;
+    if (useId) {
+      [ex] = await pool.query('SELECT id, name FROM subvendors WHERE id = ? AND organization_id = ?', [useId, row.organization_id]);
+      if (!ex[0]) return res.status(404).json({ error: 'That supplier company was not found.' });
+    }
     let id = ex[0] && ex[0].id;
     if (!id) {
       const [r] = await pool.query(`INSERT INTO subvendors (organization_id, name, status, email, phone) VALUES (?, ?, 'active', ?, ?)`, [row.organization_id, oneLine(vname), emailIn || data.employer_email || null, data.employer_phone || null]);
       id = r.insertId;
+      await flagNew(pool, row.organization_id, 'subvendors', id, vname);
     }
     if (emailIn) { data.employer_email = emailIn; }
-    addLog(row, req, `Vendor “${vname}” ${ex[0] ? 'linked' : 'added to the Directory'}.`);
+    addLog(row, req, useId ? `Vendor “${vname}” matched to the existing supplier company “${ex[0].name}”.` : `Vendor “${vname}” ${ex[0] ? 'linked' : 'added to the Directory'}.`);
     await save(row, { supplier_id: id, data: JSON.stringify(data), log: row.log });
     const [rows] = await pool.query('SELECT * FROM onboardings WHERE id = ?', [row.id]);
     res.status(ex[0] ? 200 : 201).json(await present(rows[0], { allowedNext: NEXT[rows[0].status] }, req));
@@ -825,6 +841,7 @@ router.post('/:id/create-records', async (req, res, next) => {
       const [r] = await conn.query(`INSERT INTO consultants (organization_id, name, status, email, phone, address) VALUES (?, ?, 'active', ?, ?, ?)`,
         [orgId, data.consultant_name, data.email || null, data.phone || null, addrParts || null]);
       consultantId = r.insertId; made.push('created the consultant');
+      await flagNew(conn, orgId, 'consultants', consultantId, data.consultant_name);
     }
 
     // Supplier company (the consultant's own company, C2C)
@@ -842,6 +859,7 @@ router.post('/:id/create-records', async (req, res, next) => {
         const [r] = await conn.query(`INSERT INTO subvendors (organization_id, name, status, email, phone, address) VALUES (?, ?, 'active', ?, ?, ?)`,
           [orgId, vnameRec, data.employer_email || null, data.employer_phone || null, eAddr || null]);
         supplierId = r.insertId; made.push('created the supplier company');
+        await flagNew(conn, orgId, 'subvendors', supplierId, vnameRec);
       }
       await mergeProfile(conn, orgId, 'subvendors', supplierId, {
         contact_name: data.employer_contact, city: data.employer_city, state: data.employer_state, postal_code: data.employer_zip,
@@ -852,12 +870,12 @@ router.post('/:id/create-records', async (req, res, next) => {
     let client = await find(`SELECT id FROM clients WHERE organization_id = ? AND LOWER(name) = LOWER(?)`, [orgId, clientName]);
     let clientId;
     if (client) clientId = client.id;
-    else { const [r] = await conn.query(`INSERT INTO clients (organization_id, name, status) VALUES (?, ?, 'active')`, [orgId, clientName]); clientId = r.insertId; made.push('created the client'); }
+    else { const [r] = await conn.query(`INSERT INTO clients (organization_id, name, status) VALUES (?, ?, 'active')`, [orgId, clientName]); clientId = r.insertId; made.push('created the client'); await flagNew(conn, orgId, 'clients', clientId, clientName); }
     let programId = null;
     if (vendorName) {
       const pr = await find(`SELECT id FROM programs WHERE client_id = ? AND LOWER(name) = LOWER(?)`, [clientId, vendorName]);
       if (pr) programId = pr.id;
-      else { const [r] = await conn.query(`INSERT INTO programs (organization_id, client_id, name, status) VALUES (?, ?, ?, 'active')`, [orgId, clientId, vendorName]); programId = r.insertId; made.push('created the vendor'); }
+      else { const [r] = await conn.query(`INSERT INTO programs (organization_id, client_id, name, status) VALUES (?, ?, ?, 'active')`, [orgId, clientId, vendorName]); programId = r.insertId; made.push('created the vendor'); await flagNew(conn, orgId, 'programs', programId, vendorName, clientId); }
     }
     const billing = data.bill_rate !== undefined ? data.bill_rate : null;
     const prn = Number(data.pay_rate);

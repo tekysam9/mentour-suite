@@ -160,7 +160,7 @@
     if (hr && S.pending.length) {
       h += '<div class="ob-card ob-pending"><h2>Waiting for your approval (' + S.pending.length + ')</h2>';
       S.pending.forEach(function (o) {
-        h += '<div class="ob-row"><span class="nm">' + esc(o.consultantName) + '</span>' + badge('t-' + o.workerType, TYPE_LABEL[o.workerType]) + (o.newVendor ? ' <span class="ob-badge" style="background:#FFF1CC;color:#8A5A00">New vendor</span>' : '') +
+        h += '<div class="ob-row"><span class="nm">' + esc(o.consultantName) + '</span>' + badge('t-' + o.workerType, TYPE_LABEL[o.workerType]) + (o.vendorFlag ? ' <span class="ob-badge" style="background:#FFF1CC;color:#8A5A00">' + (o.vendorFlag === 'similar' ? 'Possible existing vendor' : 'New vendor') + '</span>' : '') +
           '<span class="sub">' + esc(o.endClient || 'No end client yet') + (o.startDate ? ' · starts ' + fmtDate(o.startDate) : '') + (o.recruiter ? ' · recruiter ' + esc(o.recruiter) : '') + '</span>' +
           '<button class="ob-btn small primary" data-act="open" data-id="' + o.id + '">Review</button></div>';
       });
@@ -469,11 +469,14 @@
   function vendorBannerHtml(o) {
     var vc = o.vendorCheck, reqs = (S.vr && S.vr.requests) || [];
     var openReq = reqs.filter(function (r) { return r.state === 'open'; })[0];
-    var h = '<div class="ob-card" style="border:2px solid #E8A200;background:#FFF8E6"><h2 style="color:#8A5A00">' + (vc.state === 'new' ? 'New vendor — not in the Directory' : 'Vendor paperwork incomplete') + '</h2>' +
-      '<p style="margin:0 0 10px;font-size:13px;line-height:1.5"><b>' + esc(vc.name) + '</b> ' + (vc.state === 'new' ? 'is not a supplier company in the Directory yet. Send the vendor an onboarding link so they can give their company details, W-9, bank details, insurance certificate and agreement. You can approve this request meanwhile.' : 'is in the Directory but is still missing: ' + vc.missing.map(function (k) { return ITEM_LABEL[k]; }).join(', ') + '. Send them a link to complete it.') + '</p>' +
+    var h = '<div class="ob-card" style="border:2px solid #E8A200;background:#FFF8E6"><h2 style="color:#8A5A00">' + (vc.state === 'new' ? 'New vendor — not in the Directory' : vc.state === 'similar' ? 'Possible match — is this vendor already in the Directory?' : 'Vendor paperwork incomplete') + '</h2>' +
+      '<p style="margin:0 0 10px;font-size:13px;line-height:1.5"><b>' + esc(vc.name) + '</b> ' + (vc.state === 'similar' ? 'is not an exact match for a supplier company, but it looks like one that is already there. Using the existing record keeps its paperwork and history in one place.' : vc.state === 'new' ? 'is not a supplier company in the Directory yet. Send the vendor an onboarding link so they can give their company details, W-9, bank details, insurance certificate and agreement. You can approve this request meanwhile.' : 'is in the Directory but is still missing: ' + vc.missing.map(function (k) { return ITEM_LABEL[k]; }).join(', ') + '. Send them a link to complete it.') + '</p>' +
       linkBlockHtml();
+    if (vc.state === 'similar') h += '<div style="margin:0 0 12px">' + vc.candidates.map(function (c) {
+      return '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:6px 0;font-size:13px"><span>Same as <b>' + esc(c.name) + '</b>?</span><button class="ob-btn primary small" data-act="vb-use" data-id="' + c.id + '">Yes, use ' + esc(c.name) + '</button></div>';
+    }).join('') + '<div class="ob-muted" style="font-size:12.5px">If it is a different company, carry on below.</div></div>';
     if (hr()) h += '<div class="ob-f wide"><label for="vb-email">Send the link to this email (edit if needed)</label><input id="vb-email" type="email" value="' + esc(vc.email) + '" placeholder="vendor@company.com"></div>' +
-      '<div style="margin-top:10px"><button class="ob-btn primary" data-act="vb-send">' + (openReq ? 'Create a new link' : 'Create vendor onboarding link') + '</button>' + (vc.state === 'new' ? ' <button class="ob-btn" data-act="vb-add">Just add to the Directory now</button>' : '') + '</div>';
+      '<div style="margin-top:10px"><button class="ob-btn primary" data-act="vb-send">' + (openReq ? 'Create a new link' : 'Create vendor onboarding link') + '</button>' + (vc.state !== 'incomplete' ? ' <button class="ob-btn" data-act="vb-add">Just add to the Directory now</button>' : '') + '</div>';
     if (reqs.length) h += reqs.slice(0, 3).map(function (r) {
       var done = r.items.filter(function (i) { return i.done; }).length;
       return '<div style="font-size:12.5px;margin-top:10px"><b>' + done + ' of ' + r.items.length + ' received</b> · ' + (r.state === 'open' ? 'link open until ' + esc(String(r.expiresAt).slice(0, 10)) : r.state) + (r.lastOpenedAt ? ' · opened ' + fmtWhen(r.lastOpenedAt) : ' · not opened yet') + (r.submittedAt ? ' · vendor says all done' : '') + '</div>';
@@ -579,6 +582,13 @@
         if (!r.ok) { if (r.status === 499) return; note(r.body.error || 'Could not create the link.', 'err'); renderDetail(); return; }
         S.vrLink = r.body; note('Secure link created.');
         api('GET', '/api/onboarding/' + S.ob.id).then(function (g) { if (g.ok) setOb(g.body); loadVr(); renderDetail(); });
+      });
+      return;
+    }
+    if (act === 'vb-use') {
+      api('POST', '/api/onboarding/' + S.ob.id + '/add-vendor', { useSupplierId: id }).then(function (r) {
+        if (!r.ok) { if (r.status === 499) return; note(r.body.error || 'Could not link the vendor.', 'err'); renderDetail(); return; }
+        setOb(r.body); note('Linked to the existing supplier company.'); renderDetail(); loadVr();
       });
       return;
     }

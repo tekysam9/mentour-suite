@@ -51,11 +51,21 @@ function levenshtein(a, b) {
   return prev[bl];
 }
 
+// Words that only say what kind of legal entity a company is; "Acme Corp" and "Acme, Inc." are one name.
+const LEGAL = new Set(['inc', 'incorporated', 'llc', 'ltd', 'limited', 'corp', 'corporation', 'co', 'company', 'llp', 'lp', 'pllc', 'pc', 'plc', 'gmbh', 'pvt', 'private', 'sa', 'ag', 'bv', 'the']);
+const tokensOf = (folded) => folded.split(' ').filter((t) => t && !LEGAL.has(t));
+
 function similarity(nameA, nameB) {
   const a = foldName(nameA), b = foldName(nameB);
   if (!a || !b) return 0;
   if (a === b) return 1;
+  const ta = tokensOf(a), tb = tokensOf(b);
+  if (ta.length && ta.join(' ') === tb.join(' ')) return 0.97; // same name apart from Inc / LLC / Ltd ...
+  // One name is the start of the other: "Alef Data" vs "Alef Data Integration Ltd".
+  const [s, l] = ta.length <= tb.length ? [ta, tb] : [tb, ta];
+  if (s.length && l.length > s.length && s.every((t, i) => t === l[i]) && (s.length >= 2 || s[0].length >= 5)) return 0.9;
   const maxLen = Math.max(a.length, b.length);
+  if (Math.abs(a.length - b.length) / maxLen > 0.3) return 0; // too different in length to be a typo
   return 1 - levenshtein(a, b) / maxLen;
 }
 
@@ -88,4 +98,31 @@ async function flagLikelyDuplicates(conn, { organizationId, tableName, newId, ne
   }
 }
 
-module.exports = { foldName, levenshtein, similarity, flagLikelyDuplicates, SIMILARITY_THRESHOLD, TABLES };
+// Compares every pair of existing records in `tableName` (programs: within a client) and opens a
+// flag for each close pair that has never been flagged. Pairs someone already merged, dismissed or
+// has open are left alone. Safe to run any time. Returns how many new flags were opened.
+async function scanDuplicates(conn, organizationId, tableName) {
+  if (!TABLES.includes(tableName)) return 0;
+  const [rows] = await conn.query(`SELECT id, name${tableName === 'programs' ? ', client_id' : ''} FROM ${tableName} WHERE organization_id = ? ORDER BY id`, [organizationId]);
+  const [seen] = await conn.query('SELECT record_id, matched_record_id FROM directory_duplicate_candidates WHERE organization_id = ? AND table_name = ?', [organizationId, tableName]);
+  const have = new Set(seen.map((x) => Math.min(x.record_id, x.matched_record_id) + ':' + Math.max(x.record_id, x.matched_record_id)));
+  const folded = rows.map((r) => ({ id: r.id, name: r.name, scope: r.client_id || 0, f: foldName(r.name) }));
+  let opened = 0;
+  for (let i = 0; i < folded.length; i++) {
+    for (let j = i + 1; j < folded.length; j++) {
+      const x = folded[i], y = folded[j];
+      if (x.scope !== y.scope || !x.f || !y.f) continue;
+      if (have.has(x.id + ':' + y.id)) continue;
+      const score = similarity(x.name, y.name);
+      if (score >= SIMILARITY_THRESHOLD && score < 1) {
+        await conn.query(
+          `INSERT IGNORE INTO directory_duplicate_candidates (organization_id, table_name, record_id, matched_record_id, similarity) VALUES (?, ?, ?, ?, ?)`,
+          [organizationId, tableName, y.id, x.id, score.toFixed(3)]);
+        opened += 1;
+      }
+    }
+  }
+  return opened;
+}
+
+module.exports = { foldName, levenshtein, similarity, flagLikelyDuplicates, scanDuplicates, SIMILARITY_THRESHOLD, TABLES };

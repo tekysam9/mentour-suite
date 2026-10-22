@@ -2523,6 +2523,58 @@ async function main() {
       r = await mvJar.fetch('/api/invoices/generate', { method: 'POST', body: JSON.stringify({ periodMonth: '2026-09' }) });
       check('each project invoices to its own vendor (client when it has none)',
         r.status === 201 && r.body.created.length === 4 && ['Insight', 'Softchoice', 'SHI', 'Zeta'].every((n) => r.body.created.some((i) => i.bill_to_name === n)), r.body.created && r.body.created.map((i) => i.bill_to_name));
+
+      // ---- "Alef Data" / "Alef Data Integration Ltd": found, flagged and merged without losing anything
+      {
+        const adJar = makeJar();
+        await adJar.fetch('/api/auth/signup', { method: 'POST', body: JSON.stringify({ orgName: 'Alef Co', name: 'Al Owner', email: 'al@alef.test', password: 'alefpassword123' }) });
+        const mk = async (values, secrets) => (await adJar.fetch('/api/profiles/subvendors', { method: 'POST', body: JSON.stringify({ values, secrets }) })).body;
+        const aShort = await mk({ name: 'Alef Data', contact_name: 'Dana Short', payment_terms: 'Net 30' }, { tax_id: '11-2223333' });
+        const aLong = await mk({ name: 'Alef Data Integration Ltd', email: 'ap@alef.test', phone: '555-0199', city: 'Leeds' });
+        const idS = aShort.id || (aShort.record && aShort.record.id), idL = aLong.id || (aLong.record && aLong.record.id);
+        check('both spellings exist as separate supplier companies', !!idS && !!idL && idS !== idL, [aShort, aLong]);
+        const dup = require('../src/routes/directoryDedup');
+        check('"Alef Data" is recognised as the start of "Alef Data Integration Ltd"', dup.similarity('Alef Data', 'Alef Data Integration Ltd') >= dup.SIMILARITY_THRESHOLD, dup.similarity('Alef Data', 'Alef Data Integration Ltd'));
+        check('Acme Corp and Acme, Inc. count as the same name', dup.similarity('Acme Corp', 'Acme, Inc.') >= dup.SIMILARITY_THRESHOLD);
+        check('unrelated companies are not flagged', dup.similarity('Insight', 'Softchoice') < dup.SIMILARITY_THRESHOLD && dup.similarity('Delta', 'Delta Dental of California') < 0.95);
+        r = await adJar.fetch('/api/directory/duplicates/scan', { method: 'POST', body: JSON.stringify({ table: 'subvendors' }) });
+        check('scanning finds the existing pair', r.status === 200, r.body);
+        r = await adJar.fetch('/api/directory/duplicates?table=subvendors');
+        const flag = r.body.duplicates.find((d) => [d.record_name, d.matched_name].includes('Alef Data') && [d.record_name, d.matched_name].includes('Alef Data Integration Ltd'));
+        check('the pair is listed as a possible duplicate', !!flag, r.body.duplicates);
+        r = await adJar.fetch('/api/directory/duplicates/scan', { method: 'POST', body: JSON.stringify({ table: 'subvendors' }) });
+        check('scanning again does not repeat the flag', r.body.opened === 0, r.body);
+        // things hanging off the short name that must survive the merge
+        const [[orgRow]] = await dbConn.query(`SELECT organization_id FROM subvendors WHERE id = ?`, [idS]);
+        const org = orgRow.organization_id;
+        await adJar.fetch('/api/profiles/subvendors/' + idS + '/notes', { method: 'POST', body: JSON.stringify({ body: 'Prefers invoices by the 5th.' }) });
+        const [cres] = await dbConn.query(`INSERT INTO consultants (organization_id, name, status) VALUES (?, 'Cal Consultant', 'active')`, [org]);
+        const [clres] = await dbConn.query(`INSERT INTO clients (organization_id, name, status) VALUES (?, 'Alef Client', 'active')`, [org]);
+        await dbConn.query(`INSERT INTO consultant_assignments (organization_id, consultant_id, client_id, supplier_id) VALUES (?, ?, ?, ?)`, [org, cres.insertId, clres.insertId, idS]);
+        await adJar.fetch('/api/profiles/consultants/' + cres.insertId, { method: 'PATCH', body: JSON.stringify({ values: { supplier_id: String(idS) } }) });
+        await dbConn.query(`INSERT INTO record_forms (organization_id, entity, record_id, form_type, data, signatures) VALUES (?, 'subvendors', ?, 'w9', '{"name":"Alef Data"}', '{"payee":{"name":"Dana Short","at":"2026-10-01T00:00:00Z","by":"x"}}')`, [org, idS]);
+        r = await adJar.fetch('/api/directory/duplicates/' + flag.flag_id + '/merge', { method: 'POST', body: JSON.stringify({ keep: flag.record_name === 'Alef Data Integration Ltd' ? 'record' : 'matched' }) });
+        check('merging keeping the full name succeeds', r.status === 200 && r.body.kept.name === 'Alef Data Integration Ltd' && r.body.removedId === idS, r.body);
+        r = await adJar.fetch('/api/directory/subvendors');
+        check('only one of them is left', r.body.subvendors.filter((x) => /^Alef Data/.test(x.name)).length === 1, r.body.subvendors.map((x) => x.name));
+        r = await adJar.fetch('/api/profiles/subvendors/' + idL);
+        check('profile details from both are combined', r.body.values.contact_name === 'Dana Short' && r.body.values.payment_terms === 'Net 30' && r.body.values.city === 'Leeds', r.body.values);
+        check('the tax ID moved across (last 4 only shown)', r.body.secrets.tax_id && r.body.secrets.tax_id.last4 === '3333', r.body.secrets);
+        check('notes moved across and the merge is logged', JSON.stringify(r.body.notes).includes('Prefers invoices') && JSON.stringify(r.body.notes).includes('Merged the duplicate record'), r.body.notes);
+        check('the consultant linked to the old supplier now points at the survivor', r.body.related.supplierConsultants.some((x) => x.id === cres.insertId), r.body.related);
+        const [[asgS]] = await dbConn.query('SELECT supplier_id FROM consultant_assignments WHERE consultant_id = ?', [cres.insertId]);
+        check('the placement’s supplier moved to the survivor', asgS.supplier_id === idL, asgS);
+        const [[wf]] = await dbConn.query(`SELECT COUNT(*) n FROM record_forms WHERE entity = 'subvendors' AND record_id = ? AND form_type = 'w9'`, [idL]);
+        check('the signed W-9 moved across', wf.n === 1, wf);
+        // onboarding: a request naming the short spelling is offered the existing record
+        const adRec = makeJar();
+        const ob2 = Object.assign({}, obF, { consultant_name: 'Sam Similar', email: 'sam@x.test', employer_name: 'Alef Data', invoicing_method: 'QuickBooks' });
+        r = await adJar.fetch('/api/onboarding', { method: 'POST', body: JSON.stringify({ workerType: 'C2C', data: ob2 }) });
+        check('a near-identical vendor on a new request is offered the existing record', r.status === 201 && r.body.vendorCheck.state === 'similar' && r.body.vendorCheck.candidates[0].id === idL, r.body.vendorCheck);
+        const sId = r.body.id;
+        r = await adJar.fetch('/api/onboarding/' + sId + '/add-vendor', { method: 'POST', body: JSON.stringify({ useSupplierId: idL }) });
+        check('HR links the request to the existing supplier instead of creating another', r.status === 200 && r.body.supplierId === idL && (await dbConn.query(`SELECT COUNT(*) n FROM subvendors WHERE organization_id = ? AND name LIKE 'Alef Data%'`, [org]))[0][0].n === 1, r.body);
+      }
     } finally {
       await dbConn.end();
     }

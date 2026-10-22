@@ -12,7 +12,7 @@
 const express = require('express');
 const pool = require('../db');
 const { requireAuth } = require('../auth');
-const { TABLES: DIRECTORY_TABLES } = require('./directoryDedup');
+const { TABLES: DIRECTORY_TABLES, scanDuplicates } = require('./directoryDedup');
 const { upsertAssignmentBilling } = require('./assignmentUpsert');
 const { findOrCreateDirectoryRecord, normalizeName } = require('./directoryUpsert');
 const { aliasKey, splitClientText, isMissingTable, SCHEMA_NEEDED_MESSAGE } = require('./clientAliases');
@@ -39,11 +39,47 @@ async function mergeProfileRecords(conn, tableName, keepId, loseId, orgId) {
     await conn.query(`DELETE FROM record_secrets WHERE organization_id = ? AND entity = ? AND record_id = ?`, [orgId, tableName, loseId]);
     await conn.query(`UPDATE record_notes SET record_id = ? WHERE organization_id = ? AND entity = ? AND record_id = ?`, [keepId, orgId, tableName, loseId]);
     await conn.query(`DELETE FROM record_profiles WHERE organization_id = ? AND entity = ? AND record_id = ?`, [orgId, tableName, loseId]);
+    // A form both records have: keep whichever has more signatures (the survivor's when equal).
+    const [bothForms] = await conn.query(`SELECT record_id, form_type, data, signatures FROM record_forms WHERE organization_id = ? AND entity = ? AND record_id IN (?, ?)`, [orgId, tableName, keepId, loseId]);
+    const nSig = (r) => { try { return Object.keys(JSON.parse(r.signatures || '{}')).length; } catch (e) { return 0; } };
+    for (const lf of bothForms.filter((r) => r.record_id === loseId)) {
+      const kf = bothForms.find((r) => r.record_id === keepId && r.form_type === lf.form_type);
+      if (kf && nSig(lf) > nSig(kf)) {
+        await conn.query(`UPDATE record_forms SET data = ?, signatures = ? WHERE organization_id = ? AND entity = ? AND record_id = ? AND form_type = ?`, [lf.data, lf.signatures, orgId, tableName, keepId, lf.form_type]);
+      }
+    }
     await conn.query(`UPDATE IGNORE record_forms SET record_id = ? WHERE organization_id = ? AND entity = ? AND record_id = ?`, [keepId, orgId, tableName, loseId]);
     await conn.query(`DELETE FROM record_forms WHERE organization_id = ? AND entity = ? AND record_id = ?`, [orgId, tableName, loseId]);
   } catch (err) {
     if (!(err && err.code === 'ER_NO_SUCH_TABLE')) throw err;
   }
+}
+
+
+// The surviving record keeps its own contact details; anything it leaves blank is filled from the
+// record being removed, and it stays active if either one was.
+async function mergeCoreFields(conn, tableName, keepId, loseId, orgId) {
+  const [rows] = await conn.query(`SELECT * FROM ${tableName} WHERE organization_id = ? AND id IN (?, ?)`, [orgId, keepId, loseId]);
+  const keep = rows.find((r) => r.id === keepId), lose = rows.find((r) => r.id === loseId);
+  if (!keep || !lose) return;
+  const sets = []; const params = [];
+  ['email', 'phone', 'address'].forEach((c) => { if (!String(keep[c] || '').trim() && String(lose[c] || '').trim()) { sets.push(`${c} = ?`); params.push(lose[c]); } });
+  if (keep.status !== 'active' && lose.status === 'active') { sets.push("status = 'active'"); }
+  if (sets.length) await conn.query(`UPDATE ${tableName} SET ${sets.join(', ')} WHERE id = ? AND organization_id = ?`, params.concat([keepId, orgId]));
+}
+
+// Consultant profiles remember their supplier company by id inside the profile data.
+async function repointProfileSupplier(conn, keepId, loseId, orgId) {
+  try {
+    const [rows] = await conn.query(`SELECT record_id, data FROM record_profiles WHERE organization_id = ? AND entity = 'consultants'`, [orgId]);
+    for (const r of rows) {
+      let d; try { d = JSON.parse(r.data || '{}'); } catch (e) { continue; }
+      if (String(d.supplier_id) === String(loseId)) {
+        d.supplier_id = String(keepId);
+        await conn.query(`UPDATE record_profiles SET data = ? WHERE organization_id = ? AND entity = 'consultants' AND record_id = ?`, [JSON.stringify(d), orgId, r.record_id]);
+      }
+    }
+  } catch (err) { if (!(err && err.code === 'ER_NO_SUCH_TABLE')) throw err; }
 }
 
 const router = express.Router();
@@ -68,6 +104,8 @@ const REFERENCING_COLUMNS = {
     { table: 'ledger_roster_entries', column: 'subvendor_id' },
     { table: 'subvendor_invoices', column: 'subvendor_id', ignore: true },
     { table: 'onboardings', column: 'supplier_id', optional: true },
+    { table: 'consultant_assignments', column: 'supplier_id', optional: true },
+    { table: 'vendor_requests', column: 'supplier_id', optional: true },
   ],
   clients: [
     { table: 'margin_roster_entries', column: 'client_id' },
@@ -676,6 +714,17 @@ router.get('/duplicates', async (req, res, next) => {
   }
 });
 
+// Looks through everything already in the Directory for names that look like the same thing.
+router.post('/duplicates/scan', async (req, res, next) => {
+  try {
+    const requested = req.body && req.body.table;
+    if (requested && !DIRECTORY_TABLES.includes(requested)) return res.status(400).json({ error: 'Unknown table.' });
+    let opened = 0;
+    for (const t of requested ? [requested] : DIRECTORY_TABLES) opened += await scanDuplicates(pool, req.user.organization_id, t);
+    res.json({ opened });
+  } catch (err) { next(err); }
+});
+
 router.post('/duplicates/:id/dismiss', async (req, res, next) => {
   try {
     const [result] = await pool.query(
@@ -766,7 +815,14 @@ router.post('/duplicates/:id/merge', async (req, res, next) => {
       await dedupeAssignments(conn, req.user.organization_id);
     }
 
+    await mergeCoreFields(conn, tableName, keepId, loseId, req.user.organization_id);
+    if (tableName === 'subvendors') await repointProfileSupplier(conn, keepId, loseId, req.user.organization_id);
     await mergeProfileRecords(conn, tableName, keepId, loseId, req.user.organization_id);
+    const [[loseRow]] = await conn.query(`SELECT name FROM ${tableName} WHERE id = ?`, [loseId]);
+    try {
+      await conn.query(`INSERT INTO record_notes (organization_id, entity, record_id, kind, body, user_name) VALUES (?, ?, ?, 'log', ?, ?)`,
+        [req.user.organization_id, tableName, keepId, `Merged the duplicate record “${loseRow ? loseRow.name : loseId}” into this one. Its links, profile, notes, forms and contact details were moved here.`, req.user.name || req.user.email]);
+    } catch (e) { if (!(e && e.code === 'ER_NO_SUCH_TABLE')) throw e; }
 
     await conn.query(`DELETE FROM ${tableName} WHERE id = ? AND organization_id = ?`, [loseId, req.user.organization_id]);
 

@@ -543,8 +543,11 @@
     });
   }
 
+  var scanned = {};
   function loadDuplicates(tabKey) {
-    fetch('/api/directory/duplicates?table=' + encodeURIComponent(tabKey)).then(function (res) {
+    // look through what is already here once per visit, so near-identical names are flagged even if they were entered long ago
+    var scan = scanned[tabKey] ? Promise.resolve() : fetch('/api/directory/duplicates/scan', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ table: tabKey }) }).then(function () { scanned[tabKey] = true; }).catch(function () {});
+    scan.then(function () { return fetch('/api/directory/duplicates?table=' + encodeURIComponent(tabKey)); }).then(function (res) {
       if (!res.ok) throw new Error('load failed');
       return res.json();
     }).then(function (body) {
