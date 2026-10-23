@@ -955,9 +955,7 @@
     if (!data) return;
     state.user = data.user;
     loadTab(state.activeTab);
-  }).catch(function () {
-    window.location.href = '/login.html';
-  });
+  }).catch(function (e) { (window.__msAuthFail || function () { location.href = '/login.html'; })(e); });
 </script>
 </body>
 </html>

@@ -1,6 +1,7 @@
 // Application shell: builds the left navigation + top bar around #app on every
 // signed-in page. Pages keep rendering into #app exactly as before.
 (function () {
+  if (!window.__msNet) { var ns = document.createElement('script'); ns.src = '/net.js'; document.head.appendChild(ns); }
   // Every add / edit / delete asks "are you sure?" first (see confirm.js).
   if (!window.__msConfirm) { var cs = document.createElement('script'); cs.src = '/confirm.js'; document.head.appendChild(cs); }
   var appEl = document.getElementById('app');

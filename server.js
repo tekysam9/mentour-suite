@@ -21,6 +21,7 @@ const app = express();
 app.disable('x-powered-by');
 app.set('trust proxy', 1); // Hostinger sits behind a proxy/load balancer
 
+app.use(require('compression')()); // smaller pages/JSON on slow connections
 app.use(express.json({ limit: '15mb' }));
 app.use(sessionMiddleware);
 
@@ -37,7 +38,15 @@ app.use('/api/subvendor-invoices', subvendorInvoiceRoutes);
 app.use('/api/onboarding', onboardingRoutes);
 app.use('/api/vendor-portal', require('./src/routes/vendorPortal'));
 
-app.use(express.static(path.join(__dirname, 'public')));
+// Pages/scripts/styles revalidate (ETag -> tiny 304) so a deploy shows up at
+// once; fonts and the spreadsheet library never change, so they cache long.
+app.use(express.static(path.join(__dirname, 'public'), {
+  etag: true,
+  setHeaders(res, file) {
+    if (/[\\/](fonts|lib)[\\/]/.test(file)) res.setHeader('Cache-Control', 'public, max-age=2592000, immutable');
+    else res.setHeader('Cache-Control', 'no-cache');
+  },
+}));
 
 // Fallback 404 for unknown API routes
 app.use('/api', (req, res) => res.status(404).json({ error: 'Not found.' }));

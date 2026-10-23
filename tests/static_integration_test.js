@@ -19,6 +19,12 @@ async function main() {
     check('page starts with doctype: ' + f, /^<!doctype html>/i.test(t));
     check('charset in first 1KB: ' + f, /<meta charset="utf-8"/i.test(t.slice(0, 1024)));
   }
+  // No page may depend on a third-party CDN (breaks on weak connections), and the local spreadsheet library must exist
+  for (const f of fs.readdirSync(pubDir).filter((n) => n.endsWith('.html'))) {
+    const t = fs.readFileSync(path.join(pubDir, f), 'utf8');
+    check('no third-party script in ' + f, !/<script[^>]+src="https?:\/\//i.test(t));
+  }
+  check('spreadsheet library is self-hosted', fs.existsSync(path.join(pubDir, 'lib', 'xlsx.full.min.js')));
   const server = spawn('node', ['server.js'], { cwd: path.join(__dirname, '..'), env: process.env, stdio: 'pipe' });
   let out = '';
   server.stdout.on('data', (d) => out += d.toString());
@@ -148,6 +154,17 @@ async function main() {
     console.log('\n' + '='.repeat(50));
     console.log(`RESULTS: ${pass} passed, ${fail} failed`);
     console.log('='.repeat(50));
+    {
+      const gz = await fetch(BASE + '/ledger.html', { headers: { 'Accept-Encoding': 'gzip' } });
+      check('pages are compressed', /gzip/.test(gz.headers.get('content-encoding') || ''), gz.headers.get('content-encoding'));
+      check('pages revalidate (so a deploy shows at once)', /no-cache/.test(gz.headers.get('cache-control') || ''), gz.headers.get('cache-control'));
+      const lib = await fetch(BASE + '/lib/xlsx.full.min.js');
+      check('spreadsheet library is cached long', /max-age=\d{6,}/.test(lib.headers.get('cache-control') || ''), lib.headers.get('cache-control'));
+      const sw = await fetch(BASE + '/sw.js');
+      check('service worker is served and never cached', sw.status === 200 && /no-cache/.test(sw.headers.get('cache-control') || ''));
+      const api = await fetch(BASE + '/api/auth/me');
+      check('the offline worker never stores account data (API untouched)', api.status === 401 && !/max-age=\d{3,}/.test(api.headers.get('cache-control') || ''));
+    }
   } catch (err) {
     console.error('ERROR:', err);
     fail++;

@@ -733,7 +733,7 @@
       if (S.me.isHr && !S.me.pending) S.list.status = 'open';
       route();
     });
-  }).catch(function () { location.href = '/login.html'; });
+  }).catch(function (e) { (window.__msAuthFail || function () { location.href = '/login.html'; })(e); });
 })();
 </script>
 </body>

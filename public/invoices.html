@@ -182,7 +182,7 @@
   .fin-ok-note { background: #E4F6E9; border: 1px solid #BFE3C8; color: #1B7A3A; border-radius: 8px; padding: 9px 14px; font-size: 12.5px; margin-bottom: 12px; }
   .fin-linkbtn { background: none; border: none; padding: 0; color: var(--pine); font: inherit; font-size: 12px; cursor: pointer; text-decoration: underline; }
 </style>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="/lib/xlsx.full.min.js"></script>
 <script src="/import-hours.js"></script>
 <link rel="stylesheet" href="/theme.css">
 </head>
@@ -1514,9 +1514,7 @@
     });
     if (state.tab === 'subvendor' && !state.sv.loaded) loadSubvendor();
     else if (state.tab === 'history') histLoad();
-  }).catch(function () {
-    window.location.href = '/login.html';
-  });
+  }).catch(function (e) { (window.__msAuthFail || function () { location.href = '/login.html'; })(e); });
 </script>
 </body>
 </html>

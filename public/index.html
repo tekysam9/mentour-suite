@@ -95,9 +95,7 @@
     return res.json();
   }).then(function (data) {
     if (data) render(data.user);
-  }).catch(function () {
-    window.location.href = '/login.html';
-  });
+  }).catch(function (e) { (window.__msAuthFail || function () { location.href = '/login.html'; })(e); });
 </script>
 </body>
 </html>
