@@ -320,7 +320,7 @@ router.post('/invites', async (req, res, next) => {
     let mail = { attempted: false };
     if (mailer.configured() && b.sendEmail !== false) {
       const r = await mailer.send({
-        to: email, replyTo: req.user.email, subject: 'Your Mentour Suite invite',
+        to: email, sender: { name: req.user.name, email: req.user.email }, subject: 'Your Mentour Suite invite',
         text: `Hi${name ? ' ' + name : ''},\n\nYou have been invited to Mentour Suite as ${b.role === 'hr' ? 'an HR admin' : b.role === 'recruiter' ? 'a recruiter (Onboarding only)' : 'a team member'}. Create your login here (use this email address):\n\n${link}\n\nThe link works once.\n\n${req.user.name || req.user.email}`,
       });
       mail = { attempted: true, sent: r.sent, error: r.error || null };
@@ -823,7 +823,7 @@ router.post('/:id/vendor-requests', async (req, res, next) => {
         ? `Hello${contact ? ' ' + contact : ''},\n\nTo finish your onboarding with ${org ? org.name : 'us'}, please use this private link to fill in:\n${list}\n\n${link}\n\n${message ? message + '\n\n' : ''}The link works until ${expires.toISOString().slice(0, 10)}. No login is needed. Your tax ID and bank numbers are encrypted when saved.\n\nThank you,\n${req.user.name || req.user.email}`
         : `Hello${contact ? ' ' + contact : ''},\n\nTo finish onboarding ${row.consultant_name || 'your consultant'}, please use this private link to send us:\n${list}\n\n${link}\n\n${message ? message + '\n\n' : ''}The link works until ${expires.toISOString().slice(0, 10)}. No login is needed.\n\nThank you,\n${req.user.name || req.user.email}`;
       const r = await mailer.send({
-        to, replyTo: req.user.email,
+        to, sender: { name: req.user.name, email: req.user.email },
         subject: party === 'consultant' ? 'Please complete your onboarding details' : `Documents needed to onboard ${row.consultant_name || 'your consultant'}`,
         text,
       });

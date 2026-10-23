@@ -15,6 +15,9 @@ const nodemailer = require('nodemailer');
 let cached = null;
 function configured() { return !!(process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS); }
 function from() { return process.env.SMTP_FROM || process.env.SMTP_USER; }
+// The sending mailbox's bare address (SMTP_FROM may be "Name <addr>").
+function fromAddress() { const f = from(); const m = /<([^>]+)>/.exec(f); return (m ? m[1] : f).trim(); }
+const cleanName = (n) => String(n || '').replace(/["<>\r\n]/g, '').trim().slice(0, 80);
 
 function transport() {
   if (cached) return cached;
@@ -32,11 +35,20 @@ function transport() {
 const esc = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
 // Returns { sent: true } or { sent: false, error } -- never throws, so a mail problem never fails the save.
-async function send({ to, subject, text, replyTo }) {
+// `sender` ({ name, email }) is the signed-in user: the message shows their name, replies go to their
+// email, and they get a hidden copy. The mailbox address itself stays the authenticated one (mail
+// servers refuse, or mark as spam, messages claiming to come from an address they do not host).
+async function send({ to, subject, text, replyTo, sender }) {
   if (!configured()) return { sent: false, error: 'Email sending is not set up on the server (SMTP settings missing).' };
   try {
     const html = '<div style="font:15px/1.5 Arial,sans-serif;color:#1d2733">' + esc(text).replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1">$1</a>').replace(/\n/g, '<br>') + '</div>';
-    const info = await transport().sendMail({ from: from(), to, subject, text, html, replyTo: replyTo || undefined });
+    const who = sender && cleanName(sender.name || sender.email);
+    const info = await transport().sendMail({
+      from: who ? { name: who + ' (via Mentour Suite)', address: fromAddress() } : from(),
+      to, subject, text, html,
+      replyTo: (sender && sender.email) || replyTo || undefined,
+      bcc: sender && sender.email && sender.email.toLowerCase() !== String(to).toLowerCase() ? sender.email : undefined,
+    });
     const rejected = (info.rejected || []).length;
     if (rejected) return { sent: false, error: 'The mail server rejected the address ' + (info.rejected || []).join(', ') + '.' };
     return { sent: true, id: info.messageId };

@@ -451,3 +451,5 @@ Set these in Hostinger → Node.js app → Environment variables, then restart:
 Use **People → Send me a test email** (Onboarding page) to check delivery. For best inbox placement, send from a mailbox on your own domain (it needs the SPF/DKIM records Hostinger shows for that domain). Re-run `db/schema.sql` (the secure-link table gains `party` and `consultant_id`) and run `npm install` (adds `nodemailer`).
 
 HR admins (not only the owner) can now edit SSN, tax ID and bank numbers on forms and reopen signed forms. On C2C and 1099 onboardings, HR can **upload a completed W-9, I-9 or banking form instead of filling it in**.
+
+Emails show the signed-in HR user's name as the sender ("Jane Doe (via Mentour Suite)"), replies go to that user's own email, and they receive a hidden copy. The technical sending address stays your onboarding mailbox: mail servers reject, or send to spam, messages that claim to come from an address they do not host.

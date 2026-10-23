@@ -45,7 +45,7 @@ async function main() {
   const smtp = new SMTPServer({
     authOptional: true, disabledCommands: ['STARTTLS'],
     onAuth(auth, session, cb) { cb(null, { user: auth.username }); },
-    onData(stream, session, cb) { simpleParser(stream).then((m) => { mailbox.push({ to: (m.to && m.to.text) || '', subject: m.subject, text: m.text }); cb(); }).catch(cb); },
+    onData(stream, session, cb) { simpleParser(stream).then((m) => { mailbox.push({ to: (m.to && m.to.text) || '', from: (m.from && m.from.text) || '', replyTo: (m.replyTo && m.replyTo.text) || '', rcpt: session.envelope.rcptTo.map((x) => x.address).join(), subject: m.subject, text: m.text }); cb(); }).catch(cb); },
   });
   await new Promise((ok) => smtp.listen(2599, '127.0.0.1', ok));
   Object.assign(process.env, { SMTP_HOST: '127.0.0.1', SMTP_PORT: '2599', SMTP_SECURE: 'false', SMTP_USER: 'onboarding@mentour.test', SMTP_PASS: 'x', SMTP_FROM: 'Mentour Suite <onboarding@mentour.test>' });
@@ -2666,6 +2666,7 @@ async function main() {
         const em1 = mailbox.find((m) => m.to.includes('cora@contractor.test'));
         const ctok = em1 && (/vendor\.html\?t=([a-f0-9]{64})/.exec(em1.text) || [])[1];
         check('the email carries the private link and the list', !!ctok && /Personal details/.test(em1.text) && /Form I-9/.test(em1.text), em1 && em1.text);
+        check('it shows the HR user as sender, replies go to them, and they get a copy', /Em Owner/.test(em1.from) && /onboarding@mentour\.test/.test(em1.from) && /em@mailco\.test/.test(em1.replyTo) && /em@mailco\.test/.test(em1.rcpt), em1);
         const CP = '/api/vendor-portal/' + ctok;
         r = await anon2(CP);
         check('the consultant opens the link and sees their own page', r.status === 200 && r.body.party === 'consultant' && r.body.company === 'Cora Contractor', r.body);
