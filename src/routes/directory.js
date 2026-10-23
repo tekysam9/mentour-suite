@@ -606,6 +606,55 @@ router.get('/programs', async (req, res, next) => {
   }
 });
 
+// Swap a vendor row's Name and Client. A program P named V under client C
+// becomes program C under client V, and everything that pointed at P/C for
+// it (Margin rows, placements, invoices, saved name matches) is repointed.
+// Nothing is deleted unless it is left completely unreferenced; collisions
+// with an existing placement/invoice stay where they were and are reported.
+// body: { ids: [programId, ...] }
+router.post('/programs/swap', async (req, res, next) => {
+  const ids = Array.isArray(req.body && req.body.ids) ? req.body.ids.map(Number).filter(Number.isInteger) : [];
+  if (!ids.length) return res.status(400).json({ error: 'Choose at least one vendor row.' });
+  const conn = await pool.getConnection();
+  try {
+    const organizationId = req.user.organization_id;
+    const swapped = []; const skipped = [];
+    await conn.beginTransaction();
+    for (const pid of ids) {
+      const [[p]] = await conn.query(
+        `SELECT p.id, p.name, p.client_id, c.name AS client_name FROM programs p JOIN clients c ON c.id = p.client_id
+         WHERE p.id = ? AND p.organization_id = ?`, [pid, organizationId]);
+      if (!p) { skipped.push({ id: pid, reason: 'not found (already swapped?)' }); continue; }
+      const newClient = await findOrCreateDirectoryRecord(conn, 'clients', { organizationId, name: p.name, status: 'active' });
+      const newProgram = await findOrCreateDirectoryRecord(conn, 'programs', { organizationId, clientId: newClient.id, name: p.client_name, status: 'active' });
+      if (newProgram.id === p.id) { skipped.push({ id: pid, reason: 'already the same' }); continue; }
+      const where = 'program_id = ? AND client_id = ? AND organization_id = ?';
+      const args = [newClient.id, newProgram.id, p.id, p.client_id, organizationId];
+      await conn.query(`UPDATE margin_roster_entries SET client_id = ?, program_id = ? WHERE ${where}`, args);
+      await conn.query(`UPDATE IGNORE consultant_assignments SET client_id = ?, program_id = ? WHERE ${where}`, args);
+      await conn.query(`UPDATE IGNORE invoices SET client_id = ?, program_id = ? WHERE ${where}`, args);
+      await updateReferences(conn, 'client_text_aliases', `UPDATE client_text_aliases SET client_id = ?, program_id = ? WHERE ${where}`, args, true);
+      let left = 0;
+      for (const t of ['margin_roster_entries', 'consultant_assignments', 'invoices']) {
+        const [[r]] = await conn.query(`SELECT COUNT(*) AS n FROM ${t} WHERE program_id = ?`, [p.id]);
+        left += r.n;
+      }
+      if (!left) {
+        await conn.query(`DELETE FROM directory_duplicate_candidates WHERE table_name = 'programs' AND (record_id = ? OR matched_record_id = ?)`, [p.id, p.id]);
+        await conn.query('DELETE FROM programs WHERE id = ? AND organization_id = ?', [p.id, organizationId]);
+      } else skipped.push({ id: pid, reason: left + ' record(s) could not move because the new pairing already has the same entry' });
+      swapped.push({ id: pid, client: p.name, vendor: p.client_name });
+    }
+    await conn.commit();
+    res.json({ swapped, skipped });
+  } catch (err) {
+    await conn.rollback();
+    next(err);
+  } finally {
+    conn.release();
+  }
+});
+
 router.patch('/programs/:id', (req, res, next) => updateContactFields('programs', req, res, next));
 
 // --- "Seen in" usage detail ---

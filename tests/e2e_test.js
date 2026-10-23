@@ -2575,6 +2575,27 @@ async function main() {
         r = await adJar.fetch('/api/onboarding/' + sId + '/add-vendor', { method: 'POST', body: JSON.stringify({ useSupplierId: idL }) });
         check('HR links the request to the existing supplier instead of creating another', r.status === 200 && r.body.supplierId === idL && (await dbConn.query(`SELECT COUNT(*) n FROM subvendors WHERE organization_id = ? AND name LIKE 'Alef Data%'`, [org]))[0][0].n === 1, r.body);
       }
+
+      // ---- Vendors directory: Name and Client the wrong way round -> Swap
+      {
+        const swJar = makeJar();
+        await swJar.fetch('/api/auth/signup', { method: 'POST', body: JSON.stringify({ orgName: 'Swap Co', name: 'Sw Owner', email: 'sw@swap.test', password: 'swappassword123' }) });
+        const [[org]] = await dbConn.query(`SELECT organization_id o FROM users WHERE email = 'sw@swap.test'`);
+        const oid = org.o;
+        const [c1] = await dbConn.query(`INSERT INTO clients (organization_id, name, status) VALUES (?, 'CDW Swap', 'active')`, [oid]);
+        const [p1] = await dbConn.query(`INSERT INTO programs (organization_id, client_id, name, status) VALUES (?, ?, 'OCC Swap', 'active')`, [oid, c1.insertId]);
+        const [k1] = await dbConn.query(`INSERT INTO consultants (organization_id, name, status) VALUES (?, 'Swap Person', 'active')`, [oid]);
+        await dbConn.query(`INSERT INTO consultant_assignments (organization_id, consultant_id, client_id, program_id, billing) VALUES (?, ?, ?, ?, 100)`, [oid, k1.insertId, c1.insertId, p1.insertId]);
+        r = await swJar.fetch('/api/directory/programs/swap', { method: 'POST', body: JSON.stringify({ ids: [p1.insertId] }) });
+        check('swap reports one vendor row swapped', r.status === 200 && r.body.swapped.length === 1 && !r.body.skipped.length, r.body);
+        r = await swJar.fetch('/api/directory/programs');
+        const sw = r.body.programs.find((x) => x.name === 'CDW Swap');
+        check('Name now holds the old client and Client holds the old name', !!sw && sw.client_name === 'OCC Swap' && r.body.programs.length === 1, r.body.programs);
+        const [[asg]] = await dbConn.query('SELECT program_id, client_id FROM consultant_assignments WHERE consultant_id = ?', [k1.insertId]);
+        check('the placement moved with it', asg.program_id === sw.id, asg);
+        r = await swJar.fetch('/api/directory/programs/swap', { method: 'POST', body: JSON.stringify({ ids: [p1.insertId] }) });
+        check('swapping a stale id again changes nothing', r.status === 200 && r.body.swapped.length === 0, r.body);
+      }
     } finally {
       await dbConn.end();
     }

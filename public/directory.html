@@ -342,7 +342,8 @@
             (state.saveStatus === 'error' ? '<span class="dir-btn-save-status" style="color:#C62F25">Couldn’t save</span>' : '') +
           '</div>';
       } else {
-        actions = '<button class="dir-btn" data-action="edit" data-id="' + r.id + '">Edit</button>';
+        actions = '<button class="dir-btn" data-action="edit" data-id="' + r.id + '">Edit</button>' +
+          (tab.key === 'programs' ? ' <button class="dir-btn" data-action="swap-vendor" data-id="' + r.id + '" title="Use this when the Name and Client columns are the wrong way round">Swap</button>' : '');
       }
       var assignToggle = '';
       if (tab.key === 'consultants') {
@@ -371,7 +372,10 @@
       return out;
     }).join('');
 
-    return hiddenNote + '<div class="dir-table-wrap"><table class="dir-table"><thead><tr>' +
+    if (tab.key === 'programs') state.shownProgramIds = records.map(function (r) { return r.id; });
+    var swapBar = tab.key === 'programs'
+      ? '<div class="dir-muted" style="margin:0 0 8px">Name and Client the wrong way round? Use <b>Swap</b> on a row, or <a href="#" data-action="swap-vendor-all" style="color:var(--pine);font-weight:600">swap all ' + records.length + ' shown</a>. Placements, Margin rows and invoices move with it.</div>' : '';
+    return hiddenNote + swapBar + '<div class="dir-table-wrap"><table class="dir-table"><thead><tr>' +
       '<th>Name</th>' + extraCol + '<th>Status</th><th>Email</th><th>Phone</th><th>Address</th><th>Seen in</th><th></th>' +
       '</tr></thead><tbody>' + rows + '</tbody></table></div>';
   }
@@ -602,6 +606,27 @@
     var tabBtn = e.target.closest('[data-tab]');
     if (tabBtn && tabBtn.classList.contains('dir-tab')) {
       switchTab(tabBtn.getAttribute('data-tab'), true);
+      return;
+    }
+
+    var swapBtn = e.target.closest('[data-action="swap-vendor"],[data-action="swap-vendor-all"]');
+    if (swapBtn) {
+      e.preventDefault();
+      var all = swapBtn.getAttribute('data-action') === 'swap-vendor-all';
+      var ids;
+      if (all) {
+        ids = (state.shownProgramIds || []).slice();
+      } else ids = [Number(swapBtn.getAttribute('data-id'))];
+      fetch('/api/directory/programs/swap', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids: ids }) })
+        .then(function (res) { return res.json().then(function (b) { return { ok: res.ok, b: b }; }); })
+        .then(function (o) {
+          if (!o.ok) { alert(o.b.error || 'Couldn’t swap.'); return; }
+          var msg = 'Swapped ' + o.b.swapped.length + ' vendor row(s).';
+          if (o.b.skipped.length) msg += ' ' + o.b.skipped.length + ' skipped: ' + o.b.skipped.map(function (x) { return x.reason; }).join('; ');
+          delete state.cache.programs; delete state.cache.clients;
+          loadTab('programs');
+          alert(msg);
+        });
       return;
     }
 
