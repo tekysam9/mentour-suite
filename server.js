@@ -51,4 +51,5 @@ app.use((err, req, res, next) => { // eslint-disable-line no-unused-vars
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`Mentour Suite listening on port ${PORT}`);
+  if (process.env.NODE_ENV !== 'test') require('./src/nightlyDuplicateScan').start();
 });

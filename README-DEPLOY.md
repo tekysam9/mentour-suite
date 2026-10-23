@@ -429,3 +429,7 @@ The Margin dashboard reads and edits placements (consultant + client + vendor, b
 
 ## New vendors and supplier paperwork (secure link)
 When a C2C request names a company that is not a supplier in the Directory (or lacks a completed W-9, banking form or company details), HR sees a highlighted banner on the request, with an editable email and a button that creates a private, no-login link (copy it or open the pre-filled email). The vendor gives company details, signs the W-9 and banking forms and uploads the insurance certificate and agreement. They appear in the Directory as inactive until the vendor presses "Everything is done". Needs `FIELD_ENCRYPTION_KEY` and a re-run of `db/schema.sql` (new `vendor_requests` table). Routing numbers are matched to banks from `src/data/aba.json` (rebuild with `scripts/build-aba.js`).
+
+### Nightly duplicate check
+
+The app checks the whole Directory for possible duplicate names every night at 02:00 (server time) and flags new pairs in the Directory's duplicate review. It only flags; nothing is merged automatically, and dismissed pairs stay dismissed. Optional environment variables: `DUP_SCAN_HOUR` (0-23), `DUP_SCAN_ENABLED=false` to turn it off, `DUP_SCAN_ON_START=true` to also run once at startup. No extra setup on Hostinger.
