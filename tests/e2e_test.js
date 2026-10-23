@@ -2596,6 +2596,30 @@ async function main() {
         r = await swJar.fetch('/api/directory/programs/swap', { method: 'POST', body: JSON.stringify({ ids: [p1.insertId] }) });
         check('swapping a stale id again changes nothing', r.status === 200 && r.body.swapped.length === 0, r.body);
       }
+
+      // ---- Vendor record: rename "Menya/Orbit Inc/State of OH" to "Menya" and move to the right client
+      {
+        const rnJar = makeJar();
+        await rnJar.fetch('/api/auth/signup', { method: 'POST', body: JSON.stringify({ orgName: 'Rename Co', name: 'Rn Owner', email: 'rn@rename.test', password: 'renamepassword123' }) });
+        const [[orw]] = await dbConn.query(`SELECT organization_id o FROM users WHERE email = 'rn@rename.test'`);
+        const oid = orw.o;
+        const [ca] = await dbConn.query(`INSERT INTO clients (organization_id, name, status) VALUES (?, 'Wrong Client', 'active')`, [oid]);
+        const [cb] = await dbConn.query(`INSERT INTO clients (organization_id, name, status) VALUES (?, 'State of OH', 'active')`, [oid]);
+        const [pr] = await dbConn.query(`INSERT INTO programs (organization_id, client_id, name, status) VALUES (?, ?, 'Menya/Orbit Inc/State of OH', 'active')`, [oid, ca.insertId]);
+        const [cn] = await dbConn.query(`INSERT INTO consultants (organization_id, name, status) VALUES (?, 'Rn Person', 'active')`, [oid]);
+        await dbConn.query(`INSERT INTO consultant_assignments (organization_id, consultant_id, client_id, program_id, billing) VALUES (?, ?, ?, ?, 90)`, [oid, cn.insertId, ca.insertId, pr.insertId]);
+        r = await rnJar.fetch('/api/profiles/programs/' + pr.insertId, { method: 'PATCH', body: JSON.stringify({ values: { name: 'Menya', client_id: cb.insertId } }) });
+        check('vendor name and client can be edited', r.status === 200, r.body);
+        const [[pp]] = await dbConn.query('SELECT name, client_id FROM programs WHERE id = ?', [pr.insertId]);
+        check('the vendor is now "Menya" under State of OH', pp.name === 'Menya' && pp.client_id === cb.insertId, pp);
+        const [[aa]] = await dbConn.query('SELECT client_id, program_id FROM consultant_assignments WHERE consultant_id = ?', [cn.insertId]);
+        check('its placement moved to the new client', aa.client_id === cb.insertId && aa.program_id === pr.insertId, aa);
+        const [[al]] = await dbConn.query('SELECT client_id, program_id FROM client_text_aliases WHERE organization_id = ?', [oid]);
+        check('the old long text still resolves to it', al && al.program_id === pr.insertId && al.client_id === cb.insertId, al);
+        const [pr2] = await dbConn.query(`INSERT INTO programs (organization_id, client_id, name, status) VALUES (?, ?, 'Other', 'active')`, [oid, cb.insertId]);
+        r = await rnJar.fetch('/api/profiles/programs/' + pr2.insertId, { method: 'PATCH', body: JSON.stringify({ values: { name: 'menya' } }) });
+        check('renaming onto an existing vendor of that client is refused clearly', r.status === 409, r.body);
+      }
     } finally {
       await dbConn.end();
     }

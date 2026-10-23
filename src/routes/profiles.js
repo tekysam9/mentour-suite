@@ -11,6 +11,7 @@ const pool = require('../db');
 const { requireAuth } = require('../auth');
 const { encrypt, isConfigured } = require('../crypto');
 const { SPEC, fieldsOf } = require('./profileFields');
+const { aliasKey } = require('./clientAliases');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -313,6 +314,24 @@ router.patch('/:entity/:id', async (req, res, next) => {
     const { core, data, errors, touched } = await prepare(spec, req.body, orgId, { creating: false });
     if (errors.length) return res.status(400).json({ error: errors[0], errors });
 
+    // A vendor (program) can be renamed and moved to another client.
+    let progMove = null;
+    if (entity === 'programs' && (core.name !== undefined || core.client_id !== undefined)) {
+      if (core.name !== undefined) {
+        core.name = String(core.name || '').replace(/\s+/g, ' ').trim();
+        if (!core.name) return res.status(400).json({ error: 'Vendor name is required.' });
+      }
+      const newName = core.name !== undefined ? core.name : rec.name;
+      const newClient = core.client_id !== undefined ? Number(core.client_id) : rec.client_id;
+      if (newName !== rec.name || newClient !== rec.client_id) {
+        const [dupe] = await pool.query(
+          'SELECT id FROM programs WHERE organization_id = ? AND client_id = ? AND LOWER(name) = LOWER(?) AND id <> ?', [orgId, newClient, newName, id]);
+        if (dupe.length) return res.status(409).json({ error: `That client already has a vendor named "${newName}". Merge the two from the Directory’s duplicate review, or pick a different name.`, existingId: dupe[0].id });
+        progMove = { oldName: rec.name, oldClient: rec.client_id, newName, newClient };
+      }
+      if (core.client_id !== undefined) core.client_id = newClient;
+    }
+
     conn = await pool.getConnection();
     await conn.beginTransaction();
     const sets = []; const params = [];
@@ -321,6 +340,26 @@ router.patch('/:entity/:id', async (req, res, next) => {
       sets.push(`${k} = ?`); params.push(v === '' ? null : v);
     }
     if (sets.length) await conn.query(`UPDATE ${entity} SET ${sets.join(', ')} WHERE id = ? AND organization_id = ?`, [...params, id, orgId]);
+    if (progMove && progMove.newClient !== progMove.oldClient) {
+      const a = [progMove.newClient, id, progMove.oldClient, orgId];
+      for (const t of ['margin_roster_entries', 'consultant_assignments', 'invoices']) {
+        await conn.query(`UPDATE ${t} SET client_id = ? WHERE program_id = ? AND client_id = ? AND organization_id = ?`, a);
+      }
+      try { await conn.query('UPDATE client_text_aliases SET client_id = ? WHERE program_id = ? AND client_id = ? AND organization_id = ?', a); }
+      catch (e) { if (!(e && (e.code === 'ER_NO_SUCH_TABLE' || e.errno === 1146))) throw e; }
+    }
+    if (progMove && progMove.newName !== progMove.oldName) {
+      // Hours/Margin files that still write the old text keep resolving here.
+      const key = aliasKey(progMove.oldName);
+      if (key) {
+        try {
+          await conn.query(
+            `INSERT INTO client_text_aliases (organization_id, alias_key, alias_text, client_id, program_id) VALUES (?, ?, ?, ?, ?)
+             ON DUPLICATE KEY UPDATE client_id = VALUES(client_id), program_id = VALUES(program_id)`,
+            [orgId, key, progMove.oldName.slice(0, 255), progMove.newClient, id]);
+        } catch (e) { if (!(e && (e.code === 'ER_NO_SUCH_TABLE' || e.errno === 1146))) throw e; }
+      }
+    }
 
     if (Object.keys(data).length) {
       const [cur] = await conn.query(`SELECT data FROM record_profiles WHERE organization_id = ? AND entity = ? AND record_id = ? FOR UPDATE`, [orgId, entity, id]);
@@ -342,6 +381,7 @@ router.patch('/:entity/:id', async (req, res, next) => {
     res.json({ ok: true });
   } catch (err) {
     if (conn) { try { await conn.rollback(); } catch (e) { /* ignore */ } }
+    if (err && err.code === 'ER_DUP_ENTRY') return res.status(409).json({ error: 'That change would collide with an existing placement or vendor under the new client. Merge them first.' });
     if (schemaMissing(err)) return res.status(503).json({ error: SCHEMA_MSG });
     next(err);
   } finally { if (conn) conn.release(); }

@@ -145,8 +145,8 @@ const SPEC = {
     singular: 'Vendor', plural: 'Vendors', table: 'programs',
     sections: [
       { title: 'Vendor', fields: [
-        f('client_id', 'Client', 'record', { source: 'clients', required: true, readOnlyAfterCreate: true, core: true }),
-        f('name', 'Vendor name', 'text', { core: true, required: true, readOnlyAfterCreate: true, help: 'Name is the key hours and roster files match on, so it cannot be changed after the record exists.' }),
+        f('client_id', 'Client', 'record', { source: 'clients', required: true, core: true, help: 'The end client this vendor works under. Changing it moves the vendor’s placements, Margin rows and invoices to the new client.' }),
+        f('name', 'Vendor name', 'text', { core: true, required: true, help: 'Just the vendor’s own name (for example “Menya”, not “Menya/Orbit Inc/State of OH”). Renaming keeps its placements, Margin rows and invoices.' }),
         f('legal_name', 'Legal entity name', 'text'),
         f('status', 'Status', 'select', { core: true, options: ['active', 'inactive'] }),
         f('vendor_type', 'Vendor type', 'select', { options: ['Prime', 'Subcontractor', 'Staffing partner', 'Other'] }),
