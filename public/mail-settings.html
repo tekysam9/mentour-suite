@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>My email — Mentour Suite</title>
+<link rel="stylesheet" href="/shared.css">
+<link rel="stylesheet" href="/shell.css">
+<link rel="stylesheet" href="/theme.css">
+<style>
+  .ms-wrap { max-width: 760px; padding: 8px 4px 48px; }
+  .ms-wrap h1 { margin: 0 0 4px; }
+  .ms-card { background: #fff; border: 1px solid #E3E6EA; border-radius: 10px; padding: 18px 22px; margin: 0 0 16px; line-height: 1.55; }
+  .ms-card h2 { margin: 0 0 8px; font-size: 17px; }
+  .ms-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px 16px; margin-top: 10px; }
+  .ms-f label { display: block; font-size: 12px; font-weight: 600; color: #5b6673; margin-bottom: 4px; }
+  .ms-f input, .ms-f select { width: 100%; box-sizing: border-box; border: 1px solid #cfd5db; border-radius: 5px; padding: 8px 9px; font-size: 14px; font-family: inherit; }
+  .ms-help { font-size: 12px; color: #5b6673; margin-top: 3px; }
+  .ms-bar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: 14px; }
+  .ms-btn { border: 1px solid #cfd5db; background: #fff; border-radius: 5px; padding: 8px 15px; font-size: 13.5px; font-weight: 600; cursor: pointer; font-family: inherit; }
+  .ms-btn.primary { background: #0B5CAD; border-color: #0B5CAD; color: #fff; }
+  .ms-msg { font-size: 13px; font-weight: 600; } .ms-msg.ok { color: #1B7A3A; } .ms-msg.err { color: #B3261E; }
+  .ms-note { background: #FFF7E6; border-left: 3px solid #E0A100; padding: 8px 12px; border-radius: 4px; font-size: 13px; }
+  .ms-chip { display: inline-block; font-size: 12px; font-weight: 700; padding: 3px 10px; border-radius: 99px; background: #E4F6E9; color: #1B7A3A; }
+</style>
+</head>
+<body>
+<div id="app"><p style="padding:24px">Loading…</p></div>
+<script src="/shell.js"></script>
+<script>
+(function () {
+  var appEl = document.getElementById('app');
+  var PRESETS = [
+    { id: 'gmail', name: 'Gmail / Google Workspace', host: 'smtp.gmail.com', port: 465, security: 'ssl', help: 'Turn on 2-Step Verification, then create an App password at myaccount.google.com/apppasswords and paste it below.' },
+    { id: 'icloud', name: 'iCloud Mail', host: 'smtp.mail.me.com', port: 587, security: 'starttls', help: 'Create an app-specific password at account.apple.com (Sign-In and Security) and paste it below. Username is your iCloud address.' },
+    { id: 'outlook', name: 'Outlook / Microsoft 365', host: 'smtp.office365.com', port: 587, security: 'starttls', help: 'Your admin must allow “Authenticated SMTP” for the mailbox. Use an app password if you have 2-step sign-in.' },
+    { id: 'yahoo', name: 'Yahoo Mail', host: 'smtp.mail.yahoo.com', port: 465, security: 'ssl', help: 'Create an app password in Yahoo account security and paste it below.' },
+    { id: 'hostinger', name: 'Hostinger email', host: 'smtp.hostinger.com', port: 465, security: 'ssl', help: 'Use the mailbox password you set in Hostinger.' },
+    { id: 'other', name: 'Other mail provider', host: '', port: 587, security: 'starttls', help: 'Ask your email provider for the SMTP server name, port and security type.' }
+  ];
+  function esc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
+  function api(m, u, b) {
+    return fetch(u, { method: m, headers: { 'Content-Type': 'application/json' }, body: b ? JSON.stringify(b) : undefined })
+      .then(function (r) { return r.json().catch(function () { return {}; }).then(function (j) { return { ok: r.ok, status: r.status, body: j }; }); });
+  }
+  var S = null, msg = '', kind = '';
+  function presetFor(host) { return PRESETS.filter(function (p) { return p.host && p.host === host; })[0] || PRESETS[PRESETS.length - 1]; }
+  function render() {
+    var s = S.settings, p = presetFor(s ? s.host : '');
+    var h = '<div class="ms-wrap"><h1>My email</h1><p style="margin:0 0 16px;color:#5b6673">Connect your own mailbox so onboarding links and invites are sent <b>from your address</b> (' + esc(S.defaultEmail) + '), and replies come straight back to you.</p>';
+    if (s) h += '<div class="ms-card"><span class="ms-chip">Connected</span> <b>' + esc(s.fromEmail) + '</b> through ' + esc(s.host) + ':' + s.port + '. <div class="ms-bar"><button class="ms-btn primary" id="ms-test" type="button">Send me a test email</button><button class="ms-btn" id="ms-remove" type="button">Disconnect</button><span class="ms-msg ' + kind + '" id="ms-msg">' + esc(msg) + '</span></div></div>';
+    else if (S.sharedConfigured) h += '<div class="ms-note" style="margin-bottom:14px">Not connected yet. Until you connect, emails go out through the company mailbox with your name on them and replies to you.</div>';
+    else h += '<div class="ms-note" style="margin-bottom:14px">Not connected yet. Until you connect a mailbox, links open as a draft in your own mail program instead of being sent by the app.</div>';
+    if (!S.encryptionReady) h += '<div class="ms-note" style="margin-bottom:14px">The server has no encryption key yet (FIELD_ENCRYPTION_KEY), so a password cannot be stored. Ask the owner to set it.</div>';
+    h += '<div class="ms-card"><h2>' + (s ? 'Change settings' : 'Connect your mailbox') + '</h2>' +
+      '<div class="ms-f"><label for="ms-prov">Email provider</label><select id="ms-prov">' + PRESETS.map(function (x) { return '<option value="' + x.id + '"' + (x.id === p.id ? ' selected' : '') + '>' + esc(x.name) + '</option>'; }).join('') + '</select><div class="ms-help" id="ms-phelp">' + esc(p.help) + '</div></div>' +
+      '<div class="ms-grid">' +
+      '<div class="ms-f"><label for="ms-host">Mail server</label><input id="ms-host" value="' + esc(s ? s.host : p.host) + '" autocomplete="off"></div>' +
+      '<div class="ms-f"><label for="ms-port">Port</label><input id="ms-port" type="number" value="' + esc(s ? s.port : p.port) + '"></div>' +
+      '<div class="ms-f"><label for="ms-sec">Security</label><select id="ms-sec"><option value="ssl"' + ((s ? s.security : p.security) === 'ssl' ? ' selected' : '') + '>SSL (port 465)</option><option value="starttls"' + ((s ? s.security : p.security) === 'starttls' ? ' selected' : '') + '>STARTTLS (port 587)</option></select></div>' +
+      '<div class="ms-f"><label for="ms-user">Username</label><input id="ms-user" value="' + esc(s ? s.smtpUser : S.defaultEmail) + '" autocomplete="off"></div>' +
+      '<div class="ms-f"><label for="ms-pass">Password / app password</label><input id="ms-pass" type="password" autocomplete="new-password" placeholder="' + (s && s.hasPassword ? 'Leave blank to keep the saved one' : '') + '"></div>' +
+      '<div class="ms-f"><label for="ms-from">Send from</label><input id="ms-from" type="email" value="' + esc(s ? s.fromEmail : S.defaultEmail) + '"><div class="ms-help">Must be the mailbox you log in with.</div></div>' +
+      '</div><div class="ms-bar"><button class="ms-btn primary" id="ms-save" type="button">Save</button>' + (s ? '' : '<span class="ms-msg ' + kind + '" id="ms-msg">' + esc(msg) + '</span>') + '</div>' +
+      '<p class="ms-help" style="margin-top:12px">Your password is encrypted when saved and is never shown again. Emails are sent by this app’s server through your provider; the app cannot read your mailbox.</p></div></div>';
+    appEl.innerHTML = h;
+    document.getElementById('ms-prov').addEventListener('change', function () {
+      var pr = PRESETS.filter(function (x) { return x.id === this.value; }.bind(this))[0];
+      if (pr.host) { document.getElementById('ms-host').value = pr.host; }
+      document.getElementById('ms-port').value = pr.port; document.getElementById('ms-sec').value = pr.security;
+      document.getElementById('ms-phelp').textContent = pr.help;
+    });
+    document.getElementById('ms-save').addEventListener('click', save);
+    var t = document.getElementById('ms-test'); if (t) t.addEventListener('click', test);
+    var rm = document.getElementById('ms-remove'); if (rm) rm.addEventListener('click', remove);
+  }
+  function say(t, k) { msg = t; kind = k || ''; var el = document.getElementById('ms-msg'); if (el) { el.textContent = t; el.className = 'ms-msg ' + (k || ''); } }
+  function save() {
+    say('Saving…');
+    api('PUT', '/api/mail-settings', { host: document.getElementById('ms-host').value, port: document.getElementById('ms-port').value, security: document.getElementById('ms-sec').value,
+      smtpUser: document.getElementById('ms-user').value, password: document.getElementById('ms-pass').value, fromEmail: document.getElementById('ms-from').value }).then(function (r) {
+      if (!r.ok) { say(r.body.error || 'Could not save.', 'err'); return; }
+      S.settings = r.body.settings; msg = 'Saved. Click “Send me a test email” to check it works.'; kind = 'ok'; render();
+    });
+  }
+  function test() {
+    say('Sending a test email…');
+    api('POST', '/api/mail-settings/test').then(function (r) { say(r.ok ? 'Sent to ' + r.body.to + '. Check your inbox (and spam).' : (r.body.error || 'Could not send.'), r.ok ? 'ok' : 'err'); });
+  }
+  function remove() {
+    if (!confirm('Disconnect your mailbox? Links will then go out through the company mailbox or as a draft.')) return;
+    api('DELETE', '/api/mail-settings').then(function () { S.settings = null; msg = ''; kind = ''; render(); });
+  }
+  api('GET', '/api/mail-settings').then(function (r) {
+    if (r.status === 401) { location.href = '/login.html'; return; }
+    if (!r.ok) { appEl.innerHTML = '<p style="padding:24px">' + esc(r.body.error || 'Not available.') + '</p>'; return; }
+    S = r.body; render();
+  }).catch(function () { appEl.innerHTML = '<p style="padding:24px">Can’t reach the server. Check your connection and reload.</p>'; });
+})();
+</script>
+</body>
+</html>

@@ -453,3 +453,11 @@ Use **People → Send me a test email** (Onboarding page) to check delivery. For
 HR admins (not only the owner) can now edit SSN, tax ID and bank numbers on forms and reopen signed forms. On C2C and 1099 onboardings, HR can **upload a completed W-9, I-9 or banking form instead of filling it in**.
 
 Emails show the signed-in HR user's name as the sender ("Jane Doe (via Mentour Suite)"), replies go to that user's own email, and they receive a hidden copy. The technical sending address stays your onboarding mailbox: mail servers reject, or send to spam, messages that claim to come from an address they do not host.
+
+### My email: send from each user's own address
+
+Each owner / HR admin opens **Settings → My email**, picks their provider (Gmail, iCloud, Outlook/Microsoft 365, Yahoo, Hostinger or other), enters their app password and clicks Save, then **Send me a test email**. From then on, onboarding links and invites they send go out **from their registered address** and replies come straight back to them (they also get a hidden copy). Gmail, iCloud, Yahoo and 2-step Outlook accounts need an *app password*, created in the provider's security settings; the normal password will not work.
+
+If a user has not connected a mailbox, the company mailbox (`SMTP_*` above) is used with their name on it and replies going to them. If their own mailbox fails, the company mailbox sends it and the page says so. With neither, the page offers a draft for the person's mail program, as before.
+
+Needs: `FIELD_ENCRYPTION_KEY` (passwords are stored encrypted), and a re-run of `db/schema.sql` (new `user_mail_settings` table). The app refuses mail servers that point inside the hosting network (`ALLOW_PRIVATE_SMTP=true` is for tests only).

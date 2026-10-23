@@ -27,5 +27,8 @@ Last updated 2026-10-23. Tick items off as they are done.
 - [ ] Reminder emails for links that have not been opened, and an email to HR when a supplier/consultant finishes.
 - [ ] HR editing of SSN/tax ID is open to all HR admins "for now"; revisit if you want it limited again.
 
+- [ ] "Sign in with Google / Microsoft" (OAuth) for My email instead of app passwords. Needs an OAuth app registered with Google and Microsoft by the company (client ID/secret); safer and easier for users than app passwords.
+- [ ] Re-run `db/schema.sql` for the `user_mail_settings` table; each HR user then connects their mailbox under Settings → My email.
+
 ## Working rule
 Before any change: find everything else that reads or writes the same data, keep moves and renames transactional and re-runnable, add tests, run the full suite, then push.

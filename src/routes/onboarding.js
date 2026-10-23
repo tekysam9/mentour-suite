@@ -283,15 +283,15 @@ router.get('/invites', async (req, res, next) => {
       })),
       legacyCode: owner ? req.user.invite_code : null,
       canInviteRoles: owner ? ['hr', 'member', 'recruiter'] : ['member', 'recruiter'],
-      emailSending: mailer.configured(), // false: no mail server is configured; share the link (copy or open in your email app)
+      emailSending: await mailer.available(req.user), // false: no mail server is configured; share the link (copy or open in your email app)
     });
   } catch (err) { if (missingTable(err) || (err && err.code === 'ER_BAD_FIELD_ERROR')) return res.status(503).json({ error: SCHEMA_MSG }); next(err); }
 });
 // Owner/HR: send a test email to the signed-in user to check that mail delivery works.
 router.post('/email-test', async (req, res) => {
   if (!isHr(req)) return denyHr(res);
-  if (!mailer.configured()) return res.status(503).json({ error: 'Email sending is not set up on the server yet. Set SMTP_HOST, SMTP_USER, SMTP_PASS (and SMTP_FROM), restart, and try again.' });
-  const r = await mailer.send({ to: req.user.email, subject: 'Mentour Suite test email', text: 'This is a test from Mentour Suite. If you can read this, onboarding emails will be delivered.' });
+  if (!(await mailer.available(req.user))) return res.status(503).json({ error: 'Email sending is not set up yet. Connect your mailbox under “My email” (left menu), or set the company mailbox on the server.' });
+  const r = await mailer.send({ to: req.user.email, subject: 'Mentour Suite test email', text: 'This is a test from Mentour Suite. If you can read this, onboarding emails will be delivered.', sender: { id: req.user.id, name: req.user.name, email: req.user.email } });
   if (!r.sent) return res.status(502).json({ error: r.error });
   res.json({ ok: true, to: req.user.email });
 });
@@ -318,14 +318,14 @@ router.post('/invites', async (req, res, next) => {
       [req.user.organization_id, code, b.role, name, email, name, req.user.id]);
     const link = inviteLink(req, code, email);
     let mail = { attempted: false };
-    if (mailer.configured() && b.sendEmail !== false) {
+    if ((await mailer.available(req.user)) && b.sendEmail !== false) {
       const r = await mailer.send({
-        to: email, sender: { name: req.user.name, email: req.user.email }, subject: 'Your Mentour Suite invite',
+        to: email, sender: { id: req.user.id, name: req.user.name, email: req.user.email }, subject: 'Your Mentour Suite invite',
         text: `Hi${name ? ' ' + name : ''},\n\nYou have been invited to Mentour Suite as ${b.role === 'hr' ? 'an HR admin' : b.role === 'recruiter' ? 'a recruiter (Onboarding only)' : 'a team member'}. Create your login here (use this email address):\n\n${link}\n\nThe link works once.\n\n${req.user.name || req.user.email}`,
       });
       mail = { attempted: true, sent: r.sent, error: r.error || null };
     }
-    res.status(201).json({ code, role: b.role, email, link, emailSending: mailer.configured(), emailSent: !!mail.sent, emailError: mail.error || null });
+    res.status(201).json({ code, role: b.role, email, link, emailSending: await mailer.available(req.user), emailSent: !!mail.sent, emailError: mail.error || null });
   } catch (err) { if (missingTable(err) || (err && err.code === 'ER_BAD_FIELD_ERROR')) return res.status(503).json({ error: SCHEMA_MSG }); next(err); }
 });
 router.delete('/invites/:id', async (req, res, next) => {
@@ -370,9 +370,9 @@ router.put('/people/:userId', async (req, res, next) => {
   } catch (err) { if (err && /Data truncated|ER_WARN_DATA_OUT_OF_RANGE|Incorrect enum/i.test(String(err.message))) return res.status(503).json({ error: SCHEMA_MSG }); next(err); }
 });
 
-router.get('/schema', (req, res) => {
+router.get('/schema', async (req, res) => {
   res.json({
-    emailConfigured: mailer.configured(),
+    emailConfigured: await mailer.available(req.user),
     workerTypes: spec.WORKER_TYPES, statuses: STATUSES, next: NEXT,
     sections: spec.SECTIONS.map((s) => ({ key: s.key, title: s.title, types: s.types || null, fields: s.fields })),
     checklists: Object.fromEntries(Object.entries(spec.CHECKLISTS).map(([t, l]) => [t, l.map((c) => ({ key: c.key, label: c.label, group: c.group, when: c.when || null, answer: c.answer || null, upload: c.upload || null, optional: !!c.optional, form: c.form || null }))])),
@@ -750,7 +750,7 @@ router.get('/:id/vendor-requests', async (req, res, next) => {
     const [rs] = await pool.query('SELECT * FROM vendor_requests WHERE organization_id = ? AND onboarding_id = ? ORDER BY id DESC', [row.organization_id, row.id]);
     const out = []; for (const r of rs) out.push(await requestView(row, r));
     const mk = (party) => vendorItems.keysFor(party, row.worker_type).map((k) => ({ key: k, label: vendorItems.ITEMS[k].label, help: vendorItems.ITEMS[k].help, checklistKey: vendorItems.ITEMS[k].checklistKey || null }));
-    res.json({ requests: out, items: mk('supplier'), consultantItems: mk('consultant'), consultantEmail: parse(row.data, {}).email || '', emailConfigured: mailer.configured() });
+    res.json({ requests: out, items: mk('supplier'), consultantItems: mk('consultant'), consultantEmail: parse(row.data, {}).email || '', emailConfigured: await mailer.available(req.user) });
   } catch (err) { if (missingTable(err)) return res.json({ requests: [], items: [], needsSchema: true }); next(err); }
 });
 
@@ -815,7 +815,7 @@ router.post('/:id/vendor-requests', async (req, res, next) => {
     let mail = { attempted: false };
     const to = String(data[emailKey] || '').trim();
     const contact = party === 'consultant' ? row.consultant_name : data.employer_contact;
-    if (mailer.configured() && to && EMAIL_RE.test(to) && !(req.body && req.body.sendEmail === false)) {
+    if ((await mailer.available(req.user)) && to && EMAIL_RE.test(to) && !(req.body && req.body.sendEmail === false)) {
       const link = `${req.protocol}://${req.get('host')}/vendor.html?t=${token}`;
       const list = items.map((k) => '- ' + vendorItems.ITEMS[k].label).join('\n');
       const org = (await pool.query('SELECT name FROM organizations WHERE id = ?', [row.organization_id]))[0][0];
@@ -823,16 +823,16 @@ router.post('/:id/vendor-requests', async (req, res, next) => {
         ? `Hello${contact ? ' ' + contact : ''},\n\nTo finish your onboarding with ${org ? org.name : 'us'}, please use this private link to fill in:\n${list}\n\n${link}\n\n${message ? message + '\n\n' : ''}The link works until ${expires.toISOString().slice(0, 10)}. No login is needed. Your tax ID and bank numbers are encrypted when saved.\n\nThank you,\n${req.user.name || req.user.email}`
         : `Hello${contact ? ' ' + contact : ''},\n\nTo finish onboarding ${row.consultant_name || 'your consultant'}, please use this private link to send us:\n${list}\n\n${link}\n\n${message ? message + '\n\n' : ''}The link works until ${expires.toISOString().slice(0, 10)}. No login is needed.\n\nThank you,\n${req.user.name || req.user.email}`;
       const r = await mailer.send({
-        to, sender: { name: req.user.name, email: req.user.email },
+        to, sender: { id: req.user.id, name: req.user.name, email: req.user.email },
         subject: party === 'consultant' ? 'Please complete your onboarding details' : `Documents needed to onboard ${row.consultant_name || 'your consultant'}`,
         text,
       });
-      mail = { attempted: true, sent: r.sent, error: r.error || null, to };
+      mail = { attempted: true, sent: r.sent, error: r.error || null, to, via: r.via || null, note: r.note || null };
       addLog(row, req, r.sent ? `Emailed the secure link to ${to}.` : `Could not email the secure link to ${to}: ${r.error}`);
       await save(row, { log: row.log });
     }
     res.status(201).json({
-      email: mail, emailConfigured: mailer.configured(), party, request: await requestView(row, rs[0]), path: '/vendor.html?t=' + token,
+      email: mail, emailConfigured: await mailer.available(req.user), party, request: await requestView(row, rs[0]), path: '/vendor.html?t=' + token,
       supplierEmail: data[emailKey] || '', supplierContact: contact || '', company: party === 'consultant' ? row.consultant_name : vendorOf(row.worker_type, Object.assign({ consultant_name: row.consultant_name }, data)), consultant: row.consultant_name,
     });
   } catch (err) { if (missingTable(err)) return res.status(503).json({ error: SCHEMA_MSG }); next(err); }

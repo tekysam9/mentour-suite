@@ -36,6 +36,7 @@ app.use('/api/forms', formRoutes);
 app.use('/api/invoices', invoiceRoutes);
 app.use('/api/subvendor-invoices', subvendorInvoiceRoutes);
 app.use('/api/onboarding', onboardingRoutes);
+app.use('/api/mail-settings', require('./src/routes/mailSettings'));
 app.use('/api/vendor-portal', require('./src/routes/vendorPortal'));
 
 // Pages/scripts/styles revalidate (ETag -> tiny 304) so a deploy shows up at

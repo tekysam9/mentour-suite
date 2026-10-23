@@ -650,3 +650,19 @@ CREATE TABLE IF NOT EXISTS vendor_requests (
 ALTER TABLE vendor_requests MODIFY supplier_id INT NULL;
 ALTER TABLE vendor_requests ADD COLUMN IF NOT EXISTS party VARCHAR(12) NOT NULL DEFAULT 'supplier';
 ALTER TABLE vendor_requests ADD COLUMN IF NOT EXISTS consultant_id INT NULL;
+
+-- Each HR user's own outgoing mailbox ("My email"): onboarding emails are sent from their address.
+CREATE TABLE IF NOT EXISTS user_mail_settings (
+  user_id         INT NOT NULL PRIMARY KEY,
+  organization_id INT NOT NULL,
+  host            VARCHAR(255) NOT NULL,
+  port            INT NOT NULL,
+  security        VARCHAR(10) NOT NULL DEFAULT 'ssl',
+  smtp_user       VARCHAR(255) NOT NULL,
+  pass_cipher     TEXT NOT NULL,
+  from_email      VARCHAR(255) NOT NULL,
+  created_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+  FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

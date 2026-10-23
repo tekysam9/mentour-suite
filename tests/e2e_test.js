@@ -48,6 +48,7 @@ async function main() {
     onData(stream, session, cb) { simpleParser(stream).then((m) => { mailbox.push({ to: (m.to && m.to.text) || '', from: (m.from && m.from.text) || '', replyTo: (m.replyTo && m.replyTo.text) || '', rcpt: session.envelope.rcptTo.map((x) => x.address).join(), subject: m.subject, text: m.text }); cb(); }).catch(cb); },
   });
   await new Promise((ok) => smtp.listen(2599, '127.0.0.1', ok));
+  process.env.ALLOW_PRIVATE_SMTP = 'true'; // the test mail server is on localhost
   Object.assign(process.env, { SMTP_HOST: '127.0.0.1', SMTP_PORT: '2599', SMTP_SECURE: 'false', SMTP_USER: 'onboarding@mentour.test', SMTP_PASS: 'x', SMTP_FROM: 'Mentour Suite <onboarding@mentour.test>' });
   const server = spawn('node', ['server.js'], { cwd: path.join(__dirname, '..'), env: process.env, stdio: 'pipe' });
   let serverOut = '';
@@ -2702,6 +2703,46 @@ async function main() {
         check('1099-only items are refused for a C2C consultant', r.status === 400, r.body);
         r = await emJar.fetch('/api/onboarding/invites', { method: 'POST', body: JSON.stringify({ email: 'newhire@mailco.test', name: 'New Hire', role: 'recruiter' }) });
         check('a personal invite is emailed too', r.status === 201 && r.body.emailSent === true && mailbox.some((m) => m.to.includes('newhire@mailco.test') && /signup\.html/.test(m.text)), r.body);
+      }
+
+      // ---- each HR user connects their own mailbox ("My email")
+      {
+        const myJar = makeJar();
+        await myJar.fetch('/api/auth/signup', { method: 'POST', body: JSON.stringify({ orgName: 'Own Mail Co', name: 'Olive Owner', email: 'olive@ownmail.test', password: 'olivepassword123' }) });
+        const anon3 = await fetch(BASE + '/api/mail-settings');
+        check('mail settings need a sign-in', anon3.status === 401, anon3.status);
+        r = await myJar.fetch('/api/mail-settings');
+        check('nothing connected yet; the company mailbox is known', r.status === 200 && r.body.settings === null && r.body.sharedConfigured === true && r.body.defaultEmail === 'olive@ownmail.test', r.body);
+        r = await myJar.fetch('/api/mail-settings', { method: 'PUT', body: JSON.stringify({ host: '', port: 587, security: 'starttls', smtpUser: 'a', password: 'x' }) });
+        check('a missing server is refused', r.status === 400, r.body);
+        r = await myJar.fetch('/api/mail-settings', { method: 'PUT', body: JSON.stringify({ host: '127.0.0.1', port: 2599, security: 'none', smtpUser: 'olive@ownmail.test' }) });
+        check('a password is required the first time', r.status === 400, r.body);
+        r = await myJar.fetch('/api/mail-settings', { method: 'PUT', body: JSON.stringify({ host: '127.0.0.1', port: 2599, security: 'none', smtpUser: 'olive@ownmail.test', password: 'app-secret-123' }) });
+        check('HR saves their mailbox; the password is never returned', r.status === 200 && r.body.settings.hasPassword === true && !JSON.stringify(r.body).includes('app-secret-123'), r.body);
+        const [[ms]] = await dbConn.query('SELECT pass_cipher FROM user_mail_settings WHERE from_email = ?', ['olive@ownmail.test']);
+        check('the password is stored encrypted', ms && !ms.pass_cipher.includes('app-secret-123'), ms);
+        r = await myJar.fetch('/api/mail-settings/test', { method: 'POST', body: '{}' });
+        const tm = mailbox.filter((m) => m.to.includes('olive@ownmail.test') && /test/i.test(m.subject)).pop();
+        check('the test email goes out from the user’s own address', r.status === 200 && tm && /olive@ownmail\.test/.test(tm.from) && !/onboarding@mentour\.test/.test(tm.from), tm);
+        const [[mo2]] = await dbConn.query(`SELECT organization_id o FROM users WHERE email = 'olive@ownmail.test'`);
+        const oid2 = (await dbConn.query(`INSERT INTO onboardings (organization_id, worker_type, status, consultant_name, data, checklist, log) VALUES (?, '1099', 'in_progress', 'Pat Person', ?, '{}', '[]')`, [mo2.o, JSON.stringify({ consultant_name: 'Pat Person', email: 'pat@person.test', h1b_filing_required: 'No' })]))[0].insertId;
+        r = await myJar.fetch('/api/onboarding/' + oid2 + '/vendor-requests', { method: 'POST', body: JSON.stringify({ party: 'consultant', items: ['c_details'] }) });
+        const pm = mailbox.filter((m) => m.to.includes('pat@person.test')).pop();
+        check('an onboarding link is sent from the HR user’s registered address', r.status === 201 && r.body.email.sent === true && r.body.email.via === 'personal' && /Olive Owner/.test(pm.from) && /olive@ownmail\.test/.test(pm.from), pm);
+        await myJar.fetch('/api/mail-settings', { method: 'PUT', body: JSON.stringify({ host: '127.0.0.1', port: 1, security: 'none', smtpUser: 'olive@ownmail.test' }) });
+        r = await myJar.fetch('/api/onboarding/' + oid2 + '/vendor-requests', { method: 'POST', body: JSON.stringify({ party: 'consultant', items: ['c_details'] }) });
+        check('if their mailbox fails, the company mailbox sends it and says so', r.status === 201 && r.body.email.sent === true && r.body.email.via === 'shared' && /own mailbox failed/.test(r.body.email.note || ''), r.body.email);
+        r = await myJar.fetch('/api/mail-settings/test', { method: 'POST', body: '{}' });
+        check('the test never pretends the company mailbox is theirs', r.status === 502, r.body);
+        const mailerMod = require('../src/mailer');
+        delete process.env.ALLOW_PRIVATE_SMTP;
+        const blocked = await mailerMod.checkHost('localhost');
+        const blocked2 = await mailerMod.checkHost('127.0.0.1');
+        process.env.ALLOW_PRIVATE_SMTP = 'true';
+        check('mail servers inside our own network are refused', !!blocked && !!blocked2, [blocked, blocked2]);
+        r = await myJar.fetch('/api/mail-settings', { method: 'DELETE' });
+        r = await myJar.fetch('/api/mail-settings');
+        check('HR can disconnect their mailbox', r.body.settings === null, r.body);
       }
     } finally {
       await dbConn.end();
