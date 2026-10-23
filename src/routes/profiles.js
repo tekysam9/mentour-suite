@@ -248,8 +248,8 @@ async function applySecrets(conn, spec, entity, id, orgId, secrets) {
 
 function guardSecrets(req, res, secrets) {
   if (!secrets || typeof secrets !== 'object' || !Object.keys(secrets).length) return true;
-  if (req.user.role !== 'owner') {
-    res.status(403).json({ error: 'Only the account owner can change SSN, tax ID or bank numbers.' });
+  if (req.user.role !== 'owner' && req.user.role !== 'hr') {
+    res.status(403).json({ error: 'Only the account owner or an HR admin can change SSN, tax ID or bank numbers.' });
     return false;
   }
   const anyValue = Object.values(secrets).some((v) => v !== null && v !== '');
@@ -263,7 +263,7 @@ function guardSecrets(req, res, secrets) {
 router.get('/schema', async (req, res, next) => {
   try {
     const lists = await optionLists(req.user.organization_id);
-    res.json({ spec: SPEC, lists, encryptionConfigured: isConfigured(), canEditSecrets: req.user.role === 'owner' });
+    res.json({ spec: SPEC, lists, encryptionConfigured: isConfigured(), canEditSecrets: req.user.role === 'owner' || req.user.role === 'hr' });
   } catch (err) { next(err); }
 });
 

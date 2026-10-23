@@ -87,7 +87,7 @@
       var sec = S.d.secrets[d.key] || { set: false };
       var shown = sec.set ? '<span class="fm-mask">' + esc(sec.masked) + '</span>' : '<span class="fm-unset">Not on file</span>';
       var inp = (S.canSecret && !locked) ? '<div style="margin-top:6px"><input id="' + id + '" data-secret="' + d.key + '" type="password" autocomplete="off" placeholder="' + (sec.set ? 'Type to replace' : 'Enter value') + '"></div>'
-        : '<div class="fm-help">' + (locked ? 'Locked by signature.' : 'Only the account owner can enter this.') + '</div>';
+        : '<div class="fm-help">' + (locked ? 'Locked by signature.' : 'Only the account owner or an HR admin can enter this.') + '</div>';
       return '<div class="fm-field">' + label + shown + inp + help + '</div>';
     }
     var val = S.d.values[d.key]; if (val === undefined || val === null) val = '';

@@ -166,6 +166,7 @@ function checklistView(row, data, storedRaw, states, docs) {
     const out = { key: c.key, label: c.label, group: c.group, hint: c.hint || null, optional: !!c.optional, manualDone: !!st.done, na: !!st.na, note: st.note || '', at: st.at || null, by: st.by || null };
     if (c.future) out.future = c.future;
     if (c.upload) { out.upload = c.upload; out.documents = docsFor(c.key); }
+    else if (c.uploadInstead) { out.upload = 'instead'; out.documents = docsFor(c.key); }
     if (c.answer) {
       out.answer = c.answer;
       // before Yes/No existed, ticking the item meant "yes"
@@ -180,12 +181,13 @@ function checklistView(row, data, storedRaw, states, docs) {
     } else if (c.auto === 'records') {
       out.autoDone = !!(row.consultant_id && meta.assignmentId && (row.worker_type !== 'C2C' || !vendorOf(row.worker_type, Object.assign({ consultant_name: row.consultant_name }, data)) || row.supplier_id));
     }
+    if (c.uploadInstead) out.viaUpload = out.documents.length > 0 && !(out.form && out.form.status === 'complete');
     if (c.answer) out.done = !out.na && !!out.value;
-    else if (c.formOnly) out.done = !out.na && (!!out.autoDone || !!st.done); // st.done only from before the form existed
+    else if (c.formOnly) out.done = !out.na && (!!out.autoDone || !!st.done || !!(c.uploadInstead && out.documents.length)); // st.done only from before the form existed
     else if (c.upload === 'required') {
       out.legacyDone = !!st.done && !out.documents.length; // ticked by hand before uploads existed: still counts
       out.done = !out.na && (out.documents.length > 0 || !!st.done);
-    } else out.done = !out.na && (out.manualDone || !!out.autoDone);
+    } else out.done = !out.na && (out.manualDone || !!out.autoDone || !!(c.uploadInstead && out.documents.length));
     return out;
   });
 }
@@ -551,7 +553,7 @@ router.post('/:id/documents', async (req, res, next) => {
     if (row.status === 'complete' || row.status === 'cancelled') return res.status(409).json({ error: 'Reopen this onboarding before changing its documents.' });
     const b = req.body || {};
     const def = spec.checklistFor(row.worker_type, parse(row.data, {})).find((c) => c.key === b.itemKey);
-    if (!def || !def.upload) return res.status(404).json({ error: 'That checklist item does not take a document.' });
+    if (!def || !(def.upload || def.uploadInstead)) return res.status(404).json({ error: 'That checklist item does not take a document.' });
     const filename = String(b.filename || '').replace(/[\\/\r\n"]/g, '_').trim().slice(0, 200);
     const ext = (/\.([a-z0-9]+)$/i.exec(filename) || [])[1];
     const t = ext && DOC_TYPES[ext.toLowerCase()];
@@ -652,6 +654,10 @@ async function vendorCheck(row, data, names) {
   out.supplierId = hit.id; out.supplierName = hit.name;
   const [fr] = await pool.query(`SELECT form_type, signatures FROM record_forms WHERE organization_id = ? AND entity = 'subvendors' AND record_id = ? AND form_type IN ('w9','banking')`, [row.organization_id, hit.id]);
   const st = {}; fr.forEach((f) => { st[f.form_type] = forms.helpers.statusOf(f.form_type, true, parse(f.signatures, {})); });
+  // a completed W-9 / banking form uploaded on this request counts as received
+  const ups = await docList(row.organization_id, [row.id]);
+  if (ups.some((d) => d.item_key === 'company_w9')) st.w9 = 'complete';
+  if (ups.some((d) => d.item_key === 'remittance')) st.banking = 'complete';
   if (st.w9 !== 'complete') out.missing.push('w9');
   if (st.banking !== 'complete') out.missing.push('banking');
   if (!(await companyComplete(row.organization_id, hit.id))) out.missing.push('company');

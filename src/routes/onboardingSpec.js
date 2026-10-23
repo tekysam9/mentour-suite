@@ -102,6 +102,7 @@ const item = (key, label, extra) => Object.assign({ key, label }, extra || {});
 // upload: 'required'       -> done once a document is uploaded
 // upload: 'optional'       -> a document can be attached but is not needed
 // optional: true           -> shown, but never blocks completion
+// uploadInstead: true -> (C2C / 1099 forms) HR may upload the completed document instead of filling the form in here
 // future: 'fillable-pdf'   -> later becomes a fillable PDF with e-signature (upload for now)
 const COMMON_TAIL = [
   item('background_check', 'Background check cleared', { group: 'Compliance', answer: 'yesno', upload: 'optional', hint: 'Choose Yes or No. Attaching the report is optional.' }),
@@ -132,20 +133,20 @@ const CHECKLISTS = {
     item('payroll_setup', 'Added to payroll', { group: 'Setup' }),
   ].concat(COMMON_TAIL.filter((x) => x.key !== 'rate_confirmation')),
   C2C: [
-    item('company_w9', 'Company Form W-9', { group: 'Paperwork', form: 'w9', on: 'supplier', hint: 'The consultant’s company fills this in; it needs the company to exist as a supplier company (created for you).' }),
+    item('company_w9', 'Company Form W-9', { group: 'Paperwork', form: 'w9', on: 'supplier', uploadInstead: true, hint: 'The consultant’s company fills this in; it needs the company to exist as a supplier company (created for you).' }),
     item('vendor_agreement', 'Vendor agreement', { group: 'Paperwork', upload: 'required', future: 'fillable-pdf', hint: 'Upload the signed agreement.' }),
     item('coi', 'Certificate of insurance on file', { group: 'Paperwork', upload: 'required', hint: 'Upload the certificate; record the expiry date in the note so it can be chased.' }),
     item('employer_work_auth', 'Employer confirms the consultant’s work authorization', { group: 'Compliance', upload: 'required', hint: 'Upload the employer’s confirmation. The consultant’s own company completes the I-9 for its employee.' }),
     NDA,
-    item('remittance', 'Company banking / remittance details collected', { group: 'Paperwork', form: 'banking', on: 'supplier', formOnly: true, hint: 'The ACH / Wire banking authorization form, filled in and signed. Needs the supplier company (created with the directory records).' }),
+    item('remittance', 'Company banking / remittance details collected', { group: 'Paperwork', form: 'banking', on: 'supplier', uploadInstead: true, formOnly: true, hint: 'The ACH / Wire banking authorization form, filled in and signed. Needs the supplier company (created with the directory records).' }),
     H1B,
   ].concat(COMMON_TAIL),
   '1099': [
     item('contractor_agreement', 'Independent contractor agreement signed', { group: 'Paperwork' }),
-    item('w9', 'Form W-9', { group: 'Paperwork', form: 'w9', on: 'consultant' }),
-    item('i9', 'Form I-9 (employment eligibility)', { group: 'Paperwork', form: 'i9', on: 'consultant', hint: 'Kept for contractors as company practice.' }),
+    item('w9', 'Form W-9', { group: 'Paperwork', form: 'w9', on: 'consultant', uploadInstead: true }),
+    item('i9', 'Form I-9 (employment eligibility)', { group: 'Paperwork', form: 'i9', on: 'consultant', uploadInstead: true, hint: 'Kept for contractors as company practice.' }),
     NDA,
-    item('payment_details', 'Payment (ACH) details collected', { group: 'Paperwork', form: 'banking', on: 'consultant', formOnly: true, hint: 'The ACH / Wire banking authorization form on the consultant, filled in and signed. Needs the directory records.' }),
+    item('payment_details', 'Payment (ACH) details collected', { group: 'Paperwork', form: 'banking', on: 'consultant', uploadInstead: true, formOnly: true, hint: 'The ACH / Wire banking authorization form on the consultant, filled in and signed. Needs the directory records.' }),
     H1B,
   ].concat(COMMON_TAIL),
 };

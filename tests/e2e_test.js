@@ -2289,9 +2289,9 @@ async function main() {
         const consId = (await pfOwner.fetch('/api/onboarding/' + obId)).body.consultantId;
         const [[o]] = await dbConn.query('SELECT organization_id FROM onboardings WHERE id = ?', [obId]);
         r = await obRec.fetch('/api/forms/schema');
-        check('schema: HR may type bank numbers, not SSNs', r.body.canEditSecretsFor.banking === true && r.body.canEditSecretsFor.w9 === false && r.body.canEditSecrets === false, r.body.canEditSecretsFor);
+        check('schema: HR may type bank numbers, SSNs and tax IDs', r.body.canEditSecretsFor.banking === true && r.body.canEditSecretsFor.w9 === true && r.body.canEditSecrets === true, r.body.canEditSecretsFor);
         r = await obRec.fetch('/api/forms/consultants/' + consId + '/w9', { method: 'PUT', body: JSON.stringify({ secrets: { tin: '123456789' } }) });
-        check('HR still cannot enter a tax ID', r.status === 403, r.body);
+        check('HR can enter a tax ID', r.status === 200, r.body);
         r = await obRec2.fetch('/api/forms/consultants/' + consId + '/banking', { method: 'PUT', body: JSON.stringify({ secrets: { ach_account: '55554444' } }) });
         check('a recruiter cannot open the banking form at all', r.status === 403, r.body);
         // a W2 and a 1099 onboarding for this consultant, one with an old manual tick
@@ -2305,6 +2305,21 @@ async function main() {
         check('1099 payment details links to the banking form and is open', g.form && g.form.form === 'banking' && g.done === false, g);
         r = await pfOwner.fetch('/api/onboarding/' + t99b + '/checklist', { method: 'POST', body: JSON.stringify({ key: 'payment_details', done: true }) });
         check('1099 payment details cannot be ticked by hand', r.status === 400, r.body);
+        // upload the completed document instead of filling a form (1099 / C2C only)
+        const pdfB64 = Buffer.from('%PDF-1.4\n1 0 obj<<>>endobj\ntrailer<<>>\n%%EOF').toString('base64');
+        g = (await pfOwner.fetch('/api/onboarding/' + t99b)).body.checklist.find((c) => c.key === 'w9');
+        check('1099 W-9 offers an upload instead and is open', g.upload === 'instead' && g.done === false && g.viaUpload === false, g);
+        r = await pfOwner.fetch('/api/onboarding/' + t99b + '/documents', { method: 'POST', body: JSON.stringify({ itemKey: 'w9', filename: 'signed-w9.pdf', contentBase64: pdfB64 }) });
+        check('HR uploads a completed W-9 instead of filling it in', r.status === 201, r.body);
+        g = (await pfOwner.fetch('/api/onboarding/' + t99b)).body.checklist.find((c) => c.key === 'w9');
+        check('the W-9 item is done via the upload', g.done === true && g.viaUpload === true && g.documents.length === 1, g);
+        r = await pfOwner.fetch('/api/onboarding/' + t99b + '/documents', { method: 'POST', body: JSON.stringify({ itemKey: 'i9', filename: 'i9.pdf', contentBase64: pdfB64 }) });
+        g = (await pfOwner.fetch('/api/onboarding/' + t99b)).body.checklist.find((c) => c.key === 'i9');
+        check('an I-9 can be uploaded instead too', r.status === 201 && g.done === true, r.body);
+        r = await pfOwner.fetch('/api/onboarding/' + w2b + '/documents', { method: 'POST', body: JSON.stringify({ itemKey: 'i9', filename: 'i9.pdf', contentBase64: pdfB64 }) });
+        check('W-2 forms are not uploadable (only C2C and 1099)', r.status === 404, r.body);
+        r = await obRec2.fetch('/api/onboarding/' + t99b + '/documents', { method: 'POST', body: JSON.stringify({ itemKey: 'w9', filename: 'x.pdf', contentBase64: pdfB64, replace: true }) });
+        check('a recruiter cannot upload', r.status === 403, r.status);
         const bu = '/api/forms/consultants/' + consId + '/banking';
         r = await obRec.fetch(bu, { method: 'PUT', body: JSON.stringify({ values: { method: 'ACH', bank_name: 'Chase', ach_holder: 'Avinash Agnihotri', ach_type: 'Savings', payee_attest: true }, secrets: { ach_routing: '021000021', ach_account: '9876543210' } }) });
         check('an HR admin enters bank numbers on the banking form', r.status === 200, r.body);

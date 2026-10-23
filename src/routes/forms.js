@@ -20,9 +20,10 @@ const ENTITIES = ['consultants', 'clients', 'programs', 'subvendors'];
 const SIGN_AFTER = { employer: 'employee', reverify: 'employer' };
 const OPTIONAL_SIG = { i9: ['reverify'] };
 
-// Who may type identifying numbers. The owner always; HR admins only on the banking form
-// (bank numbers). SSN / tax ID / document numbers stay owner-only. Nobody can read them back.
-const canEditSecrets = (req, form) => !!req.vendorLink || req.user.role === 'owner' || (form === 'banking' && req.user.role === 'hr');
+// Who may type identifying numbers (SSN, tax ID, document and bank numbers): the owner and HR admins
+// (and the supplier through their secure link). Nobody can read them back.
+const isHrAdmin = (req) => req.user.role === 'owner' || req.user.role === 'hr';
+const canEditSecrets = (req) => !!req.vendorLink || isHrAdmin(req);
 const missingTable = (e) => e && e.code === 'ER_NO_SUCH_TABLE';
 
 async function loadRecord(entity, id, orgId) {
@@ -119,7 +120,7 @@ function checkParams(req, res) {
 }
 
 router.get('/schema', (req, res) => {
-  res.json({ forms: FORMS, encryptionConfigured: isConfigured(), canEditSecrets: req.user.role === 'owner', canEditSecretsFor: Object.fromEntries(Object.keys(FORMS).map((k) => [k, canEditSecrets(req, k)])) });
+  res.json({ forms: FORMS, encryptionConfigured: isConfigured(), canEditSecrets: isHrAdmin(req), canEditSecretsFor: Object.fromEntries(Object.keys(FORMS).map((k) => [k, canEditSecrets(req, k)])) });
 });
 
 router.get('/bank-lookup/:rn', (req, res) => res.json(require('./abaLookup').lookup(req.params.rn)));
@@ -176,7 +177,7 @@ router.put('/:entity/:id/:form', async (req, res, next) => {
     }
     const secretKeys = Object.keys(secrets);
     if (secretKeys.length) {
-      if (!canEditSecrets(req, P.form)) return res.status(403).json({ error: P.form === 'banking' ? 'Only the account owner or an HR admin can enter bank numbers.' : 'Only the account owner can enter SSN, tax ID or document numbers.' });
+      if (!canEditSecrets(req, P.form)) return res.status(403).json({ error: 'Only the account owner or an HR admin can enter SSN, tax ID, document or bank numbers.' });
       if (secretKeys.some((k) => secrets[k] !== null && secrets[k] !== '') && !isConfigured()) {
         return res.status(503).json({ error: 'Sensitive fields cannot be saved yet: the server has no encryption key. Set FIELD_ENCRYPTION_KEY (see README-DEPLOY.md), restart, and try again. Nothing was stored.' });
       }
@@ -268,7 +269,7 @@ router.post('/:entity/:id/:form/sign', async (req, res, next) => {
 router.post('/:entity/:id/:form/reopen', async (req, res, next) => {
   try {
     const P = checkParams(req, res); if (!P) return;
-    if (req.user.role !== 'owner') return res.status(403).json({ error: 'Only the account owner can reopen a signed form.' });
+    if (!isHrAdmin(req)) return res.status(403).json({ error: 'Only the account owner or an HR admin can reopen a signed form.' });
     const key = req.body && req.body.signature;
     const reason = String((req.body && req.body.reason) || '').trim();
     if (!FORMS[P.form].signatures[key]) return res.status(400).json({ error: 'Unknown signature.' });

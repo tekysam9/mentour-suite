@@ -395,7 +395,7 @@
       var manual = !c.answer && !c.formOnly && c.upload !== 'required';
       var tickable = live && manual && !(c.autoDone && !c.manualDone);
       h += '<div class="ob-item' + (c.na ? ' na' : '') + '"><input type="checkbox" data-act="tick" data-k="' + c.key + '"' + (c.done ? ' checked' : '') + (tickable || (live && c.legacyDone) ? '' : ' disabled') + (manual ? '' : ' title="Completes itself: ' + (c.answer ? 'choose Yes or No' : c.formOnly ? 'fill in and sign the form' : 'upload the document') + '"') + '>' +
-        '<div class="lbl">' + esc(c.label) + (c.optional ? ' <span class="ob-chipf">optional</span>' : '') + (c.autoDone && !c.manualDone ? ' <span class="ob-chipf complete">automatic</span>' : '') + (c.legacyDone ? ' <span class="ob-chipf">ticked before ' + (c.formOnly ? 'the form' : 'uploads') + '</span>' : '') + '</div><div class="more">';
+        '<div class="lbl">' + esc(c.label) + (c.optional ? ' <span class="ob-chipf">optional</span>' : '') + (c.viaUpload ? ' <span class="ob-chipf complete">uploaded instead</span>' : '') + (c.autoDone && !c.manualDone ? ' <span class="ob-chipf complete">automatic</span>' : '') + (c.legacyDone ? ' <span class="ob-chipf">ticked before ' + (c.formOnly ? 'the form' : 'uploads') + '</span>' : '') + '</div><div class="more">';
       if (c.answer) {
         h += '<span class="ob-yn">' + ['Yes', 'No'].map(function (v) { return '<button class="ob-btn' + (c.value === v ? ' primary' : '') + '" data-act="answer" data-k="' + c.key + '" data-v="' + v + '"' + (live ? '' : ' disabled') + '>' + v + '</button>'; }).join(' ') + '</span>';
         if (c.value === 'No' && c.key === 'background_check') h += '<span style="color:#9a3b1f">Answered No: check before completing.</span>';
@@ -406,7 +406,7 @@
           h += '<span>📄 <a class="ob-link" href="' + u + '" target="_blank" rel="noopener">' + esc(d.filename) + '</a> (' + Math.max(1, Math.round(d.size / 1024)) + ' KB, ' + esc(d.uploadedBy || '') + ', ' + fmtWhen(d.uploadedAt) + ') <a class="ob-link" href="' + u + '?download=1">Download</a>' +
             (live ? ' <button class="ob-link" data-act="doc-del" data-id="' + d.id + '">Delete</button>' : '') + '</span>';
         });
-        if (live) h += '<label class="ob-link" style="cursor:pointer">' + ((c.documents || []).length ? 'Replace document' : (c.upload === 'optional' ? 'Attach document (optional)' : 'Upload document')) +
+        if (live) h += '<label class="ob-link" style="cursor:pointer">' + ((c.documents || []).length ? 'Replace document' : (c.upload === 'optional' ? 'Attach document (optional)' : c.upload === 'instead' ? 'Or upload the completed ' + ((c.form && c.form.title) || 'form') + ' instead of filling it in' : 'Upload document')) +
           '<input type="file" data-act="doc-up" data-k="' + c.key + '" data-replace="' + ((c.documents || []).length ? '1' : '') + '" accept=".pdf,.jpg,.jpeg,.png,.docx" hidden></label><span class="ob-muted">PDF, JPG, PNG or Word, up to 10 MB</span>';
         if (c.future === 'fillable-pdf') h += '<span class="ob-muted">Upload for now; a fillable, e-signable version is coming.</span>';
       }

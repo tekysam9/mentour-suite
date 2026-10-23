@@ -99,7 +99,7 @@
       var shown = sec.set ? '<span class="rec-mask">' + esc(sec.masked) + '</span>' : '<span class="rec-unset">Not on file</span>';
       var input = canEdit
         ? '<input id="' + id + '" data-secret="' + fld.key + '" type="password" autocomplete="off" placeholder="' + (sec.set ? 'Type to replace' : 'Enter value') + '">'
-        : '<span class="rec-help">Only the account owner can change this.</span>';
+        : '<span class="rec-help">Only the account owner or an HR admin can change this.</span>';
       return '<div class="' + cls + '">' + label + '<div class="rec-secret-row">' + shown + '</div><div style="margin-top:6px">' + input + '</div>' + help +
         (sec.set && canEdit ? '<label style="font-weight:500;margin-top:4px"><input type="checkbox" data-secret-clear="' + fld.key + '" style="width:auto"> Remove stored value</label>' : '') + '</div>';
     }
