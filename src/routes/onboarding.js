@@ -12,6 +12,7 @@ const { requireAuth, hashPassword, validateSignupInput } = require('../auth');
 const forms = require('./forms');
 const { FORMS } = require('./formSpecs');
 const { splitClientText } = require('./clientAliases');
+const mailer = require('../mailer');
 const spec = require('./onboardingSpec');
 const { isConfigured, encryptBuffer, decryptBuffer } = require('../crypto');
 const crypto = require('crypto');
@@ -282,9 +283,17 @@ router.get('/invites', async (req, res, next) => {
       })),
       legacyCode: owner ? req.user.invite_code : null,
       canInviteRoles: owner ? ['hr', 'member', 'recruiter'] : ['member', 'recruiter'],
-      emailSending: false, // no mail server is configured; share the link (copy or open in your email app)
+      emailSending: mailer.configured(), // false: no mail server is configured; share the link (copy or open in your email app)
     });
   } catch (err) { if (missingTable(err) || (err && err.code === 'ER_BAD_FIELD_ERROR')) return res.status(503).json({ error: SCHEMA_MSG }); next(err); }
+});
+// Owner/HR: send a test email to the signed-in user to check that mail delivery works.
+router.post('/email-test', async (req, res) => {
+  if (!isHr(req)) return denyHr(res);
+  if (!mailer.configured()) return res.status(503).json({ error: 'Email sending is not set up on the server yet. Set SMTP_HOST, SMTP_USER, SMTP_PASS (and SMTP_FROM), restart, and try again.' });
+  const r = await mailer.send({ to: req.user.email, subject: 'Mentour Suite test email', text: 'This is a test from Mentour Suite. If you can read this, onboarding emails will be delivered.' });
+  if (!r.sent) return res.status(502).json({ error: r.error });
+  res.json({ ok: true, to: req.user.email });
 });
 router.post('/invites', async (req, res, next) => {
   try {
@@ -307,7 +316,16 @@ router.post('/invites', async (req, res, next) => {
     await pool.query('UPDATE invite_codes SET revoked = 1, revoked_at = NOW() WHERE organization_id = ? AND email = ? AND used_at IS NULL AND revoked = 0', [req.user.organization_id, email]);
     await pool.query('INSERT INTO invite_codes (organization_id, code, role, label, email, invitee_name, created_by_id) VALUES (?, ?, ?, ?, ?, ?, ?)',
       [req.user.organization_id, code, b.role, name, email, name, req.user.id]);
-    res.status(201).json({ code, role: b.role, email, link: inviteLink(req, code, email), emailSending: false });
+    const link = inviteLink(req, code, email);
+    let mail = { attempted: false };
+    if (mailer.configured() && b.sendEmail !== false) {
+      const r = await mailer.send({
+        to: email, replyTo: req.user.email, subject: 'Your Mentour Suite invite',
+        text: `Hi${name ? ' ' + name : ''},\n\nYou have been invited to Mentour Suite as ${b.role === 'hr' ? 'an HR admin' : b.role === 'recruiter' ? 'a recruiter (Onboarding only)' : 'a team member'}. Create your login here (use this email address):\n\n${link}\n\nThe link works once.\n\n${req.user.name || req.user.email}`,
+      });
+      mail = { attempted: true, sent: r.sent, error: r.error || null };
+    }
+    res.status(201).json({ code, role: b.role, email, link, emailSending: mailer.configured(), emailSent: !!mail.sent, emailError: mail.error || null });
   } catch (err) { if (missingTable(err) || (err && err.code === 'ER_BAD_FIELD_ERROR')) return res.status(503).json({ error: SCHEMA_MSG }); next(err); }
 });
 router.delete('/invites/:id', async (req, res, next) => {
@@ -354,6 +372,7 @@ router.put('/people/:userId', async (req, res, next) => {
 
 router.get('/schema', (req, res) => {
   res.json({
+    emailConfigured: mailer.configured(),
     workerTypes: spec.WORKER_TYPES, statuses: STATUSES, next: NEXT,
     sections: spec.SECTIONS.map((s) => ({ key: s.key, title: s.title, types: s.types || null, fields: s.fields })),
     checklists: Object.fromEntries(Object.entries(spec.CHECKLISTS).map(([t, l]) => [t, l.map((c) => ({ key: c.key, label: c.label, group: c.group, when: c.when || null, answer: c.answer || null, upload: c.upload || null, optional: !!c.optional, form: c.form || null }))])),
@@ -677,6 +696,12 @@ async function companyComplete(orgId, supplierId) {
   return !!(sv[0] && sv[0].address && p.contact_name && p.city && p.state);
 }
 
+// the consultant's own details are complete once an email or phone and a full address are on file
+async function personComplete(orgId, consultantId) {
+  const [c] = await pool.query('SELECT email, phone, address FROM consultants WHERE id = ? AND organization_id = ?', [consultantId, orgId]);
+  return !!(c[0] && (c[0].email || c[0].phone) && c[0].address);
+}
+
 async function requestStatuses(row, items) {
   // what has come back so far for each requested item
   const out = {};
@@ -685,7 +710,21 @@ async function requestStatuses(row, items) {
   for (const k of items) {
     const it = vendorItems.ITEMS[k];
     if (it.kind === 'company') out[k] = row.supplier_id && (await companyComplete(row.organization_id, row.supplier_id)) ? 'complete' : 'not started';
-    else if (it.kind === 'form') out[k] = row.supplier_id ? (states.get(`subvendors:${row.supplier_id}:${it.form}`) || 'not started') : 'not started';
+    else if (it.kind === 'person') out[k] = row.consultant_id && (await personComplete(row.organization_id, row.consultant_id)) ? 'complete' : 'not started';
+    else if (it.kind === 'form' && it.party === 'consultant') {
+      // the consultant is done once their own signature is on (HR adds the employer part of an I-9 later)
+      const own = it.form === 'i9' ? 'employee' : 'payee';
+      let st = 'not started';
+      if (row.consultant_id) {
+        const [fr] = await pool.query(`SELECT signatures FROM record_forms WHERE organization_id = ? AND entity = 'consultants' AND record_id = ? AND form_type = ?`, [row.organization_id, row.consultant_id, it.form]);
+        if (fr[0]) st = parse(fr[0].signatures, {})[own] ? 'complete' : 'in progress';
+      }
+      out[k] = st;
+    }
+    else if (it.kind === 'form') {
+      const rid = it.entity === 'consultants' ? row.consultant_id : row.supplier_id;
+      out[k] = rid ? (states.get(`${it.entity}:${rid}:${it.form}`) || 'not started') : 'not started';
+    }
     else out[k] = docs.some((d) => d.item_key === it.itemKey) ? 'received' : 'waiting';
   }
   return out;
@@ -698,7 +737,7 @@ async function requestView(row, r) {
   const now = Date.now();
   const expired = new Date(r.expires_at).getTime() < now;
   return {
-    id: r.id, items: items.map((k) => ({ key: k, label: vendorItems.ITEMS[k].label, status: st[k], done: itemDone(k, st[k]) })),
+    id: r.id, party: r.party || 'supplier', items: items.map((k) => ({ key: k, label: vendorItems.ITEMS[k].label, status: st[k], done: itemDone(k, st[k]) })),
     message: r.message || '', createdBy: r.created_by, createdAt: r.created_at, expiresAt: r.expires_at, lastOpenedAt: r.last_opened_at, submittedAt: r.submitted_at,
     state: r.revoked_at ? 'revoked' : expired ? 'expired' : 'open',
   };
@@ -710,7 +749,8 @@ router.get('/:id/vendor-requests', async (req, res, next) => {
     const row = await load(req, res); if (!row) return;
     const [rs] = await pool.query('SELECT * FROM vendor_requests WHERE organization_id = ? AND onboarding_id = ? ORDER BY id DESC', [row.organization_id, row.id]);
     const out = []; for (const r of rs) out.push(await requestView(row, r));
-    res.json({ requests: out, items: vendorItems.KEYS.map((k) => ({ key: k, label: vendorItems.ITEMS[k].label, help: vendorItems.ITEMS[k].help })) });
+    const mk = (party) => vendorItems.keysFor(party, row.worker_type).map((k) => ({ key: k, label: vendorItems.ITEMS[k].label, help: vendorItems.ITEMS[k].help, checklistKey: vendorItems.ITEMS[k].checklistKey || null }));
+    res.json({ requests: out, items: mk('supplier'), consultantItems: mk('consultant'), consultantEmail: parse(row.data, {}).email || '', emailConfigured: mailer.configured() });
   } catch (err) { if (missingTable(err)) return res.json({ requests: [], items: [], needsSchema: true }); next(err); }
 });
 
@@ -718,21 +758,38 @@ router.post('/:id/vendor-requests', async (req, res, next) => {
   try {
     if (!isHr(req)) return denyHr(res);
     const row = await load(req, res); if (!row) return;
-    if (row.worker_type !== 'C2C') return res.status(409).json({ error: 'Supplier requests are for C2C onboardings (the consultant’s own company).' });
+    const party = req.body && req.body.party === 'consultant' ? 'consultant' : 'supplier';
+    if (party === 'supplier' && row.worker_type !== 'C2C') return res.status(409).json({ error: 'Supplier requests are for C2C onboardings (the consultant’s own company).' });
+    if (party === 'consultant' && !['C2C', '1099'].includes(row.worker_type)) return res.status(409).json({ error: 'Consultant links are for C2C and 1099 onboardings.' });
     if (row.status !== 'in_progress' && row.status !== 'submitted') return res.status(409).json({ error: 'Send details requests only while the request is waiting for approval or in progress.' });
-    const items = vendorItems.clean(req.body && req.body.items);
+    const items = vendorItems.clean(req.body && req.body.items, party, row.worker_type);
     if (!items.length) return res.status(400).json({ error: 'Tick at least one item to request.' });
-    if (!isConfigured() && items.some((k) => k === 'banking' || k === 'coi' || k === 'vendor_agreement' || k === 'w9')) {
-      return res.status(503).json({ error: 'The server has no encryption key yet (FIELD_ENCRYPTION_KEY), so the supplier could not save tax IDs, bank numbers or documents. Set it first (see README-DEPLOY.md).' });
+    if (!isConfigured() && items.some((k) => ['form', 'upload'].includes(vendorItems.ITEMS[k].kind))) {
+      return res.status(503).json({ error: 'The server has no encryption key yet (FIELD_ENCRYPTION_KEY), so tax IDs, bank numbers or documents could not be saved. Set it first (see README-DEPLOY.md).' });
     }
     const days = Math.min(60, Math.max(1, Number(req.body && req.body.days) || 14));
     const message = String((req.body && req.body.message) || '').trim().slice(0, 1000);
     const data = parse(row.data, {});
     const emailIn = String((req.body && req.body.email) || '').trim();
-    if (emailIn && !EMAIL_RE.test(emailIn)) return res.status(400).json({ error: 'Enter a valid email address for the supplier.' });
-    if (emailIn && emailIn !== data.employer_email) { data.employer_email = emailIn; addLog(row, req, `Supplier email set to ${emailIn}.`); await save(row, { data: JSON.stringify(data) }); }
-    let supplierId = row.supplier_id;
-    if (!supplierId) {
+    const emailKey = party === 'consultant' ? 'email' : 'employer_email';
+    if (emailIn && !EMAIL_RE.test(emailIn)) return res.status(400).json({ error: `Enter a valid email address for the ${party}.` });
+    if (emailIn && emailIn !== data[emailKey]) { data[emailKey] = emailIn; addLog(row, req, `${party === 'consultant' ? 'Consultant' : 'Supplier'} email set to ${emailIn}.`); await save(row, { data: JSON.stringify(data) }); }
+    let supplierId = row.supplier_id; let consultantId = row.consultant_id || null;
+    if (party === 'consultant') {
+      if (!data.consultant_name) return res.status(422).json({ error: 'Fill in the consultant’s name on the request first.' });
+      if (!consultantId) {
+        const [ex] = await pool.query('SELECT id FROM consultants WHERE organization_id = ? AND LOWER(name) = LOWER(?)', [row.organization_id, oneLine(data.consultant_name)]);
+        if (ex[0]) consultantId = ex[0].id;
+        else {
+          // listed as inactive until directory records are created or the consultant submits their details
+          const [r] = await pool.query(`INSERT INTO consultants (organization_id, name, status, email, phone) VALUES (?, ?, 'inactive', ?, ?)`,
+            [row.organization_id, oneLine(data.consultant_name), data.email || null, data.phone || null]);
+          consultantId = r.insertId;
+          await flagNew(pool, row.organization_id, 'consultants', consultantId, data.consultant_name);
+        }
+        row.consultant_id = consultantId;
+      }
+    } else if (!supplierId) {
       const vname = vendorOf(row.worker_type, Object.assign({ consultant_name: row.consultant_name }, data));
       if (!vname) return res.status(422).json({ error: 'Fill in the consultant’s company (candidate employer) on the request first.' });
       const [ex] = await pool.query('SELECT id FROM subvendors WHERE organization_id = ? AND LOWER(name) = LOWER(?)', [row.organization_id, vname]);
@@ -749,12 +806,35 @@ router.post('/:id/vendor-requests', async (req, res, next) => {
     const token = crypto.randomBytes(32).toString('hex');
     const expires = new Date(Date.now() + days * 86400000);
     const [ins] = await pool.query(
-      'INSERT INTO vendor_requests (organization_id, onboarding_id, supplier_id, token_hash, items, message, expires_at, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-      [row.organization_id, row.id, supplierId, sha256(token), items.join(','), message || null, expires, who(req)]);
-    addLog(row, req, `Requested from the supplier (secure link, ${days} days): ${items.map((k) => vendorItems.ITEMS[k].label).join(', ')}.`);
-    await save(row, { supplier_id: supplierId, log: row.log });
+      'INSERT INTO vendor_requests (organization_id, onboarding_id, supplier_id, consultant_id, party, token_hash, items, message, expires_at, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      [row.organization_id, row.id, party === 'supplier' ? supplierId : null, party === 'consultant' ? consultantId : null, party, sha256(token), items.join(','), message || null, expires, who(req)]);
+    addLog(row, req, `Requested from the ${party} (secure link, ${days} days): ${items.map((k) => vendorItems.ITEMS[k].label).join(', ')}.`);
+    await save(row, party === 'consultant' ? { consultant_id: consultantId, log: row.log } : { supplier_id: supplierId, log: row.log });
     const [rs] = await pool.query('SELECT * FROM vendor_requests WHERE id = ?', [ins.insertId]);
-    res.status(201).json({ request: await requestView(row, rs[0]), path: '/vendor.html?t=' + token, supplierEmail: data.employer_email || '', supplierContact: data.employer_contact || '', company: vendorOf(row.worker_type, Object.assign({ consultant_name: row.consultant_name }, data)), consultant: row.consultant_name });
+    // email the link straight to the supplier / consultant when the server can send mail
+    let mail = { attempted: false };
+    const to = String(data[emailKey] || '').trim();
+    const contact = party === 'consultant' ? row.consultant_name : data.employer_contact;
+    if (mailer.configured() && to && EMAIL_RE.test(to) && !(req.body && req.body.sendEmail === false)) {
+      const link = `${req.protocol}://${req.get('host')}/vendor.html?t=${token}`;
+      const list = items.map((k) => '- ' + vendorItems.ITEMS[k].label).join('\n');
+      const org = (await pool.query('SELECT name FROM organizations WHERE id = ?', [row.organization_id]))[0][0];
+      const text = party === 'consultant'
+        ? `Hello${contact ? ' ' + contact : ''},\n\nTo finish your onboarding with ${org ? org.name : 'us'}, please use this private link to fill in:\n${list}\n\n${link}\n\n${message ? message + '\n\n' : ''}The link works until ${expires.toISOString().slice(0, 10)}. No login is needed. Your tax ID and bank numbers are encrypted when saved.\n\nThank you,\n${req.user.name || req.user.email}`
+        : `Hello${contact ? ' ' + contact : ''},\n\nTo finish onboarding ${row.consultant_name || 'your consultant'}, please use this private link to send us:\n${list}\n\n${link}\n\n${message ? message + '\n\n' : ''}The link works until ${expires.toISOString().slice(0, 10)}. No login is needed.\n\nThank you,\n${req.user.name || req.user.email}`;
+      const r = await mailer.send({
+        to, replyTo: req.user.email,
+        subject: party === 'consultant' ? 'Please complete your onboarding details' : `Documents needed to onboard ${row.consultant_name || 'your consultant'}`,
+        text,
+      });
+      mail = { attempted: true, sent: r.sent, error: r.error || null, to };
+      addLog(row, req, r.sent ? `Emailed the secure link to ${to}.` : `Could not email the secure link to ${to}: ${r.error}`);
+      await save(row, { log: row.log });
+    }
+    res.status(201).json({
+      email: mail, emailConfigured: mailer.configured(), party, request: await requestView(row, rs[0]), path: '/vendor.html?t=' + token,
+      supplierEmail: data[emailKey] || '', supplierContact: contact || '', company: party === 'consultant' ? row.consultant_name : vendorOf(row.worker_type, Object.assign({ consultant_name: row.consultant_name }, data)), consultant: row.consultant_name,
+    });
   } catch (err) { if (missingTable(err)) return res.status(503).json({ error: SCHEMA_MSG }); next(err); }
 });
 

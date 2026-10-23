@@ -20,5 +20,12 @@ Last updated 2026-10-23. Tick items off as they are done.
 - [ ] Import hours and Import workbook stay optional.
 - [ ] Nightly duplicate scan only runs while the Hostinger app is awake; set `DUP_SCAN_ON_START=true` if it sleeps overnight.
 
+## Added 2026-10-23 (onboarding links and email)
+- [ ] Set the `SMTP_*` variables on Hostinger and use "Send me a test email" to confirm delivery (see README-DEPLOY.md). Add SPF/DKIM for the sending domain so emails reach inboxes, not spam.
+- [ ] Re-run `db/schema.sql` (secure links gain `party` and `consultant_id`) and `npm install` (`nodemailer`).
+- [ ] W-2 employees: offer the same consultant link and "upload instead" (currently C2C and 1099 only).
+- [ ] Reminder emails for links that have not been opened, and an email to HR when a supplier/consultant finishes.
+- [ ] HR editing of SSN/tax ID is open to all HR admins "for now"; revisit if you want it limited again.
+
 ## Working rule
 Before any change: find everything else that reads or writes the same data, keep moves and renames transactional and re-runnable, add tests, run the full suite, then push.

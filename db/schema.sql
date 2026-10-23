@@ -646,3 +646,7 @@ CREATE TABLE IF NOT EXISTS vendor_requests (
   UNIQUE KEY uq_vendor_request_token (token_hash),
   INDEX idx_vendor_request_ob (onboarding_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+-- A secure link can also go to the consultant (1099 / C2C) to fill in their own details.
+ALTER TABLE vendor_requests MODIFY supplier_id INT NULL;
+ALTER TABLE vendor_requests ADD COLUMN IF NOT EXISTS party VARCHAR(12) NOT NULL DEFAULT 'supplier';
+ALTER TABLE vendor_requests ADD COLUMN IF NOT EXISTS consultant_id INT NULL;

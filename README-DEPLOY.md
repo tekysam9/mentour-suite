@@ -433,3 +433,21 @@ When a C2C request names a company that is not a supplier in the Directory (or l
 ### Nightly duplicate check
 
 The app checks the whole Directory for possible duplicate names every night at 02:00 (server time) and flags new pairs in the Directory's duplicate review. It only flags; nothing is merged automatically, and dismissed pairs stay dismissed. Optional environment variables: `DUP_SCAN_HOUR` (0-23), `DUP_SCAN_ENABLED=false` to turn it off, `DUP_SCAN_ON_START=true` to also run once at startup. No extra setup on Hostinger.
+
+### Emailing onboarding links (suppliers, consultants, invites)
+
+HR/admins can invite a **supplier** (C2C company) or the **consultant** (1099 and C2C) to fill in their own details through a private, no-login link: contact details, W-9, I-9 Section 1 (the employer's sections stay with HR), banking, signed NDA, certificates. When the server has mail settings, the link is **emailed straight to them**; otherwise it is shown to copy or open as a draft in your own mail program.
+
+Set these in Hostinger → Node.js app → Environment variables, then restart:
+
+| Variable | Example |
+|---|---|
+| `SMTP_HOST` | `smtp.hostinger.com` |
+| `SMTP_PORT` | `465` (SSL) or `587` |
+| `SMTP_USER` | the mailbox, e.g. `onboarding@yourdomain.com` (create it under Hostinger → Emails) |
+| `SMTP_PASS` | that mailbox's password |
+| `SMTP_FROM` | `Mentour Suite <onboarding@yourdomain.com>` |
+
+Use **People → Send me a test email** (Onboarding page) to check delivery. For best inbox placement, send from a mailbox on your own domain (it needs the SPF/DKIM records Hostinger shows for that domain). Re-run `db/schema.sql` (the secure-link table gains `party` and `consultant_id`) and run `npm install` (adds `nodemailer`).
+
+HR admins (not only the owner) can now edit SSN, tax ID and bank numbers on forms and reopen signed forms. On C2C and 1099 onboardings, HR can **upload a completed W-9, I-9 or banking form instead of filling it in**.

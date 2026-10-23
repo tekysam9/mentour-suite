@@ -38,6 +38,17 @@ async function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
 async function main() {
   process.env.FIELD_ENCRYPTION_KEY = require('crypto').randomBytes(32).toString('base64');
   process.env.AUTH_RATE_LIMIT = '1000';
+  // a local mail server that records what the app sends
+  const mailbox = [];
+  const { SMTPServer } = require('smtp-server');
+  const { simpleParser } = require('mailparser');
+  const smtp = new SMTPServer({
+    authOptional: true, disabledCommands: ['STARTTLS'],
+    onAuth(auth, session, cb) { cb(null, { user: auth.username }); },
+    onData(stream, session, cb) { simpleParser(stream).then((m) => { mailbox.push({ to: (m.to && m.to.text) || '', subject: m.subject, text: m.text }); cb(); }).catch(cb); },
+  });
+  await new Promise((ok) => smtp.listen(2599, '127.0.0.1', ok));
+  Object.assign(process.env, { SMTP_HOST: '127.0.0.1', SMTP_PORT: '2599', SMTP_SECURE: 'false', SMTP_USER: 'onboarding@mentour.test', SMTP_PASS: 'x', SMTP_FROM: 'Mentour Suite <onboarding@mentour.test>' });
   const server = spawn('node', ['server.js'], { cwd: path.join(__dirname, '..'), env: process.env, stdio: 'pipe' });
   let serverOut = '';
   server.stdout.on('data', (d) => { serverOut += d.toString(); });
@@ -2385,7 +2396,7 @@ async function main() {
         r = await pfOwner.fetch('/api/onboarding/invites', { method: 'POST', body: JSON.stringify({ email: 'not-an-email', role: 'recruiter' }) });
         check('an invalid email is refused', r.status === 400, r.body);
         r = await pfOwner.fetch('/api/onboarding/invites', { method: 'POST', body: JSON.stringify({ email: 'Hannah@Inv.test', name: 'Hannah HR', role: 'hr' }) });
-        check('the owner invites Hannah as an HR admin and gets a link', r.status === 201 && r.body.role === 'hr' && r.body.email === 'hannah@inv.test' && /\/signup\.html\?code=[0-9a-f]{24}&email=hannah%40inv\.test$/.test(r.body.link) && r.body.emailSending === false, r.body);
+        check('the owner invites Hannah as an HR admin and gets a link', r.status === 201 && r.body.role === 'hr' && r.body.email === 'hannah@inv.test' && /\/signup\.html\?code=[0-9a-f]{24}&email=hannah%40inv\.test$/.test(r.body.link) && r.body.emailSending === true && r.body.emailSent === true, r.body);
         const hCode = r.body.code;
         r = await pfOwner.fetch('/api/onboarding/invites');
         const hi = r.body.personal.find((x) => x.email === 'hannah@inv.test');
@@ -2635,6 +2646,62 @@ async function main() {
         r = await rnJar.fetch('/api/profiles/programs/' + pr2.insertId, { method: 'PATCH', body: JSON.stringify({ values: { name: 'menya' } }) });
         check('renaming onto an existing vendor of that client is refused clearly', r.status === 409, r.body);
       }
+
+      // ---- secure links emailed straight to the consultant and the supplier
+      {
+        const emJar = makeJar();
+        await emJar.fetch('/api/auth/signup', { method: 'POST', body: JSON.stringify({ orgName: 'Mail Co', name: 'Em Owner', email: 'em@mailco.test', password: 'emailpassword123' }) });
+        const [[mo]] = await dbConn.query(`SELECT organization_id o FROM users WHERE email = 'em@mailco.test'`);
+        const mkOb = async (type, data) => (await dbConn.query(`INSERT INTO onboardings (organization_id, worker_type, status, consultant_name, data, checklist, log) VALUES (?, ?, 'in_progress', ?, ?, '{}', '[]')`,
+          [mo.o, type, data.consultant_name, JSON.stringify(data)]))[0].insertId;
+        const anon2 = async (pth, opts = {}) => { const res = await fetch(BASE + pth, Object.assign({}, opts, { headers: { 'Content-Type': 'application/json' } })); let body = null; try { body = await res.json(); } catch (e) { /* none */ } return { status: res.status, body }; };
+        r = await emJar.fetch('/api/onboarding/schema');
+        check('the app knows email sending is set up', r.body.emailConfigured === true, r.body.emailConfigured);
+        r = await emJar.fetch('/api/onboarding/email-test', { method: 'POST', body: '{}' });
+        check('a test email is delivered to the signed-in user', r.status === 200 && mailbox.some((m) => m.to.includes('em@mailco.test') && /test/i.test(m.subject)), r.body);
+        const cId = await mkOb('1099', { consultant_name: 'Cora Contractor', email: 'cora@contractor.test', h1b_filing_required: 'No' });
+        r = await emJar.fetch('/api/onboarding/' + cId + '/vendor-requests', { method: 'POST', body: JSON.stringify({ party: 'consultant', items: ['c_details', 'c_w9', 'c_i9', 'c_nda', 'w9', 'coi'], days: 7 }) });
+        check('HR invites the consultant (supplier-only items ignored)', r.status === 201 && r.body.party === 'consultant' && r.body.request.items.map((i) => i.key).join() === 'c_details,c_w9,c_i9,c_nda', r.body);
+        check('the link was emailed to the consultant', r.body.email.sent === true && r.body.email.to === 'cora@contractor.test', r.body.email);
+        const em1 = mailbox.find((m) => m.to.includes('cora@contractor.test'));
+        const ctok = em1 && (/vendor\.html\?t=([a-f0-9]{64})/.exec(em1.text) || [])[1];
+        check('the email carries the private link and the list', !!ctok && /Personal details/.test(em1.text) && /Form I-9/.test(em1.text), em1 && em1.text);
+        const CP = '/api/vendor-portal/' + ctok;
+        r = await anon2(CP);
+        check('the consultant opens the link and sees their own page', r.status === 200 && r.body.party === 'consultant' && r.body.company === 'Cora Contractor', r.body);
+        r = await anon2(CP + '/company');
+        check('the supplier company page is not available on a consultant link', r.status === 404, r.status);
+        r = await anon2(CP + '/details', { method: 'PUT', body: JSON.stringify({ values: { email: 'cora@contractor.test', phone: '555-0101', street: '1 Main St', city: 'Columbus', state: 'OH', postal_code: '43004' } }) });
+        check('the consultant saves their details', r.status === 200, r.body);
+        const [[cc]] = await dbConn.query(`SELECT c.email, c.address FROM consultants c JOIN onboardings o ON o.consultant_id = c.id WHERE o.id = ?`, [cId]);
+        check('they are on the consultant record', cc.email === 'cora@contractor.test' && /1 Main St/.test(cc.address), cc);
+        r = await anon2(CP + '/forms/i9');
+        check('the consultant can open their I-9', r.status === 200 && r.body.spec.sections.some((x) => x.signKey === 'employee'), r.status);
+        r = await anon2(CP + '/forms/i9', { method: 'PUT', body: JSON.stringify({ values: { employer_title: 'Boss' } }) });
+        check('they cannot fill the employer part of the I-9', r.status === 403, r.body);
+        r = await anon2(CP + '/forms/i9/sign', { method: 'POST', body: JSON.stringify({ signature: 'employer', typedName: 'Cora Contractor', consent: true }) });
+        check('they cannot sign as the employer', r.status === 403, r.body);
+        r = await anon2(CP + '/forms/banking');
+        check('forms that were not requested stay closed', r.status === 404, r.status);
+        r = await anon2(CP + '/submit', { method: 'POST', body: '{}' });
+        check('they cannot finish while items remain', r.status === 409, r.body);
+        r = await emJar.fetch('/api/onboarding/' + cId + '/vendor-requests');
+        check('HR sees the details item received', r.body.requests[0].items.find((i) => i.key === 'c_details').done === true && r.body.requests[0].items.find((i) => i.key === 'c_w9').done === false, r.body.requests[0].items);
+        const tId = await mkOb('1099', { consultant_name: 'Tim NoEmail' });
+        r = await emJar.fetch('/api/onboarding/' + tId + '/vendor-requests', { method: 'POST', body: JSON.stringify({ party: 'consultant', items: ['c_details'] }) });
+        check('without an email address the link is created and shown for copying', r.status === 201 && r.body.email.attempted === false && /^\/vendor\.html\?t=/.test(r.body.path), r.body.email);
+        r = await emJar.fetch('/api/onboarding/' + tId + '/vendor-requests', { method: 'POST', body: JSON.stringify({ party: 'consultant', items: ['c_details'], email: 'tim@x.test' }) });
+        check('typing an email on the form sends it there', r.status === 201 && r.body.email.sent === true && mailbox.some((m) => m.to.includes('tim@x.test')), r.body.email);
+        const sId = await mkOb('C2C', { consultant_name: 'Sue Supplier', employer_name: 'Suetech LLC', employer_email: 'ap@suetech.test', employer_contact: 'Pat AP' });
+        r = await emJar.fetch('/api/onboarding/' + sId + '/vendor-requests', { method: 'POST', body: JSON.stringify({ items: ['w9', 'coi'] }) });
+        check('the supplier link is emailed to the supplier', r.status === 201 && r.body.email.sent === true && mailbox.some((m) => m.to.includes('ap@suetech.test') && /Hello Pat AP/.test(m.text)), r.body.email);
+        r = await emJar.fetch('/api/onboarding/' + sId + '/vendor-requests', { method: 'POST', body: JSON.stringify({ party: 'consultant', items: ['c_nda'], email: 'sue@suetech.test' }) });
+        check('a C2C consultant can also get their own link (details and NDA only)', r.status === 201 && r.body.request.items.length === 1, r.body);
+        r = await emJar.fetch('/api/onboarding/' + sId + '/vendor-requests', { method: 'POST', body: JSON.stringify({ party: 'consultant', items: ['c_w9'] }) });
+        check('1099-only items are refused for a C2C consultant', r.status === 400, r.body);
+        r = await emJar.fetch('/api/onboarding/invites', { method: 'POST', body: JSON.stringify({ email: 'newhire@mailco.test', name: 'New Hire', role: 'recruiter' }) });
+        check('a personal invite is emailed too', r.status === 201 && r.body.emailSent === true && mailbox.some((m) => m.to.includes('newhire@mailco.test') && /signup\.html/.test(m.text)), r.body);
+      }
     } finally {
       await dbConn.end();
     }
@@ -2647,6 +2714,7 @@ async function main() {
     fail++;
   } finally {
     server.kill();
+    try { smtp.close(); } catch (e) { /* ignore */ }
     await sleep(300);
   }
 

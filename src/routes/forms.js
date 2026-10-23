@@ -24,6 +24,9 @@ const OPTIONAL_SIG = { i9: ['reverify'] };
 // (and the supplier through their secure link). Nobody can read them back.
 const isHrAdmin = (req) => req.user.role === 'owner' || req.user.role === 'hr';
 const canEditSecrets = (req) => !!req.vendorLink || isHrAdmin(req);
+// The employer's parts of a form (I-9 Sections 2 and 3, W-4 employer sign-off) are never open to a secure link.
+const EMPLOYER_SIGNS = new Set(['employer', 'reverify']);
+const employerFieldKeys = (form) => new Set(FORMS[form].sections.filter((sec) => EMPLOYER_SIGNS.has(sec.signKey)).flatMap((sec) => sec.fields.map((f) => f.key)));
 const missingTable = (e) => e && e.code === 'ER_NO_SUCH_TABLE';
 
 async function loadRecord(entity, id, orgId) {
@@ -168,6 +171,10 @@ router.put('/:entity/:id/:form', async (req, res, next) => {
     const defs = fieldsOfForm(P.form);
     const errors = []; const merged = Object.assign({}, fm.values);
 
+    const hrOnly = req.vendorLink ? employerFieldKeys(P.form) : new Set();
+    for (const k of Object.keys(submitted).concat(Object.keys(secrets))) {
+      if (hrOnly.has(k)) return res.status(403).json({ error: 'That part of the form is completed by the company, not through this link.' });
+    }
     for (const d of defs) {
       if (d.kind === 'secret' || !(d.key in submitted)) continue;
       if (locked.has(d.key)) { errors.push(`${d.label} is in a signed section. Reopen the signature to change it.`); continue; }
@@ -247,6 +254,7 @@ router.post('/:entity/:id/:form/sign', async (req, res, next) => {
     const key = req.body && req.body.signature;
     const typed = String((req.body && req.body.typedName) || '').replace(/\s+/g, ' ').trim();
     if (!FORMS[P.form].signatures[key]) return res.status(400).json({ error: 'Unknown signature.' });
+    if (req.vendorLink && EMPLOYER_SIGNS.has(key)) return res.status(403).json({ error: 'That signature is added by the company, not through this link.' });
     if (!(req.body && req.body.consent === true)) return res.status(400).json({ error: 'Tick the box agreeing to sign electronically.' });
     if (typed.length < 2 || typed.length > 120) return res.status(400).json({ error: 'Type the full name of the person signing.' });
     const fm = await loadForm(P.orgId, P.entity, P.id, P.form);

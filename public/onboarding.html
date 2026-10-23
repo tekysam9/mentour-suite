@@ -209,7 +209,7 @@
         'The app does not send email yet: copy the link, or use <b>Open in email</b> to send it from your own mail app.</p>' +
         '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center"><input type="email" id="pi-email" placeholder="Their email" style="max-width:240px"><input type="text" id="pi-name" placeholder="Name (optional)" style="max-width:200px">' +
         '<select id="pi-role" style="max-width:230px">' + ivRoles.map(function (r) { return '<option value="' + r + '">' + esc(ROLE_NAME[r]) + '</option>'; }).join('') + '</select>' +
-        '<button class="ob-btn primary" data-act="pinvite-new">Create invite</button></div>';
+        '<button class="ob-btn primary" data-act="pinvite-new">Create invite</button> <button class="ob-btn" data-act="email-test" title="Sends a test email to your own address">Send me a test email</button></div>';
       if (S.lastInvite) h += '<div class="ob-msg ok" style="margin-top:10px">Invite for <b>' + esc(S.lastInvite.email) + '</b> (' + esc(ROLE_NAME[S.lastInvite.role]) + '): <input type="text" readonly value="' + esc(S.lastInvite.link) + '" style="width:100%;margin-top:6px" onclick="this.select()"></div>';
       var pers = IV.personal || [];
       if (pers.length) {
@@ -427,6 +427,7 @@
 
     // request paperwork from the supplier (secure link): HR / owner, C2C, once started
     if (hr && o.workerType === 'C2C' && o.status === 'in_progress' && S.vr && !S.vr.needsSchema) h += vendorRequestHtml(o);
+    if (hr && (o.workerType === 'C2C' || o.workerType === '1099') && o.status === 'in_progress' && S.vr && !S.vr.needsSchema) h += consultantRequestHtml(o);
 
     // directory records
     h += '<div class="ob-card"><h2>Directory records</h2>';
@@ -445,21 +446,27 @@
   // ------------------------------------------- supplier request (secure link)
   var VR_CHECK = { w9: 'company_w9', banking: 'remittance', coi: 'coi', vendor_agreement: 'vendor_agreement' };
   function loadVr() {
-    if (!S.ob || !isHr() || S.ob.workerType !== 'C2C') { S.vr = null; return; }
+    if (!S.ob || !isHr() || (S.ob.workerType !== 'C2C' && S.ob.workerType !== '1099')) { S.vr = null; return; }
     var id = S.ob.id;
     api('GET', '/api/onboarding/' + id + '/vendor-requests').then(function (r) {
       if (!S.ob || S.ob.id !== id) return;
       S.vr = r.ok ? r.body : null; renderDetail();
     });
   }
-  function linkBlockHtml() {
+  function mailNote(b, base) {
+    var m = b.email || {};
+    if (m.attempted && m.sent) return base + ' Emailed to ' + m.to + '.';
+    if (m.attempted) return base + ' The email could not be sent (' + m.error + ') — copy the link or use the email draft instead.';
+    return base;
+  }
+  function linkBlockHtml(party) {
     var h = '';
-    if (S.vrLink) {
+    if (S.vrLink && (S.vrLink.party || 'supplier') === (party || 'supplier')) {
       var link = location.origin + S.vrLink.path;
       var mail = 'mailto:' + encodeURIComponent(S.vrLink.supplierEmail || '') + '?subject=' + encodeURIComponent('Documents needed for ' + S.vrLink.consultant + ' onboarding') +
         '&body=' + encodeURIComponent('Hello' + (S.vrLink.supplierContact ? ' ' + S.vrLink.supplierContact : '') + ',\n\nTo finish onboarding ' + S.vrLink.consultant + ', please use this private link to send us:\n- ' +
           S.vrLink.request.items.map(function (i) { return i.label; }).join('\n- ') + '\n\n' + link + '\n\nThe link works until ' + String(S.vrLink.request.expiresAt).slice(0, 10) + '. No login is needed.\n\nThank you.');
-      h += '<div style="background:#E3F1FD;border-radius:8px;padding:10px 12px;margin-bottom:12px"><div style="font-size:12.5px;font-weight:600;margin-bottom:6px">Link created. Copy it now; for security it can’t be shown again.</div>' +
+      h += '<div style="background:#E3F1FD;border-radius:8px;padding:10px 12px;margin-bottom:12px"><div style="font-size:12.5px;font-weight:600;margin-bottom:6px">' + (S.vrLink.email && S.vrLink.email.sent ? 'Emailed to ' + esc(S.vrLink.email.to) + '. ' : '') + 'Link created. Copy it now; for security it can’t be shown again.</div>' +
         '<input type="text" readonly id="vr-link" value="' + esc(link) + '" style="width:100%;box-sizing:border-box;font-size:12px"> ' +
         '<div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap"><button class="ob-btn primary small" data-act="vr-copy">Copy link</button><a class="ob-btn small" href="' + esc(mail) + '">Open email draft</a><button class="ob-btn small" data-act="vr-hide">Done</button></div></div>';
     }
@@ -498,12 +505,44 @@
       '<div class="ob-f wide" style="margin-top:8px"><label for="vr-msg">Note to the supplier (optional)</label><textarea id="vr-msg" placeholder="Anything they should know, e.g. deadline or who to contact"></textarea></div>' +
       '<div style="display:flex;gap:8px;align-items:center;margin-top:10px;flex-wrap:wrap"><span style="font-size:12.5px">Link works for</span><select id="vr-days" style="width:auto"><option value="7">7 days</option><option value="14" selected>14 days</option><option value="30">30 days</option></select>' +
       '<button class="ob-btn primary" data-act="vr-create">Create secure link</button></div>';
-    if (vr.requests.length) {
-      h += '<div class="ob-grp" style="margin-top:16px">Sent so far</div>' + vr.requests.map(function (r) {
+    var sentList = vr.requests.filter(function (r) { return (r.party || 'supplier') === 'supplier'; });
+    if (sentList.length) {
+      h += '<div class="ob-grp" style="margin-top:16px">Sent so far</div>' + sentList.map(function (r) {
         var done = r.items.filter(function (i) { return i.done; }).length;
         return '<div style="font-size:12.5px;margin:8px 0;padding:8px 10px;border:1px solid var(--line);border-radius:8px">' +
           '<b>' + done + ' of ' + r.items.length + ' received</b> · ' + (r.state === 'open' ? 'open until ' + esc(String(r.expiresAt).slice(0, 10)) : '<span style="color:var(--brick)">' + r.state + '</span>') +
           (r.submittedAt ? ' · supplier says all done' : '') + (r.lastOpenedAt ? ' · opened ' + fmtWhen(r.lastOpenedAt) : ' · not opened yet') +
+          '<div class="ob-muted" style="margin-top:4px">' + r.items.map(function (i) { return (i.done ? '✓ ' : '○ ') + esc(i.label); }).join(' · ') + '</div>' +
+          '<div class="ob-muted" style="margin-top:2px">By ' + esc(r.createdBy || '') + ', ' + fmtWhen(r.createdAt) + '</div>' +
+          (r.state === 'open' ? '<button class="ob-link" data-act="vr-revoke" data-id="' + r.id + '">Cancel this link</button>' : '') + '</div>';
+      }).join('');
+    }
+    return h + '</div>';
+  }
+
+  function consultantRequestHtml(o) {
+    var vr = S.vr, doneKeys = {};
+    (o.checklist || []).forEach(function (c) { if (c.done) doneKeys[c.key] = true; });
+    var mailOn = !!vr.emailConfigured;
+    var email = (S.crEmail !== undefined ? S.crEmail : (vr.consultantEmail || (o.data && o.data.email) || ''));
+    var h = '<div class="ob-card"><h2>Invite the consultant to fill in their own details</h2>' +
+      '<p class="ob-muted" style="margin:0 0 10px;font-size:12.5px;line-height:1.5">' + esc(o.consultantName || 'The consultant') + ' gets a private link (no login)' + (mailOn ? ' by email' : '') + ' to enter their details, fill in and e-sign the forms, and upload documents. Their answers land in the checklist above. Prefer to do it yourself? Skip this and fill the forms in from the checklist, or upload the completed documents.</p>';
+    h += linkBlockHtml('consultant');
+    h += '<div class="ob-f wide"><label for="cr-email">Send to (consultant’s email)</label><input id="cr-email" type="email" value="' + esc(email) + '" placeholder="name@example.com"></div>';
+    h += '<div class="vr-pick" style="margin-top:8px">' + (vr.consultantItems || []).map(function (it) {
+      var chk = !doneKeys[it.checklistKey];
+      return '<label style="display:flex;gap:8px;align-items:flex-start;margin:6px 0;font-size:13px"><input type="checkbox" data-act="cr-pick" data-k="' + it.key + '"' + (chk ? ' checked' : '') + '><span><b>' + esc(it.label) + '</b>' + (doneKeys[it.checklistKey] ? ' <span class="ob-chipf complete">already done</span>' : '') + '<br><span class="ob-muted">' + esc(it.help || '') + '</span></span></label>';
+    }).join('') + '</div>' +
+      '<div class="ob-f wide" style="margin-top:8px"><label for="cr-msg">Note to the consultant (optional)</label><textarea id="cr-msg" placeholder="Anything they should know, e.g. a deadline"></textarea></div>' +
+      '<div style="display:flex;gap:8px;align-items:center;margin-top:10px;flex-wrap:wrap"><span style="font-size:12.5px">Link works for</span><select id="cr-days" style="width:auto"><option value="7">7 days</option><option value="14" selected>14 days</option><option value="30">30 days</option></select>' +
+      '<button class="ob-btn primary" data-act="cr-create">' + (mailOn ? 'Email the secure link' : 'Create secure link') + '</button></div>';
+    var sent = vr.requests.filter(function (r) { return r.party === 'consultant'; });
+    if (sent.length) {
+      h += '<div class="ob-grp" style="margin-top:16px">Sent so far</div>' + sent.map(function (r) {
+        var done = r.items.filter(function (i) { return i.done; }).length;
+        return '<div style="font-size:12.5px;margin:8px 0;padding:8px 10px;border:1px solid var(--line);border-radius:8px">' +
+          '<b>' + done + ' of ' + r.items.length + ' received</b> · ' + (r.state === 'open' ? 'open until ' + esc(String(r.expiresAt).slice(0, 10)) : '<span style="color:var(--brick)">' + r.state + '</span>') +
+          (r.submittedAt ? ' · consultant says all done' : '') + (r.lastOpenedAt ? ' · opened ' + fmtWhen(r.lastOpenedAt) : ' · not opened yet') +
           '<div class="ob-muted" style="margin-top:4px">' + r.items.map(function (i) { return (i.done ? '✓ ' : '○ ') + esc(i.label); }).join(' · ') + '</div>' +
           '<div class="ob-muted" style="margin-top:2px">By ' + esc(r.createdBy || '') + ', ' + fmtWhen(r.createdAt) + '</div>' +
           (r.state === 'open' ? '<button class="ob-link" data-act="vr-revoke" data-id="' + r.id + '">Cancel this link</button>' : '') + '</div>';
@@ -557,15 +596,22 @@
   appEl.addEventListener('click', function (e) {
     var b = e.target.closest('[data-act]'); if (!b) return;
     var act = b.getAttribute('data-act'), v = b.getAttribute('data-v'), id = b.getAttribute('data-id');
-    if (['tick', 'cnote', 'role', 'doc-up', 'vr-pick'].indexOf(act) !== -1) return; // handled on change
+    if (['tick', 'cnote', 'role', 'doc-up', 'vr-pick', 'cr-pick'].indexOf(act) !== -1) return; // handled on change
     if (act === 'invite-new') { api('POST', '/api/onboarding/invites', { role: document.getElementById('inv-role').value }).then(function (r) { note(r.ok ? 'Invite code created.' : (r.body.error || 'Could not create it.'), r.ok ? 'ok' : 'err'); loadPeople(); }); return; }
     if (act === 'invite-revoke') { if (!confirm('Revoke this invite? The link will stop working.')) return; api('DELETE', '/api/onboarding/invites/' + id).then(function (r) { note(r.ok ? 'Invite revoked.' : (r.body.error || 'Could not revoke it.'), r.ok ? 'ok' : 'err'); loadPeople(); }); return; }
+    if (act === 'email-test') {
+      api('POST', '/api/onboarding/email-test', {}).then(function (r) { if (r.status === 499) return; note(r.ok ? 'Test email sent to ' + r.body.to + '. Check the inbox (and spam).' : (r.body.error || 'Could not send the test email.'), r.ok ? 'ok' : 'err'); renderList(); });
+      return;
+    }
     if (act === 'pinvite-new') {
       api('POST', '/api/onboarding/invites', { email: document.getElementById('pi-email').value, name: document.getElementById('pi-name').value, role: document.getElementById('pi-role').value }).then(function (r) {
         if (!r.ok) { note(r.body.error || 'Could not create the invite.', 'err'); renderList(); return; }
         S.lastInvite = r.body;
         try { navigator.clipboard.writeText(r.body.link); } catch (x) { /* shown below to copy by hand */ }
-        note('Invite created and the link copied. Send it to ' + r.body.email + '.', 'ok'); loadPeople();
+        if (r.body.emailSent) note('Invite emailed to ' + r.body.email + '. The link is also copied.', 'ok');
+        else if (r.body.emailError) note('Invite created and the link copied, but the email could not be sent: ' + r.body.emailError + ' Send the link to ' + r.body.email + ' yourself.', 'err');
+        else note('Invite created and the link copied. Send it to ' + r.body.email + '.', 'ok');
+        loadPeople();
       });
       return;
     }
@@ -575,12 +621,24 @@
         .then(function (r) { note(r.ok ? 'Added. Share their email and the temporary password with them.' : (r.body.error || 'Could not add that person.'), r.ok ? 'ok' : 'err'); S.people = null; loadPeople(); if (!r.ok) renderList(); });
       return;
     }
+    if (act === 'cr-create') {
+      var cp = [].slice.call(appEl.querySelectorAll('[data-act="cr-pick"]')).filter(function (x) { return x.checked; }).map(function (x) { return x.getAttribute('data-k'); });
+      if (!cp.length) { note('Tick at least one item to request.', 'err'); renderDetail(); return; }
+      var cem = document.getElementById('cr-email').value; S.crEmail = cem;
+      api('POST', '/api/onboarding/' + S.ob.id + '/vendor-requests', { party: 'consultant', items: cp, email: cem, message: document.getElementById('cr-msg').value, days: Number(document.getElementById('cr-days').value) }).then(function (r) {
+        if (!r.ok) { if (r.status === 499) return; note(r.body.error || 'Could not create the link.', 'err'); renderDetail(); return; }
+        S.vrLink = r.body; S.crEmail = undefined;
+        note(mailNote(r.body, 'Secure link created.'), r.body.email && r.body.email.attempted && !r.body.email.sent ? 'err' : 'ok');
+        api('GET', '/api/onboarding/' + S.ob.id).then(function (g) { if (g.ok) setOb(g.body); loadVr(); renderDetail(); });
+      });
+      return;
+    }
     if (act === 'vr-create') {
       var picks = [].slice.call(appEl.querySelectorAll('[data-act="vr-pick"]')).filter(function (x) { return x.checked; }).map(function (x) { return x.getAttribute('data-k'); });
       if (!picks.length) { note('Tick at least one item to request.', 'err'); renderDetail(); return; }
       api('POST', '/api/onboarding/' + S.ob.id + '/vendor-requests', { items: picks, message: document.getElementById('vr-msg').value, days: Number(document.getElementById('vr-days').value) }).then(function (r) {
         if (!r.ok) { if (r.status === 499) return; note(r.body.error || 'Could not create the link.', 'err'); renderDetail(); return; }
-        S.vrLink = r.body; note('Secure link created.');
+        S.vrLink = r.body; note(mailNote(r.body, 'Secure link created.'), r.body.email && r.body.email.attempted && !r.body.email.sent ? 'err' : 'ok');
         api('GET', '/api/onboarding/' + S.ob.id).then(function (g) { if (g.ok) setOb(g.body); loadVr(); renderDetail(); });
       });
       return;
@@ -603,7 +661,7 @@
       var vc2 = S.ob.vendorCheck;
       api('POST', '/api/onboarding/' + S.ob.id + '/vendor-requests', { items: vc2.suggest, email: document.getElementById('vb-email').value, days: 14 }).then(function (r) {
         if (!r.ok) { if (r.status === 499) return; note(r.body.error || 'Could not create the link.', 'err'); renderDetail(); return; }
-        S.vrLink = r.body; note('Vendor onboarding link created.');
+        S.vrLink = r.body; note(mailNote(r.body, 'Vendor onboarding link created.'), r.body.email && r.body.email.attempted && !r.body.email.sent ? 'err' : 'ok');
         api('GET', '/api/onboarding/' + S.ob.id).then(function (g) { if (g.ok) setOb(g.body); loadVr(); renderDetail(); });
       });
       return;

@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="robots" content="noindex, nofollow">
 <meta name="referrer" content="no-referrer">
-<title>Documents requested — Mentour Suite</title>
+<title>Secure onboarding link — Mentour Suite</title>
 <link rel="stylesheet" href="/shared.css">
 <style>
   body { background: var(--paper, #F0F1F2); margin: 0; }
@@ -94,18 +94,19 @@
   }
   function render() {
     var req = P.request, all = req.items.every(function (i) { return i.done; });
-    var h = '<h1 class="fm-title" style="font-size:24px">Documents requested from ' + esc(P.company) + '</h1>' +
+    var me = P.party === 'consultant';
+    var h = '<h1 class="fm-title" style="font-size:24px">' + (me ? 'Your onboarding details, ' + esc(P.company) : 'Documents requested from ' + esc(P.company)) + '</h1>' +
       '<p class="fm-sub">' + esc(P.organization) + ' asked for the items below. You can do them in any order and come back to this link until ' + esc(String(req.expiresAt).slice(0, 10)) + '.</p>' +
       '<div class="vp-lock">This page is private to you. Bank and tax numbers are encrypted when saved.</div>' +
       (req.message ? '<div class="vp-msg">' + esc(req.message) + '</div>' : '');
     if (!P.encryptionConfigured) h += '<div class="fm-banner">Secure storage is not ready on our side yet, so tax IDs, bank numbers and documents can’t be saved right now. Please tell your contact.</div>';
     req.items.forEach(function (i) {
       h += '<div class="vp-item" data-item="' + i.key + '"><div class="vp-row"><div><h3>' + esc(i.label) + '</h3><p>' + esc(i.help) + '</p></div><div>' + badge(i) + ' ';
-      if (i.kind === 'form' || i.kind === 'company') h += '<button class="fm-btn fm-btn-small" data-open="' + i.key + '" type="button">' + (open === i.key ? 'Close' : (i.done ? 'View' : 'Fill in')) + '</button>';
+      if (i.kind === 'form' || i.kind === 'company' || i.kind === 'person') h += '<button class="fm-btn fm-btn-small" data-open="' + i.key + '" type="button">' + (open === i.key ? 'Close' : (i.done ? 'View' : 'Fill in')) + '</button>';
       else h += '<label class="fm-btn fm-btn-small" style="cursor:pointer">' + (i.done ? 'Replace file' : 'Choose file') + '<input type="file" data-up="' + i.key + '" accept=".pdf,.jpg,.jpeg,.png,.docx" hidden></label>';
       h += '</div></div>';
       if (i.kind === 'upload') h += '<div style="margin-top:8px"><span class="fm-msg ' + (kind[i.key] || '') + '" data-msg="' + i.key + '">' + esc(msg[i.key] || (i.done ? 'Received. Thank you.' : 'PDF, JPG, PNG or Word, up to 10 MB.')) + '</span></div>';
-      if (open === i.key && ((i.kind === 'form' && F) || (i.kind === 'company' && C))) h += '<div class="vp-form" id="vp-form"></div>';
+      if (open === i.key && ((i.kind === 'form' && F) || ((i.kind === 'company' || i.kind === 'person') && C))) h += '<div class="vp-form" id="vp-form"></div>';
       h += '</div>';
     });
     h += '<div class="fm-bar"><button class="fm-btn fm-btn-primary" id="finish" type="button"' + (all ? '' : ' disabled') + '>' + (req.submittedAt ? 'Notify again that everything is done' : 'Everything is done') + '</button><span class="fm-msg ' + (kind.finish || '') + '" data-msg="finish">' + esc(msg.finish || (all ? '' : 'Complete every item above first.')) + '</span></div>';
@@ -115,16 +116,18 @@
     document.getElementById('finish').addEventListener('click', function () {
       api('POST', '/submit', {}).then(function (r) { setMsg('finish', r.ok ? 'Thank you. HR has been notified.' : (r.body.error || 'Could not send.'), r.ok ? 'ok' : 'err'); if (r.ok) load(); });
     });
-    if (open === 'company' && C) renderCompany(); else if (open && F) renderForm();
+    if ((open === 'company' || open === 'c_details') && C) renderCompany(); else if (open && F) renderForm();
   }
-  function toggle(k) { if (open === k) { open = null; F = null; C = null; render(); return; } open = k; F = null; C = null; if (k === 'company') loadCompany(); else loadForm(); }
+  function toggle(k) { if (open === k) { open = null; F = null; C = null; render(); return; } open = k; F = null; C = null; if (k === 'company' || k === 'c_details') loadCompany(); else loadForm(); }
   function loadCompany() {
-    return api('GET', '/company').then(function (r) { if (!r.ok) { open = null; render(); return; } C = r.body.values; render(); });
+    return api('GET', open === 'c_details' ? '/details' : '/company').then(function (r) { if (!r.ok) { open = null; render(); return; } C = r.body.values; render(); });
   }
+  var PF = [['email', 'Email', 'email'], ['phone', 'Phone', 'tel'], ['street', 'Street address *', 'text'], ['city', 'City *', 'text'], ['state', 'State *', 'text'], ['postal_code', 'ZIP / postal code', 'text']];
   var CF = [['contact_name', 'Contact person *', 'text'], ['email', 'Accounts / contact email', 'email'], ['phone', 'Phone', 'tel'], ['street', 'Street address *', 'text'], ['city', 'City *', 'text'], ['state', 'State *', 'text'], ['postal_code', 'ZIP / postal code', 'text'], ['payment_terms', 'Payment terms', 'select']];
   function renderCompany() {
     var host = document.getElementById('vp-form'); if (!host) return;
-    host.innerHTML = '<div class="fm-card"><h2>Company details</h2><div class="fm-grid">' + CF.map(function (f) {
+    var FL = open === 'c_details' ? PF : CF;
+    host.innerHTML = '<div class="fm-card"><h2>' + (open === 'c_details' ? 'Your details' : 'Company details') + '</h2><div class="fm-grid">' + FL.map(function (f) {
       var v = C[f[0]] || '', c;
       if (f[2] === 'select') c = '<select data-co="' + f[0] + '"><option value="">—</option>' + P.payTerms.map(function (o) { return '<option' + (o === v ? ' selected' : '') + '>' + esc(o) + '</option>'; }).join('') + '</select>';
       else c = '<input data-co="' + f[0] + '" type="' + f[2] + '" value="' + esc(v) + '">';
@@ -132,7 +135,7 @@
     }).join('') + '</div></div><div class="fm-bar"><button class="fm-btn fm-btn-primary" id="co-save" type="button">Save</button><span class="fm-msg ' + (kind.form || '') + '" data-msg="form">' + esc(msg.form || '') + '</span></div>';
     document.getElementById('co-save').addEventListener('click', function () {
       var vals = {}; host.querySelectorAll('[data-co]').forEach(function (el) { vals[el.getAttribute('data-co')] = el.value; });
-      api('PUT', '/company', { values: vals }).then(function (r) {
+      api('PUT', open === 'c_details' ? '/details' : '/company', { values: vals }).then(function (r) {
         if (!r.ok) { setMsg('form', r.body.error || 'Could not save.', 'err'); return; }
         msg.form = 'Saved.'; kind.form = 'ok'; load().then(function () { if (open === 'company') loadCompany(); });
       });
@@ -189,10 +192,11 @@
   function renderForm() {
     var host = document.getElementById('vp-form'); if (!host) return;
     var spec = F.spec, locked = {}, shownSig = {}; F.locked.forEach(function (k) { locked[k] = true; });
-    var body = spec.sections.map(function (sec, i) {
+    var mine = spec.sections.filter(function (sec) { return !(P.party === 'consultant' && (sec.signKey === 'employer' || sec.signKey === 'reverify')); });
+    var body = mine.map(function (sec, i) {
       var show = sec.showIf ? ' data-showif="' + esc(sec.showIf.key) + '" data-showin="' + esc(sec.showIf.in.join('|')) + '"' : '';
       var html = '<div class="fm-card"' + show + '><h2>' + esc(sec.title) + '</h2><div class="fm-grid">' + sec.fields.map(function (f) { return fieldHtml(f, locked); }).join('') + '</div></div>';
-      var last = !spec.sections.slice(i + 1).some(function (s2) { return s2.signKey === sec.signKey; });
+      var last = !mine.slice(i + 1).some(function (s2) { return s2.signKey === sec.signKey; });
       if (sec.signKey && last && !shownSig[sec.signKey]) { shownSig[sec.signKey] = 1; html += signHtml(sec.signKey); }
       return html;
     }).join('');
