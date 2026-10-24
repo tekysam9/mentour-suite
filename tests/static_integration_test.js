@@ -163,6 +163,12 @@ async function main() {
       check('pages revalidate (so a deploy shows at once)', /no-cache/.test(gz.headers.get('cache-control') || ''), gz.headers.get('cache-control'));
       const lib = await fetch(BASE + '/lib/xlsx.full.min.js');
       check('spreadsheet library is cached long', /max-age=\d{6,}/.test(lib.headers.get('cache-control') || ''), lib.headers.get('cache-control'));
+      const hd = await fetch(BASE + '/login.html');
+      check('security headers are set', hd.headers.get('x-content-type-options') === 'nosniff' && hd.headers.get('x-frame-options') === 'SAMEORIGIN' && /frame-ancestors/.test(hd.headers.get('content-security-policy') || ''), [...hd.headers.keys()]);
+      const xs = await fetch(BASE + '/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: 'https://evil.example' }, body: '{}' });
+      check('a write from another website is blocked', xs.status === 403, xs.status);
+      const same = await fetch(BASE + '/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: BASE }, body: '{}' });
+      check('a write from the app itself is not blocked', same.status !== 403, same.status);
       const mf = await fetch(BASE + '/manifest.webmanifest');
       const mj = mf.status === 200 ? await mf.json() : {};
       check('the app can be added to a phone home screen (manifest + icons)', mj.display === 'standalone' && mj.icons && mj.icons.length >= 2 && (await fetch(BASE + '/icon-192.png')).status === 200 && (await fetch(BASE + '/apple-touch-icon.png')).status === 200, mj);

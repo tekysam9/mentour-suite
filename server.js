@@ -21,6 +21,33 @@ const app = express();
 app.disable('x-powered-by');
 app.set('trust proxy', 1); // Hostinger sits behind a proxy/load balancer
 
+// Security headers on every response.
+const PROD = process.env.NODE_ENV === 'production';
+app.use((req, res, next) => {
+  res.set({
+    'X-Content-Type-Options': 'nosniff',
+    'X-Frame-Options': 'SAMEORIGIN',
+    'Referrer-Policy': 'strict-origin-when-cross-origin',
+    'Permissions-Policy': 'camera=(), microphone=(), geolocation=(), payment=()',
+    'Content-Security-Policy': "frame-ancestors 'self'; base-uri 'self'; form-action 'self'; object-src 'none'",
+  });
+  if (PROD) res.set('Strict-Transport-Security', 'max-age=15552000; includeSubDomains');
+  next();
+});
+// A browser sends Origin on every cross-site write: refuse writes that come from another site.
+app.use('/api', (req, res, next) => {
+  if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) return next();
+  const origin = req.get('origin');
+  if (origin) {
+    let host = '';
+    try { host = new URL(origin).host; } catch (e) { /* bad header */ }
+    if (host !== req.get('host')) return res.status(403).json({ error: 'This request came from another website and was blocked.' });
+  }
+  next();
+});
+if (PROD && (!process.env.SESSION_SECRET || process.env.SESSION_SECRET.length < 24 || /^(changeme|secret|password)/i.test(process.env.SESSION_SECRET))) {
+  console.error('SECURITY WARNING: SESSION_SECRET is missing, short or a placeholder. Set it to a long random value (at least 32 characters) in the hosting environment variables, then restart. Everyone will have to sign in again.');
+}
 app.use(require('compression')()); // smaller pages/JSON on slow connections
 app.use(express.json({ limit: '15mb' }));
 app.use(sessionMiddleware);

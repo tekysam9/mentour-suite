@@ -461,3 +461,9 @@ Each owner / HR admin opens **Settings → My email**, picks their provider (Gma
 If a user has not connected a mailbox, the company mailbox (`SMTP_*` above) is used with their name on it and replies going to them. If their own mailbox fails, the company mailbox sends it and the page says so. With neither, the page offers a draft for the person's mail program, as before.
 
 Needs: `FIELD_ENCRYPTION_KEY` (passwords are stored encrypted), and a re-run of `db/schema.sql` (new `user_mail_settings` table). The app refuses mail servers that point inside the hosting network (`ALLOW_PRIVATE_SMTP=true` is for tests only).
+
+## Security checklist (Hostinger "security threat" alerts)
+- Dependencies: `npm audit` is clean (express/body-parser updated; the Excel reader `public/lib/xlsx.full.min.js` is SheetJS 0.20.3, which fixes the known prototype-pollution and ReDoS issues in older copies).
+- Set `SESSION_SECRET` to a long random value (32+ characters, not "changeme"), `NODE_ENV=production`, and `FIELD_ENCRYPTION_KEY`; the server logs a warning at start-up if the secret is weak.
+- The server sends security headers (nosniff, frame-deny, referrer policy, HSTS in production) and refuses writes whose Origin is another website.
+- After pulling: run `npm install`, re-run `db/schema.sql`, restart.

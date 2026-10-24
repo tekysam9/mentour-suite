@@ -1,6 +1,17 @@
 // Application shell: builds the left navigation + top bar around #app on every
 // signed-in page. Pages keep rendering into #app exactly as before.
 (function () {
+  // net.js loads a moment after this file. If a page's start-up sign-in check fails before then
+  // (typical on a dropped connection), wait for net.js rather than sending the person to sign in.
+  if (!window.__msAuthFail) {
+    var authStub = function (err) {
+      var tries = 0, iv = setInterval(function () {
+        if (window.__msAuthFail !== authStub) { clearInterval(iv); window.__msAuthFail(err); }
+        else if (++tries > 60) { clearInterval(iv); location.href = '/login.html'; }
+      }, 100);
+    };
+    window.__msAuthFail = authStub;
+  }
   if (!window.__msNet) { var ns = document.createElement('script'); ns.src = '/net.js'; document.head.appendChild(ns); }
   // Every add / edit / delete asks "are you sure?" first (see confirm.js).
   if (!window.__msConfirm) { var cs = document.createElement('script'); cs.src = '/confirm.js'; document.head.appendChild(cs); }
