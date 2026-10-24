@@ -105,3 +105,37 @@ body.dense .fin-wrap-cell { max-width: 180px; }
 
 .app-badge { margin-left: auto; font-style: normal; font-size: 11px; font-weight: 700; background: #B4501E; color: #fff; border-radius: 999px; min-width: 18px; height: 18px; padding: 0 6px; display: inline-flex; align-items: center; justify-content: center; }
 body.side-collapsed .app-badge { display: none; }
+
+/* ---------------------------------------------------------------- phones and touch screens */
+@media (max-width: 700px), (pointer: coarse) {
+  .has-shell button, .has-shell .dir-btn, .has-shell .ob-btn, .has-shell .fm-btn, .has-shell .cl-btn, .has-shell .fin-btn,
+  .has-shell select, .has-shell input:not([type=checkbox]):not([type=radio]):not([type=file]):not([type=range]) { min-height: 40px; }
+  .has-shell .ob-link, .has-shell .dir-assign-toggle, .has-shell .dir-usage-toggle { display: inline-block; padding: 9px 6px; min-height: 24px; }
+  .has-shell input[type=checkbox], .has-shell input[type=radio] { width: 20px; height: 20px; }
+  .app-nav a { min-height: 44px; }
+  .app-burger, .app-logout, .app-collapse { min-width: 44px; min-height: 44px; }
+}
+@media (max-width: 700px) {
+  /* inputs at 16px so iPhones do not zoom in when one is tapped */
+  .has-shell input, .has-shell select, .has-shell textarea { font-size: 16px; }
+  .app-main { padding-left: 12px; padding-right: 12px; }
+
+  /* lists become stacked cards (the page script adds data-label to every cell) */
+  .has-shell table.ms-cards { display: block; width: 100%; min-width: 0 !important; border: 0; }
+  .has-shell table.ms-cards thead { display: none; }
+  .has-shell table.ms-cards tbody, .has-shell table.ms-cards tr, .has-shell table.ms-cards td { display: block; width: auto; }
+  .has-shell table.ms-cards tr { background: #fff; border: 1px solid var(--line, #DFE2E6); border-radius: 10px; margin: 0 0 10px; padding: 6px 12px; }
+  .has-shell table.ms-cards td { border: 0 !important; padding: 5px 0 !important; max-width: none !important; white-space: normal !important; text-align: left !important; overflow-wrap: anywhere; }
+  .has-shell table.ms-cards td[data-label]:not(:empty)::before { content: attr(data-label); display: block; font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--text-muted, #5E6A75); margin-bottom: 1px; }
+  .has-shell table.ms-cards td:first-child { font-size: 15px; font-weight: 600; padding-top: 4px !important; }
+  .has-shell table.ms-cards td:first-child::before { display: none !important; }
+  .has-shell table.ms-cards td:empty, .has-shell table.ms-cards td[data-empty] { display: none; }
+  .has-shell table.ms-cards td[colspan] { padding: 8px 0 !important; }
+  .has-shell table.ms-cards td[colspan]::before { display: none !important; }
+  .has-shell table.ms-cards tfoot { display: block; }
+  .has-shell .fin-table-wrap, .has-shell .dir-table-wrap { max-height: none; overflow: visible; }
+  .has-shell .tscroll-box, .has-shell .tscroll-hint, .has-shell .tscroll { display: none !important; }
+  .has-shell .dir-controls { flex-wrap: wrap; justify-content: stretch; gap: 8px; }
+  .has-shell .dir-controls input[type=search] { min-width: 0 !important; width: 100%; margin: 0 !important; box-sizing: border-box; }
+  .has-shell .dir-controls select { flex: 1; }
+}

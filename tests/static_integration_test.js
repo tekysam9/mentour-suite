@@ -24,6 +24,9 @@ async function main() {
     const t = fs.readFileSync(path.join(pubDir, f), 'utf8');
     check('no third-party script in ' + f, !/<script[^>]+src="https?:\/\//i.test(t));
   }
+  for (const f of fs.readdirSync(pubDir).filter((n) => n.endsWith('.html') && n !== 'vendor.html')) {
+    check('phone home-screen tags in ' + f, /rel="manifest"/.test(fs.readFileSync(path.join(pubDir, f), 'utf8')));
+  }
   check('spreadsheet library is self-hosted', fs.existsSync(path.join(pubDir, 'lib', 'xlsx.full.min.js')));
   const server = spawn('node', ['server.js'], { cwd: path.join(__dirname, '..'), env: process.env, stdio: 'pipe' });
   let out = '';
@@ -160,6 +163,9 @@ async function main() {
       check('pages revalidate (so a deploy shows at once)', /no-cache/.test(gz.headers.get('cache-control') || ''), gz.headers.get('cache-control'));
       const lib = await fetch(BASE + '/lib/xlsx.full.min.js');
       check('spreadsheet library is cached long', /max-age=\d{6,}/.test(lib.headers.get('cache-control') || ''), lib.headers.get('cache-control'));
+      const mf = await fetch(BASE + '/manifest.webmanifest');
+      const mj = mf.status === 200 ? await mf.json() : {};
+      check('the app can be added to a phone home screen (manifest + icons)', mj.display === 'standalone' && mj.icons && mj.icons.length >= 2 && (await fetch(BASE + '/icon-192.png')).status === 200 && (await fetch(BASE + '/apple-touch-icon.png')).status === 200, mj);
       const sw = await fetch(BASE + '/sw.js');
       check('service worker is served and never cached', sw.status === 200 && /no-cache/.test(sw.headers.get('cache-control') || ''));
       const api = await fetch(BASE + '/api/auth/me');

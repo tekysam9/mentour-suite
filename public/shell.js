@@ -147,6 +147,28 @@
     document.getElementById('app-uorg').textContent = (u.organization && u.organization.name) || '';
   }).catch(function () { /* the page itself redirects to login */ });
 
+  // On a phone, the list tables turn into stacked cards (CSS in shell.css). Each cell is labelled with its column heading.
+  var CARD_TABLES = 'table.dir-table, table.ob-table, table.fin-table:not(.hist-table)';
+  function labelCards() {
+    document.querySelectorAll(CARD_TABLES).forEach(function (t) {
+      if (!t.rows.length) return;
+      if (t.getAttribute('data-ms-stamp') === String(t.rows.length) + ':' + t.rows[0].cells.length) return;
+      var heads = t.tHead && t.tHead.rows[0] ? [].map.call(t.tHead.rows[0].cells, function (h) { return (h.textContent || '').trim(); }) : null;
+      if (!heads || !heads.length) return;
+      [].forEach.call(t.tBodies, function (b) {
+        [].forEach.call(b.rows, function (r) {
+          if (r.cells.length !== heads.length) return; // expanded detail rows keep their own layout
+          [].forEach.call(r.cells, function (c, i) { if (heads[i]) c.setAttribute('data-label', heads[i]); });
+        });
+      });
+      t.classList.add('ms-cards');
+      t.setAttribute('data-ms-stamp', String(t.rows.length) + ':' + t.rows[0].cells.length);
+    });
+  }
+  var cardTimer = null;
+  new MutationObserver(function () { clearTimeout(cardTimer); cardTimer = setTimeout(labelCards, 80); }).observe(document.getElementById('app-main'), { childList: true, subtree: true });
+  labelCards();
+
   // Tables wider than the screen get a second scrollbar on top, so every column is reachable.
   function enhance(wrap) {
     var prev = wrap.previousElementSibling;
