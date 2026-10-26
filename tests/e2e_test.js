@@ -2787,10 +2787,12 @@ async function main() {
         const two = (await di.fetch('/api/directory-import/preview', { method: 'POST', body: JSON.stringify({ rows: [{ name: 'Parvathi Ramesh', phone: '346-402-7946/732-319-7677', email: 'rparvathi02@gmail.com', type: 'W2' }], apply: false }) })).body.plans[0];
         check('a second phone number goes to the alternate phone', (two.changes.find((c) => c.key === 'phone') || {}).proposed === '346-402-7946' && (two.changes.find((c) => c.key === 'alt_phone') || {}).proposed === '732-319-7677', two);
         check('values already in the Directory are marked the same', (by('Howard Joshua Shain').changes.find((c) => c.key === 'phone') || {}).kind === 'same');
-        check('C2C maps to Corp-to-Corp', (by('Anil Kumar Yepuri').changes.find((c) => c.key === 'worker_type') || {}).proposed === 'Corp-to-Corp');
+        check('C2C maps to Subvendor', (by('Anil Kumar Yepuri').changes.find((c) => c.key === 'worker_type') || {}).proposed === 'Subvendor');
         check('a supplier company that exists is matched despite punctuation', by('Oleg Burstein').supplier && by('Oleg Burstein').supplier.match && by('Oleg Burstein').supplier.match.id === sAlef, by('Oleg Burstein').supplier);
         check('a supplier that is not in the Directory is offered, not created', by('Anil Kumar Yepuri').supplier && !by('Anil Kumar Yepuri').supplier.match && (await dbConn.query('SELECT COUNT(*) n FROM subvendors WHERE organization_id = ? AND name LIKE ?', [org, 'Rapid%']))[0][0].n === 0);
-        check('"own company" with no name is flagged and not linked', by('Shyam Shivaram').supplier === null && by('Shyam Shivaram').warnings.some((w) => /own company/i.test(w)), by('Shyam Shivaram'));
+        check('"own company" with no name becomes "<name> LLC"', by('Shyam Shivaram').supplier && by('Shyam Shivaram').supplier.company === 'Shyam Shivaram LLC', by('Shyam Shivaram'));
+        check('a consultant\'s own company does not get their personal email, phone or name', by('Oleg Burstein').supplier.changes.every((c) => !['email', 'phone', 'contact_name', 'contact_title'].includes(c.key)) && by('Anil Kumar Yepuri').supplier.changes.some((c) => c.key === 'email' && c.proposed === 'hr@ranalyticsinc.com') && !by('Anil Kumar Yepuri').supplier.changes.some((c) => c.key === 'contact_name'), [by('Oleg Burstein').supplier, by('Anil Kumar Yepuri').supplier]);
+        check('a person not in the Directory is offered as new', by('Nobody Known').newPerson === true && by('Nobody Known').changes.some((c) => c.key === 'email'), by('Nobody Known'));
         const cs = by('Chandra Sagili').supplier;
         check('company address is split into street, city, state and ZIP', cs && cs.changes.some((c) => c.key === 'city' && c.proposed === 'Iselin') && cs.changes.some((c) => c.key === 'state' && c.proposed === 'NJ') && cs.changes.some((c) => c.key === 'postal_code' && c.proposed === '08830') && cs.changes.some((c) => c.key === 'address' && c.proposed === '555 US Highway 1 South, Suite 220'), cs);
 
@@ -2799,6 +2801,7 @@ async function main() {
         r = await di.fetch('/api/directory-import/apply', { method: 'POST', body: JSON.stringify({ rows: cards, picks: {
           [aviIdx]: { fields: ['phone', 'skills', 'worker_type'], supplier: { mode: 'skip', fields: [] } },
           [olegIdx]: { fields: ['email', 'phone', 'worker_type'], supplier: { mode: 'link', fields: ['phone', 'contact_name'], link: true } },
+          [by('Nobody Known').idx]: { create: true, fields: ['email', 'phone', 'skills'], supplier: { mode: 'skip', fields: [] } },
           [anilIdx]: { fields: ['email', 'phone'], supplier: { mode: 'create', fields: ['email', 'contact_title'], link: true } },
           [howIdx]: { fields: ['phone', 'email'], supplier: { mode: 'skip', fields: [] } },
         } }) });
@@ -2806,13 +2809,15 @@ async function main() {
         const [[a1]] = await dbConn.query('SELECT email, phone FROM consultants WHERE id = ?', [cAvi]);
         check('a conflicting email is NOT replaced unless ticked', a1.email === 'old.avi@x.test' && a1.phone === '347-267-1449', a1);
         const [[pa]] = await dbConn.query(`SELECT data FROM record_profiles WHERE organization_id = ? AND entity = 'consultants' AND record_id = ?`, [org, cAvi]);
-        check('skills and worker type are saved to the profile', JSON.parse(pa.data).skills === 'DB2 LUW DBA' && JSON.parse(pa.data).worker_type === 'Corp-to-Corp', pa);
+        check('skills and worker type are saved to the profile', JSON.parse(pa.data).skills === 'DB2 LUW DBA' && JSON.parse(pa.data).worker_type === 'Subvendor', pa);
         const [[o1]] = await dbConn.query('SELECT email, phone FROM consultants WHERE id = ?', [cOleg]);
         const [[op]] = await dbConn.query(`SELECT data FROM record_profiles WHERE organization_id = ? AND entity = 'consultants' AND record_id = ?`, [org, cOleg]);
         check('a person is linked to the existing supplier company', o1.email === 'oleg.burstein@gmail.com' && String(JSON.parse(op.data).supplier_id) === String(sAlef), [o1, op]);
-        const [[sp]] = await dbConn.query(`SELECT data FROM record_profiles WHERE organization_id = ? AND entity = 'subvendors' AND record_id = ?`, [org, sAlef]);
+        const [[sp]] = (await dbConn.query(`SELECT data FROM record_profiles WHERE organization_id = ? AND entity = 'subvendors' AND record_id = ?`, [org, sAlef]))[0].length ? await dbConn.query(`SELECT data FROM record_profiles WHERE organization_id = ? AND entity = 'subvendors' AND record_id = ?`, [org, sAlef]) : [[{}]];
         const [[sr]] = await dbConn.query('SELECT phone, email FROM subvendors WHERE id = ?', [sAlef]);
-        check('only the ticked supplier fields were filled', sr.phone === '818-378-0867' && sr.email === null && JSON.parse(sp.data).contact_name === 'Oleg Burstein', [sr, sp]);
+        check('a self-owned company is not given the consultant\'s phone or name', sr.phone === null && sr.email === null && !(sp && sp.data), [sr, sp]);
+        const [[nb]] = await dbConn.query('SELECT id, email FROM consultants WHERE organization_id = ? AND name = ?', [org, 'Nobody Known']);
+        check('a ticked new person is added with the ticked details', nb && nb.email === 'n@x.test', nb);
         const [[nv]] = await dbConn.query('SELECT id, email FROM subvendors WHERE organization_id = ? AND name = ?', [org, 'Rapid Analytice Inc']);
         check('a new supplier company is created only when ticked, with the ticked details', nv && nv.email === 'hr@ranalyticsinc.com', nv);
         const [[sk]] = await dbConn.query('SELECT email FROM subvendors WHERE id = ?', [sAccurate]);
@@ -2827,7 +2832,7 @@ async function main() {
         const other = makeJar();
         await other.fetch('/api/auth/signup', { method: 'POST', body: JSON.stringify({ orgName: 'Other Imp Co', name: 'Oli Other', email: 'oli@otherimp.test', password: 'olipassword123' }) });
         r = await other.fetch('/api/directory-import/preview', { method: 'POST', body: JSON.stringify({ rows: cards, apply: false }) });
-        check('another company sees no matches in this Directory', r.body.plans.every((p) => p.status === 'unmatched'), r.body.plans.map((p) => p.status));
+        check('another company sees no matches in this Directory', r.body.plans.every((p) => p.status === 'unmatched' || p.status === 'skipped'), r.body.plans.map((p) => p.status));
         // a member (not HR) is refused
         const memJ = makeJar();
         const [[mo]] = await dbConn.query("SELECT id FROM users WHERE email = 'ida@import.test'");

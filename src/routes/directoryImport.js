@@ -31,7 +31,7 @@ const EMAIL_FULL = /^[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+$/;
 const DOMAIN_TYPOS = { 'gamil.com': 'gmail.com', 'gmial.com': 'gmail.com', 'gmai.com': 'gmail.com', 'gmail.co': 'gmail.com', 'gmail.con': 'gmail.com', 'yaho.com': 'yahoo.com', 'yahooo.com': 'yahoo.com', 'hotmial.com': 'hotmail.com', 'outlok.com': 'outlook.com', 'iclod.com': 'icloud.com' };
 const COMPANY_RE = /\b(inc\.?|llc|l\.l\.c|ltd\.?|limited|corp\.?|corporation|technologies|technology|solutions|enterprises?|consulting|consultants|systems|services|software|group|company|co\.|pvt|llp)\b/i;
 const TITLE_RE = /^(owner|ceo|cto|cfo|coo|president|vice president|vp|managing (member|partner|director)|director|manager|accounts? (executive|manager|payable)|bench sales (lead|executive)|recruiter|hr( manager)?|founder|partner)\b/i;
-const WORKER = { W2: 'W2', C2C: 'Corp-to-Corp', '1099': '1099' };
+const WORKER = { W2: 'W2', C2C: 'Subvendor', '1099': '1099' }; // C2C = a consultant who works through a supplier company
 
 const clean = (v, max) => { const s = String(v == null ? '' : v).replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim(); return max ? s.slice(0, max) : s; };
 const nameKey = (s) => clean(s).toLowerCase().replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
@@ -161,7 +161,9 @@ async function buildPlan(orgId, rows) {
     else if (hits.length > 1) { plan.status = 'ambiguous'; plan.candidates = hits.map((c) => ({ id: c.id, name: c.name, email: c.email || '' })); return; }
     else {
       const near = dir.cons.filter((c) => subsetTokens(tokens(c.name), t) || (tokens(c.name)[0] === t[0] && tokens(c.name).slice(-1)[0] === t.slice(-1)[0] && t.length > 1));
-      if (near.length) { plan.status = 'ambiguous'; plan.candidates = near.slice(0, 5).map((c) => ({ id: c.id, name: c.name, email: c.email || '' })); plan.warnings.push('No exact match; these Directory names are similar. Pick one if it is the same person.'); }
+      if (near.length) { plan.status = 'ambiguous'; plan.candidates = near.slice(0, 5).map((c) => ({ id: c.id, name: c.name, email: c.email || '' })); plan.warnings.push('No exact match; these Directory names are similar. Pick one if it is the same person, or add them as a new person.'); }
+      plan.newPerson = true;
+      fillPlan(plan, r, em, dir);
       return;
     }
     fillPlan(plan, r, em, dir);
@@ -171,7 +173,7 @@ async function buildPlan(orgId, rows) {
 
 // Compute the field changes for a (now known) consultant.
 function fillPlan(plan, r, em, dir) {
-  const cons = dir.cons.find((c) => c.id === plan.consultantId);
+  const cons = dir.cons.find((c) => c.id === plan.consultantId) || {};
   const prof = dir.prof.consultants[plan.consultantId] || {};
   const add = (d) => { if (d) plan.changes.push(d); };
   if (em.value) { add(diff('Work email', 'email', cons.email, em.value)); em.warn.forEach((w) => plan.warnings.push(w)); }
@@ -194,6 +196,13 @@ function fillPlan(plan, r, em, dir) {
     const own = em.value || (cons.email || '').toLowerCase();
     const emp = parseEmployer(lines, plan.name, own, digits(ph.list[0] || cons.phone));
     emp.warnings.forEach((w) => plan.warnings.push(w));
+    if (emp.selfContact) {
+      // Their own company: the email / phone / name lines are the consultant's own details, not the supplier's.
+      const mine = new Set([own, (cons.email || '').toLowerCase(), cleanEmail(r.email).value, cleanEmail(r.email).fixedFrom].filter(Boolean));
+      const keepEmails = emp.emails.filter((e) => !mine.has(e) && /^(hr|accounts?|info|admin|contact|billing|payroll|office|support)@/.test(e));
+      emp.emails = keepEmails; emp.phones = []; emp.contactName = ''; emp.contactTitle = '';
+    }
+    if (!emp.company && emp.ownCompany) { emp.company = plan.name + ' LLC'; plan.warnings.push(`The sheet says "own company" without a name; using "${emp.company}".`); emp.ownCompany = false; }
     if (!emp.company) {
       if (emp.ownCompany) plan.warnings.push('The sheet says "own company" without giving its name. Supplier not linked; tell me the company name if you want it added.');
       else plan.warnings.push(lines.length ? `C2C, but no company name could be found in: "${lines.join(' / ').slice(0, 120)}". Supplier not linked.` : 'C2C, but no company details were given.');
@@ -201,7 +210,7 @@ function fillPlan(plan, r, em, dir) {
       const key = companyKey(emp.company);
       const hits = dir.subs.filter((s) => companyKey(s.name) === key);
       const sup = { company: emp.company, contactName: emp.contactName, selfContact: emp.selfContact, match: null, candidates: [], changes: [], create: false, extraEmails: emp.emails.slice(1), extraPhones: emp.phones.slice(1) };
-      if (emp.selfNamedFirst) plan.warnings.push(`The line before "${emp.company}" is the consultant's own name; unclear whether they own it or just work there. Contact details were kept as the consultant's.`);
+
       if (hits.length === 1) { sup.match = { id: hits[0].id, name: hits[0].name }; }
       else if (hits.length > 1) { sup.candidates = hits.map((s) => ({ id: s.id, name: s.name })); plan.warnings.push(`"${emp.company}" matches several supplier companies; supplier not linked.`); }
       const sp = sup.match ? (dir.prof.subvendors[sup.match.id] || {}) : {};
@@ -218,7 +227,7 @@ function fillPlan(plan, r, em, dir) {
       sadd(diff('State', 'state', sp.state, emp.state));
       sadd(diff('ZIP', 'postal_code', sp.postal_code, emp.zip));
       sadd(diff('Website', 'website', sp.website, emp.website));
-      if (emp.selfContact) plan.warnings.push(`The contact lines under "${emp.company}" are the consultant's own details (their own company).`);
+      if (emp.selfContact) plan.warnings.push(`"${emp.company}" is the consultant's own company, so their personal email, phone and name were not copied onto it.`);
       const doms = [...new Set(emp.emails.map((e) => e.split('@')[1]))];
       if (doms.length > 1) plan.warnings.push(`Company emails use different domains (${doms.join(', ')}); check the first one is right.`);
       if (sup.extraEmails.length) plan.warnings.push(`Extra company emails not saved: ${sup.extraEmails.join(', ')}.`);
@@ -274,11 +283,12 @@ router.post('/apply', async (req, res, next) => {
       if (plan.status === 'ambiguous' && pick.consultantId) {
         const chosen = plan.candidates.find((c) => c.id === Number(pick.consultantId));
         if (!chosen) { results.push({ idx: plan.idx, name: plan.name, error: 'That Directory record was not one of the offered matches.' }); continue; }
-        plan.status = 'matched'; plan.consultantId = chosen.id;
+        plan.status = 'matched'; plan.consultantId = chosen.id; plan.newPerson = false; plan.supplier = null;
         plan.changes = []; plan.warnings = plan.warnings.filter((w) => !/similar|several/.test(w));
         fillPlan(plan, v.rows[plan.idx], cleanEmail(v.rows[plan.idx].email), dir);
       }
-      if (plan.status !== 'matched') continue;
+      const createNew = plan.status !== 'matched' && plan.newPerson && !!pick.create && !!plan.name;
+      if (plan.status !== 'matched' && !createNew) continue;
       const want = new Set(Array.isArray(pick.fields) ? pick.fields : []);
       const sel = plan.changes.filter((c) => want.has(c.key) && c.kind !== 'same');
       const sup = plan.supplier;
@@ -287,6 +297,11 @@ router.post('/apply', async (req, res, next) => {
       const done = [];
       try {
         await conn.beginTransaction();
+        if (createNew) {
+          const [ci] = await conn.query(`INSERT INTO consultants (organization_id, name) VALUES (?, ?) ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)`, [orgId, plan.name]);
+          plan.consultantId = ci.insertId; done.push('added to the Directory');
+          await conn.query(`INSERT INTO record_notes (organization_id, entity, record_id, kind, body, user_name) VALUES (?, 'consultants', ?, 'log', ?, ?)`, [orgId, plan.consultantId, 'Created from a Directory import', who]);
+        }
         // 1) supplier company: link existing or create
         let supplierId = null;
         if (sup && supMode === 'create' && !sup.match && !sup.candidates.length) {

@@ -78,7 +78,7 @@
   function say(t, k) { msg = t; kind = k || ''; var el = document.getElementById('di-msg'); if (el) { el.textContent = t; el.className = 'di-msg ' + (k || ''); } }
 
   function header() {
-    return '<h1>Import details from a file</h1><p class="di-small" style="margin:0 0 14px">Fills in details for people <b>already in the Directory</b>. Nothing is saved until you review the list below and press Apply. Empty fields are filled; a field that already has a different value is only replaced if you tick it. Nobody is added or deleted.</p>';
+    return '<h1>Import details from a file</h1><p class="di-small" style="margin:0 0 14px">Fills in details for people <b>already in the Directory</b>. Nothing is saved until you review the list below and press Apply. Empty fields are filled; a field that already has a different value is only replaced if you tick it. Nobody is deleted; people not yet in the Directory are added only if their box is ticked.</p>';
   }
   function renderStart() {
     appEl.innerHTML = '<div class="di-wrap">' + header() +
@@ -108,7 +108,8 @@
   }
   function initChoices() {
     plans.forEach(function (p) {
-      var c = chosen[p.idx] = { consultantId: null, fields: {}, supMode: 'skip', supFields: {}, link: false, note: false };
+      var c = chosen[p.idx] = { consultantId: null, fields: {}, supMode: 'skip', supFields: {}, link: false, note: false, create: false };
+      if (p.newPerson && p.status === 'unmatched') { c.create = true; p.changes.forEach(function (ch) { if (ch.kind === 'fill') c.fields[ch.key] = true; }); if (p.supplier) { if (p.supplier.match) { c.supMode = 'link'; c.link = true; p.supplier.changes.forEach(function (ch) { if (ch.kind === 'fill') c.supFields[ch.key] = true; }); } else if (!p.supplier.candidates.length) { c.supMode = 'create'; c.link = true; p.supplier.changes.forEach(function (ch) { c.supFields[ch.key] = true; }); } } return; }
       if (p.status !== 'matched') return;
       p.changes.forEach(function (ch) { if (ch.kind === 'fill') c.fields[ch.key] = true; });
       if (p.supplier) {
@@ -127,11 +128,12 @@
   }
   function planHtml(p) {
     var c = chosen[p.idx];
-    var h = '<div class="di-card"><h2>' + esc(p.name) + (p.status === 'matched' ? '<span class="di-chip di-ok">in Directory' + (p.matchedName && p.matchedName.toLowerCase() !== p.name.toLowerCase() ? ' as ' + esc(p.matchedName) : '') + '</span>' : p.status === 'ambiguous' ? '<span class="di-chip di-warnchip">which one?</span>' : p.status === 'skipped' ? '<span class="di-chip di-grey">skipped</span>' : '<span class="di-chip di-no">not in Directory — will not be added</span>') + (p.sheetType ? '<span class="di-chip di-grey">' + esc(p.sheetType) + '</span>' : '') + '</h2>';
+    var h = '<div class="di-card"><h2>' + esc(p.name) + (p.status === 'matched' ? '<span class="di-chip di-ok">in Directory' + (p.matchedName && p.matchedName.toLowerCase() !== p.name.toLowerCase() ? ' as ' + esc(p.matchedName) : '') + '</span>' : p.status === 'ambiguous' ? '<span class="di-chip di-warnchip">which one?</span>' : p.status === 'skipped' ? '<span class="di-chip di-grey">skipped</span>' : (p.newPerson ? '<span class="di-chip di-warnchip">new person</span>' : '<span class="di-chip di-no">not in Directory</span>')) + (p.sheetType ? '<span class="di-chip di-grey">' + esc(p.sheetType) + '</span>' : '') + '</h2>';
+    if (p.newPerson) h += '<div style="margin:6px 0"><label><input type="checkbox" data-newp="' + p.idx + '"' + (c.create ? ' checked' : '') + '> Add <b>' + esc(p.name) + '</b> to the Directory as a new person with the details below</label></div>';
     if (p.status === 'ambiguous') {
       h += '<div class="di-small">Pick the Directory record this card belongs to (or leave blank to skip):</div><select data-amb="' + p.idx + '"><option value="">Skip this person</option>' + p.candidates.map(function (x) { return '<option value="' + x.id + '"' + (String(c.consultantId) === String(x.id) ? ' selected' : '') + '>' + esc(x.name) + (x.email ? ' — ' + esc(x.email) : '') + '</option>'; }).join('') + '</select>';
     }
-    if (p.status === 'matched') {
+    if (p.status === 'matched' || (p.newPerson && c.create)) {
       h += changeRows(p.changes, 'p', p.idx);
       if (p.supplier) {
         var s = p.supplier;
@@ -151,7 +153,7 @@
     var matched = plans.filter(function (p) { return p.status === 'matched'; }).length;
     var amb = plans.filter(function (p) { return p.status === 'ambiguous'; }).length;
     var un = plans.filter(function (p) { return p.status === 'unmatched'; }).length;
-    var h = '<div class="di-wrap">' + header() + '<div class="di-card"><b>' + esc(fileName) + '</b>: ' + plans.length + ' people · <span class="di-ok di-chip" style="margin:0">' + matched + ' matched</span> <span class="di-chip di-warnchip">' + amb + ' need a choice</span> <span class="di-chip di-no">' + un + ' not in Directory</span>' +
+    var h = '<div class="di-wrap">' + header() + '<div class="di-card"><b>' + esc(fileName) + '</b>: ' + plans.length + ' people · <span class="di-ok di-chip" style="margin:0">' + matched + ' matched</span> <span class="di-chip di-warnchip">' + amb + ' need a choice</span> <span class="di-chip di-no">' + un + ' new to the Directory</span>' +
       '<div class="di-bar"><button class="di-btn primary" id="di-apply"' + (busy ? ' disabled' : '') + '>Apply ticked changes</button> <button class="di-btn" id="di-again">Choose another file</button> <span id="di-msg" class="di-msg ' + kind + '">' + esc(msg) + '</span></div></div>';
     if (results) {
       h += '<div class="di-card"><h2>Result</h2>' + results.map(function (r) { return '<div>' + (r.error ? '✗ ' + esc(r.name) + ': ' + esc(r.error) : '✓ ' + esc(r.name) + ': ' + (r.done.length ? esc(r.done.join('; ')) : 'nothing needed changing')) + '</div>'; }).join('') + '</div>';
@@ -167,18 +169,19 @@
     else if (t.dataset && t.dataset.create) { i = t.dataset.create; chosen[i].supMode = t.checked ? 'create' : 'skip'; if (t.checked) { plans[i].supplier.changes.forEach(function (c) { chosen[i].supFields[c.key] = true; }); chosen[i].link = true; } else { chosen[i].supFields = {}; chosen[i].link = false; } renderPlans(); }
     else if (t.dataset && t.dataset.link) { i = t.dataset.link; chosen[i].link = t.checked; if (t.checked && chosen[i].supMode === 'skip') chosen[i].supMode = 'link'; }
     else if (t.dataset && t.dataset.note) { chosen[t.dataset.note].note = t.checked; }
+    else if (t.dataset && t.dataset.newp) { chosen[t.dataset.newp].create = t.checked; renderPlans(); }
     else if (t.dataset && t.dataset.amb) { i = t.dataset.amb; chosen[i].consultantId = t.value || null; }
   });
   function apply() {
     var picks = {}, any = false;
     plans.forEach(function (p) {
       var c = chosen[p.idx];
-      if (p.status === 'ambiguous' && !c.consultantId) return;
-      if (p.status !== 'matched' && p.status !== 'ambiguous') return;
+      if (p.status === 'ambiguous' && !c.consultantId && !c.create) return;
+      if (p.status !== 'matched' && p.status !== 'ambiguous' && !c.create) return;
       var f = Object.keys(c.fields).filter(function (k) { return c.fields[k]; });
       var sf = Object.keys(c.supFields).filter(function (k) { return c.supFields[k]; });
-      picks[p.idx] = { consultantId: c.consultantId, fields: f, supplier: { mode: c.supMode, fields: sf, link: c.link }, note: c.note };
-      if (f.length || sf.length || c.supMode !== 'skip' || c.note) any = true;
+      picks[p.idx] = { create: !!c.create && !c.consultantId, consultantId: c.consultantId, fields: f, supplier: { mode: c.supMode, fields: sf, link: c.link }, note: c.note };
+      if (f.length || sf.length || c.supMode !== 'skip' || c.note || c.create) any = true;
     });
     if (!any) { say('Nothing is ticked. Tick the changes you want first.', 'err'); return; }
     busy = true; say('Saving…');
