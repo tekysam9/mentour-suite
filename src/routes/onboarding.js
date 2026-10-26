@@ -33,7 +33,7 @@ const NEXT = {
   complete: ['in_progress'],
   cancelled: ['draft'],
 };
-const PROFILE_TYPE = { W2: 'W2', C2C: 'Corp-to-Corp', '1099': '1099' };
+const PROFILE_TYPE = { W2: 'W2', C2C: 'Subvendor', '1099': '1099' };
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const missingTable = (e) => e && e.code === 'ER_NO_SUCH_TABLE';

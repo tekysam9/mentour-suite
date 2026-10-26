@@ -1983,7 +1983,7 @@ async function main() {
       const [[asg]] = await dbConn.query(`SELECT a.billing, c.name AS client, p.name AS program FROM consultant_assignments a JOIN clients c ON c.id = a.client_id LEFT JOIN programs p ON p.id = a.program_id WHERE a.consultant_id = ?`, [r.body.consultantId]);
       check('billing pairing: client OCC, vendor CDW, bill rate 95', asg && asg.client === 'OCC' && asg.program === 'CDW' && Number(asg.billing) === 95, asg);
       r = await pfOwner.fetch('/api/profiles/consultants/' + (await pfOwner.fetch('/api/onboarding/' + obId)).body.consultantId);
-      check('consultant profile carries worker type Corp-to-Corp and the supplier company', r.body.values.worker_type === 'Corp-to-Corp' && !!r.body.values.supplier_id && r.body.values.hire_date === '2026-10-14', r.body.values);
+      check('consultant profile carries worker type Subvendor and the supplier company', r.body.values.worker_type === 'Subvendor' && !!r.body.values.supplier_id && r.body.values.hire_date === '2026-10-14', r.body.values);
       const supId = (await pfOwner.fetch('/api/onboarding/' + obId)).body.supplierId;
       r = await pfOwner.fetch('/api/directory/subvendors');
       check('the consultant’s company is a supplier company', r.body.subvendors.some((x) => x.id === supId && x.name === 'Accurate Software Consulting LLC'), r.body);

@@ -188,7 +188,7 @@ function fillPlan(plan, r, em, dir) {
   if (plan.sheetType && !wt) plan.warnings.push(`Worker type "${r.type}" is not W2, C2C or 1099; skipped.`);
   if (wt) {
     const d = diff('Worker type', 'worker_type', prof.worker_type, wt);
-    if (d) { if (d.kind === 'conflict' && prof.worker_type === 'Subvendor' && wt === 'Corp-to-Corp') d.note = 'The record says Subvendor; the sheet says C2C.'; add(d); }
+    if (d) { if (d.kind === 'conflict' && prof.worker_type === 'Corp-to-Corp' && wt === 'Subvendor') d.note = 'The record uses the older label Corp-to-Corp; C2C is now saved as Subvendor.'; add(d); }
   }
   // supplier (C2C only; W2 has no supplier company)
   if (plan.sheetType === 'C2C') {
