@@ -467,3 +467,6 @@ Needs: `FIELD_ENCRYPTION_KEY` (passwords are stored encrypted), and a re-run of 
 - Set `SESSION_SECRET` to a long random value (32+ characters, not "changeme"), `NODE_ENV=production`, and `FIELD_ENCRYPTION_KEY`; the server logs a warning at start-up if the secret is weak.
 - The server sends security headers (nosniff, frame-deny, referrer policy, HSTS in production) and refuses writes whose Origin is another website.
 - After pulling: run `npm install`, re-run `db/schema.sql`, restart.
+
+## Importing details into the Directory
+Directory → "Import details from a file" (HR/owner only). Upload the contact-card workbook; the page matches people to existing Directory records, shows every proposed change, and saves only what is ticked. Blank fields are filled; different values are replaced only when ticked; nobody is added or deleted; missing supplier companies are created only when ticked. No schema change needed.

@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Import details — Mentour Suite</title>
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<meta name="theme-color" content="#0875E1">
+<link rel="stylesheet" href="/shared.css">
+<link rel="stylesheet" href="/shell.css">
+<link rel="stylesheet" href="/theme.css">
+<style>
+  .di-wrap { max-width: 980px; padding: 8px 4px 56px; }
+  .di-wrap h1 { margin: 0 0 4px; }
+  .di-card { background: #fff; border: 1px solid #E3E6EA; border-radius: 10px; padding: 16px 20px; margin: 0 0 14px; line-height: 1.5; }
+  .di-card h2 { margin: 0 0 6px; font-size: 16px; }
+  .di-chip { display: inline-block; font-size: 11.5px; font-weight: 700; padding: 2px 9px; border-radius: 99px; margin-left: 8px; }
+  .di-ok { background: #E4F6E9; color: #1B7A3A; } .di-warnchip { background: #FFF5E5; color: #8A5A00; } .di-no { background: #FDECEA; color: #B3261E; } .di-grey { background: #EEF1F4; color: #5b6673; }
+  table.di-t { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 8px; }
+  .di-t th { text-align: left; font-size: 11.5px; color: #5b6673; padding: 4px 8px; border-bottom: 1px solid #E3E6EA; }
+  .di-t td { padding: 6px 8px; border-bottom: 1px solid #F0F2F4; vertical-align: top; word-break: break-word; }
+  .di-conflict td { background: #FFF9EC; }
+  .di-warn { background: #FFF7E6; border-left: 3px solid #E0A100; padding: 6px 10px; border-radius: 4px; font-size: 12.5px; margin: 6px 0 0; }
+  .di-bar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin: 12px 0; }
+  .di-btn { border: 1px solid #cfd5db; background: #fff; border-radius: 5px; padding: 8px 15px; font-size: 13.5px; font-weight: 600; cursor: pointer; font-family: inherit; }
+  .di-btn.primary { background: #0B5CAD; border-color: #0B5CAD; color: #fff; }
+  .di-btn[disabled] { opacity: .5; cursor: default; }
+  .di-sub { margin-top: 10px; padding-top: 8px; border-top: 1px dashed #D5DAE0; }
+  .di-msg { font-size: 13px; font-weight: 600; } .di-msg.err { color: #B3261E; } .di-msg.ok { color: #1B7A3A; }
+  .di-small { font-size: 12.5px; color: #5b6673; }
+</style>
+</head>
+<body>
+<div id="app"><p style="padding:24px">Loading…</p></div>
+<script src="/lib/xlsx.full.min.js"></script>
+<script src="/shell.js"></script>
+<script>
+(function () {
+  var appEl = document.getElementById('app');
+  var rows = [], plans = [], fileName = '', msg = '', kind = '', results = null, busy = false;
+  var chosen = {}; // idx -> { consultantId, fields:{}, supMode, supFields:{}, link, note }
+  function esc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
+  function api(m, u, b) {
+    return fetch(u, { method: m, headers: { 'Content-Type': 'application/json' }, body: b ? JSON.stringify(b) : undefined })
+      .then(function (r) { return r.json().catch(function () { return {}; }).then(function (j) { return { ok: r.ok, status: r.status, body: j }; }); });
+  }
+  function cell(v) { return v === null || v === undefined ? '' : (v instanceof Date ? v.toISOString().slice(0, 10) : String(v).replace(/ /g, ' ').trim()); }
+
+  // The workbook is a grid of "cards": a label column and a value column, repeated side by side.
+  function parseCards(ws) {
+    var grid = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, defval: null });
+    var width = 0; grid.forEach(function (r) { width = Math.max(width, (r || []).length); });
+    var labelCols = [];
+    for (var c = 0; c < width; c++) {
+      var hits = 0; grid.forEach(function (r) { if (r && /^consultant name\s*:?$/i.test(cell(r[c]))) hits++; });
+      if (hits) labelCols.push(c);
+    }
+    var out = [];
+    labelCols.forEach(function (lc) {
+      var cur = null, inEmp = false;
+      grid.forEach(function (r) {
+        r = r || []; var lab = cell(r[lc]), v = cell(r[lc + 1]);
+        if (/^consultant name\s*:?$/i.test(lab)) { cur = { name: v.replace(/\s+/g, ' '), employer: [] }; out.push(cur); inEmp = false; return; }
+        if (!cur) return;
+        if (/^consultant contact/i.test(lab)) { cur.phone = v; inEmp = false; }
+        else if (/^consultant e-?mail/i.test(lab)) { cur.email = v; inEmp = false; }
+        else if (/^(technical )?skills?\b/i.test(lab)) { cur.skill = v; inEmp = false; }
+        else if (/^status/i.test(lab)) { cur.type = v.replace(/\s+/g, '').toUpperCase(); inEmp = false; }
+        else if (/^candidate employer/i.test(lab)) { inEmp = true; if (v) cur.employer.push(v); }
+        else if (lab && /timesheet|invoice/i.test(lab)) { cur.note = lab + ' ' + v; inEmp = false; }
+        else if (!lab && inEmp && v) cur.employer.push(v);
+      });
+    });
+    return out;
+  }
+
+  function say(t, k) { msg = t; kind = k || ''; var el = document.getElementById('di-msg'); if (el) { el.textContent = t; el.className = 'di-msg ' + (k || ''); } }
+
+  function header() {
+    return '<h1>Import details from a file</h1><p class="di-small" style="margin:0 0 14px">Fills in details for people <b>already in the Directory</b>. Nothing is saved until you review the list below and press Apply. Empty fields are filled; a field that already has a different value is only replaced if you tick it. Nobody is added or deleted.</p>';
+  }
+  function renderStart() {
+    appEl.innerHTML = '<div class="di-wrap">' + header() +
+      '<div class="di-card"><h2>1. Choose the workbook</h2><p class="di-small">The “contact card” layout: Consultant Name, Contact Number, Email, Technical Skill, Status (W2/C2C/1099) and Candidate Employer Details.</p>' +
+      '<label class="di-btn primary" style="display:inline-block">Choose file…<input type="file" accept=".xlsx,.xls" id="di-file" style="display:none"></label> <span id="di-msg" class="di-msg ' + kind + '">' + esc(msg) + '</span></div></div>';
+    document.getElementById('di-file').addEventListener('change', function (e) { if (e.target.files[0]) load(e.target.files[0]); });
+  }
+  function load(file) {
+    say('Reading…'); fileName = file.name;
+    var rd = new FileReader();
+    rd.onload = function () {
+      try {
+        var wb = XLSX.read(new Uint8Array(rd.result), { type: 'array', cellDates: true });
+        rows = [];
+        wb.SheetNames.forEach(function (n) { rows = rows.concat(parseCards(wb.Sheets[n])); });
+        rows = rows.filter(function (r) { return r.name; });
+        if (!rows.length) { say('No consultant cards were found in this file (looking for “Consultant Name:” labels).', 'err'); return; }
+        say('Matching ' + rows.length + ' people against the Directory…');
+        api('POST', '/api/directory-import/preview', { rows: rows, apply: false }).then(function (r) {
+          if (r.status === 401) { location.href = '/login.html'; return; }
+          if (!r.ok) { say(r.body.error || 'Could not check the file.', 'err'); return; }
+          plans = r.body.plans; results = null; chosen = {}; initChoices(); renderPlans();
+        });
+      } catch (err) { say('Could not read this workbook.', 'err'); }
+    };
+    rd.readAsArrayBuffer(file);
+  }
+  function initChoices() {
+    plans.forEach(function (p) {
+      var c = chosen[p.idx] = { consultantId: null, fields: {}, supMode: 'skip', supFields: {}, link: false, note: false };
+      if (p.status !== 'matched') return;
+      p.changes.forEach(function (ch) { if (ch.kind === 'fill') c.fields[ch.key] = true; });
+      if (p.supplier) {
+        if (p.supplier.match) { c.supMode = 'link'; p.supplier.changes.forEach(function (ch) { if (ch.kind === 'fill') c.supFields[ch.key] = true; }); c.link = !p.supplier.link || p.supplier.link.kind === 'fill'; }
+      }
+    });
+  }
+  function changeRows(list, group, idx) {
+    if (!list.length) return '<p class="di-small" style="margin:6px 0 0">Nothing to add here.</p>';
+    return '<table class="di-t"><tr><th style="width:26px"></th><th>Field</th><th>Now in Directory</th><th>From the file</th><th></th></tr>' + list.map(function (c) {
+      var c0 = chosen[idx], on = group === 'p' ? !!c0.fields[c.key] : !!c0.supFields[c.key];
+      var dis = c.kind === 'same';
+      return '<tr class="' + (c.kind === 'conflict' ? 'di-conflict' : '') + '"><td><input type="checkbox" data-g="' + group + '" data-i="' + idx + '" data-k="' + esc(c.key) + '"' + (on ? ' checked' : '') + (dis ? ' disabled' : '') + '></td><td>' + esc(c.label) + '</td><td>' + (esc(c.current) || '<span class="di-small">empty</span>') + '</td><td><b>' + esc(c.proposed) + '</b></td><td>' +
+        (c.kind === 'same' ? '<span class="di-chip di-grey">already the same</span>' : c.kind === 'conflict' ? '<span class="di-chip di-warnchip">different — tick to replace</span>' : '<span class="di-chip di-ok">new</span>') + (c.note ? '<div class="di-small">' + esc(c.note) + '</div>' : '') + '</td></tr>';
+    }).join('') + '</table>';
+  }
+  function planHtml(p) {
+    var c = chosen[p.idx];
+    var h = '<div class="di-card"><h2>' + esc(p.name) + (p.status === 'matched' ? '<span class="di-chip di-ok">in Directory' + (p.matchedName && p.matchedName.toLowerCase() !== p.name.toLowerCase() ? ' as ' + esc(p.matchedName) : '') + '</span>' : p.status === 'ambiguous' ? '<span class="di-chip di-warnchip">which one?</span>' : p.status === 'skipped' ? '<span class="di-chip di-grey">skipped</span>' : '<span class="di-chip di-no">not in Directory — will not be added</span>') + (p.sheetType ? '<span class="di-chip di-grey">' + esc(p.sheetType) + '</span>' : '') + '</h2>';
+    if (p.status === 'ambiguous') {
+      h += '<div class="di-small">Pick the Directory record this card belongs to (or leave blank to skip):</div><select data-amb="' + p.idx + '"><option value="">Skip this person</option>' + p.candidates.map(function (x) { return '<option value="' + x.id + '"' + (String(c.consultantId) === String(x.id) ? ' selected' : '') + '>' + esc(x.name) + (x.email ? ' — ' + esc(x.email) : '') + '</option>'; }).join('') + '</select>';
+    }
+    if (p.status === 'matched') {
+      h += changeRows(p.changes, 'p', p.idx);
+      if (p.supplier) {
+        var s = p.supplier;
+        h += '<div class="di-sub"><b>Supplier company: ' + esc(s.company) + '</b>' + (s.match ? '<span class="di-chip di-ok">in Directory as ' + esc(s.match.name) + '</span>' : s.candidates.length ? '<span class="di-chip di-warnchip">several matches</span>' : '<span class="di-chip di-no">not in Directory</span>');
+        if (!s.match && !s.candidates.length) h += '<div style="margin-top:6px"><label><input type="checkbox" data-create="' + p.idx + '"' + (c.supMode === 'create' ? ' checked' : '') + '> Add “' + esc(s.company) + '” as a new supplier company with the details below, and link ' + esc(p.name) + ' to it</label></div>';
+        if (s.match && s.link) h += '<div style="margin-top:6px"><label><input type="checkbox" data-link="' + p.idx + '"' + (c.link ? ' checked' : '') + (s.link.kind === 'same' ? ' disabled' : '') + '> Link ' + esc(p.name) + ' to this supplier ' + (s.link.kind === 'same' ? '(already linked)' : s.link.kind === 'conflict' ? '(replaces <b>' + esc(s.link.current) + '</b>)' : '') + '</label></div>';
+        if (!s.candidates.length) h += changeRows(s.changes, 's', p.idx);
+        h += '</div>';
+      }
+      if (p.note) h += '<div class="di-sub"><label><input type="checkbox" data-note="' + p.idx + '"' + (c.note ? ' checked' : '') + '> Save as an internal note on the record: “' + esc(p.note) + '”</label></div>';
+      if (p.nothingToDo) h += '<p class="di-small">Everything in the file is already in the Directory.</p>';
+    }
+    p.warnings.forEach(function (w) { h += '<div class="di-warn">⚠ ' + esc(w) + '</div>'; });
+    return h + '</div>';
+  }
+  function renderPlans() {
+    var matched = plans.filter(function (p) { return p.status === 'matched'; }).length;
+    var amb = plans.filter(function (p) { return p.status === 'ambiguous'; }).length;
+    var un = plans.filter(function (p) { return p.status === 'unmatched'; }).length;
+    var h = '<div class="di-wrap">' + header() + '<div class="di-card"><b>' + esc(fileName) + '</b>: ' + plans.length + ' people · <span class="di-ok di-chip" style="margin:0">' + matched + ' matched</span> <span class="di-chip di-warnchip">' + amb + ' need a choice</span> <span class="di-chip di-no">' + un + ' not in Directory</span>' +
+      '<div class="di-bar"><button class="di-btn primary" id="di-apply"' + (busy ? ' disabled' : '') + '>Apply ticked changes</button> <button class="di-btn" id="di-again">Choose another file</button> <span id="di-msg" class="di-msg ' + kind + '">' + esc(msg) + '</span></div></div>';
+    if (results) {
+      h += '<div class="di-card"><h2>Result</h2>' + results.map(function (r) { return '<div>' + (r.error ? '✗ ' + esc(r.name) + ': ' + esc(r.error) : '✓ ' + esc(r.name) + ': ' + (r.done.length ? esc(r.done.join('; ')) : 'nothing needed changing')) + '</div>'; }).join('') + '</div>';
+    }
+    h += plans.map(planHtml).join('') + '</div>';
+    appEl.innerHTML = h;
+    document.getElementById('di-again').addEventListener('click', function () { msg = ''; kind = ''; renderStart(); });
+    document.getElementById('di-apply').addEventListener('click', apply);
+  }
+  appEl.addEventListener('change', function (e) {
+    var t = e.target, i;
+    if (t.dataset && t.dataset.g) { i = t.dataset.i; (t.dataset.g === 'p' ? chosen[i].fields : chosen[i].supFields)[t.dataset.k] = t.checked; }
+    else if (t.dataset && t.dataset.create) { i = t.dataset.create; chosen[i].supMode = t.checked ? 'create' : 'skip'; if (t.checked) { plans[i].supplier.changes.forEach(function (c) { chosen[i].supFields[c.key] = true; }); chosen[i].link = true; } else { chosen[i].supFields = {}; chosen[i].link = false; } renderPlans(); }
+    else if (t.dataset && t.dataset.link) { i = t.dataset.link; chosen[i].link = t.checked; if (t.checked && chosen[i].supMode === 'skip') chosen[i].supMode = 'link'; }
+    else if (t.dataset && t.dataset.note) { chosen[t.dataset.note].note = t.checked; }
+    else if (t.dataset && t.dataset.amb) { i = t.dataset.amb; chosen[i].consultantId = t.value || null; }
+  });
+  function apply() {
+    var picks = {}, any = false;
+    plans.forEach(function (p) {
+      var c = chosen[p.idx];
+      if (p.status === 'ambiguous' && !c.consultantId) return;
+      if (p.status !== 'matched' && p.status !== 'ambiguous') return;
+      var f = Object.keys(c.fields).filter(function (k) { return c.fields[k]; });
+      var sf = Object.keys(c.supFields).filter(function (k) { return c.supFields[k]; });
+      picks[p.idx] = { consultantId: c.consultantId, fields: f, supplier: { mode: c.supMode, fields: sf, link: c.link }, note: c.note };
+      if (f.length || sf.length || c.supMode !== 'skip' || c.note) any = true;
+    });
+    if (!any) { say('Nothing is ticked. Tick the changes you want first.', 'err'); return; }
+    busy = true; say('Saving…');
+    api('POST', '/api/directory-import/apply', { rows: rows, picks: picks }).then(function (r) {
+      busy = false;
+      if (r.status === 499) { say('Cancelled — nothing was changed.', ''); return; }
+      if (!r.ok) { say(r.body.error || 'Could not save.', 'err'); return; }
+      results = r.body.results; say('Done. Re-checking against the Directory…', 'ok');
+      api('POST', '/api/directory-import/preview', { rows: rows, apply: false }).then(function (q) { if (q.ok) { plans = q.body.plans; initChoices(); } msg = 'Saved. The list below now shows what is still different.'; kind = 'ok'; renderPlans(); window.scrollTo(0, 0); });
+    });
+  }
+  api('GET', '/api/auth/me').then(function (r) {
+    if (r.status !== 200) { location.href = '/login.html'; return; }
+    var role = r.body.user && r.body.user.role;
+    if (role !== 'owner' && role !== 'hr') { appEl.innerHTML = '<p style="padding:24px">Only HR or an administrator can import Directory details.</p>'; return; }
+    renderStart();
+  }).catch(function (e) { (window.__msAuthFail || function () { location.href = '/login.html'; })(e); });
+})();
+</script>
+</body>
+</html>

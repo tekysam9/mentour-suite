@@ -2744,6 +2744,98 @@ async function main() {
         r = await myJar.fetch('/api/mail-settings');
         check('HR can disconnect their mailbox', r.body.settings === null, r.body);
       }
+
+      // ---- Directory import: fills details for people already in the Directory
+      {
+        const di = makeJar();
+        await di.fetch('/api/auth/signup', { method: 'POST', body: JSON.stringify({ orgName: 'Import Co', name: 'Ida Import', email: 'ida@import.test', password: 'idapassword123' }) });
+        const [[iu]] = await dbConn.query('SELECT organization_id o FROM users WHERE email = ?', ['ida@import.test']);
+        const org = iu.o;
+        const ins = async (t, n, extra) => (await dbConn.query(`INSERT INTO ${t} (organization_id, name${extra ? ', ' + Object.keys(extra).join(', ') : ''}) VALUES (?, ?${extra ? ', ' + Object.keys(extra).map(() => '?').join(', ') : ''})`, [org, n].concat(extra ? Object.values(extra) : '')))[0].insertId;
+        const cAnil = await ins('consultants', 'Anil Kumar Yepuri');
+        const cAvi = await ins('consultants', 'Avinash Agnihotri', { email: 'old.avi@x.test' });
+        const cHow = await ins('consultants', 'Howard Joshua Shain', { phone: '267-307-5292' });
+        const cOleg = await ins('consultants', 'Oleg Burstein');
+        const cBens = await ins('consultants', 'Bens Bernard');
+        await ins('consultants', 'Shyam Shivaram'); await ins('consultants', 'Prem Sahoo'); await ins('consultants', 'Parvathi Ramesh'); await ins('consultants', 'Chandra Sagili');
+        const sAccurate = await ins('subvendors', 'Accurate Software Consulting LLC', { email: 'keep@accurate.test' });
+        const sAlef = await ins('subvendors', 'Alef Data Integration Ltd');
+        const cards = [
+          { name: 'Anil Kumar Yepuri', phone: '224 456 1416', email: 'kumarnow@outlook.com', skill: 'ServiceNow Consulting Architect', type: 'C2C', employer: ['Rapid Analytice Inc', 'hr@ranalyticsinc.com', 'Anil.Yepuri@raanalyticsinc.com', 'Anil k Yepuri, CEO', '224 456 1416'] },
+          { name: 'Avinash Agnihotri', phone: '347 267 1449', email: 'avinash.agnihotri04@gamil.com', skill: 'DB2 LUW DBA', type: 'C2C', employer: ['Accurate Software Consulting LLC', 'avinash.agnihotri04@gmail.com', '347 267 1449'] },
+          { name: 'Howard Joshua Shain', phone: '267-307-5292', email: 'howie.shain@gmail.com', skill: 'Talend Integration Architect', type: 'W2', employer: [] },
+          { name: 'Oleg Burstein', phone: '818-378-0867', email: 'oleg.burstein@gmail.com', skill: 'IBM Infosphere DataStage Architect', type: 'C2C', employer: ['Oleg Burstein', 'Alef Data Integration, LTD', 'oleg.burstein@gmail.com', '818-378-0867'] },
+          { name: 'Bens Bernard', phone: 9188960840, email: 'heybensbernard@gmail.com', skill: 'Azure Data Engineer', type: 'W2' },
+          { name: 'Shyam Shivaram', phone: '618-303-0116', email: 'shyam.cse@gmail.com', skill: 'Server support', type: 'C2C', employer: ['Shyam Shivaram own company'] },
+          { name: 'Prem Prakash Sahoo', phone: '346-402-7946/732-319-7677', email: 'premprakashsahoo@gmail.com', skill: 'Scala', type: 'W2' },
+          { name: 'Nobody Known', phone: '111-111-1111', email: 'n@x.test', skill: 'x', type: 'W2' },
+          { name: 'Chandra Sagili', phone: '484-478-4871', email: 'sagilichandra@gmail.com', skill: 'BA', type: 'C2C', employer: ['ClientServer Technology Solutions LLC', '555 US Highway 1 South, Suite 220, Iselin, NJ-08830', 'hr@clientservertech.com', '201-856-4621', 'Bhavani Avvaru'] },
+        ];
+        let r = await (makeJar()).fetch('/api/directory-import/preview', { method: 'POST', body: JSON.stringify({ rows: cards }) });
+        check('Directory import needs a signed-in user', r.status === 401, r.status);
+        r = await di.fetch('/api/directory-import/preview', { method: 'POST', body: JSON.stringify({ rows: cards, apply: false }) });
+        const pl = r.body.plans || [];
+        const by = (n) => pl.find((p) => p.name === n) || {};
+        check('preview matches the people already in the Directory', r.status === 200 && by('Anil Kumar Yepuri').status === 'matched' && by('Howard Joshua Shain').status === 'matched', r.body);
+        check('preview changes nothing', (await dbConn.query('SELECT email FROM consultants WHERE id = ?', [cAnil]))[0][0].email === null);
+        check('a person who is not in the Directory is listed but not added', by('Nobody Known').status === 'unmatched' && (await dbConn.query('SELECT COUNT(*) n FROM consultants WHERE organization_id = ? AND name = ?', [org, 'Nobody Known']))[0][0].n === 0);
+        check('a near name is offered as a choice, not assumed', by('Prem Prakash Sahoo').status === 'ambiguous' && by('Prem Prakash Sahoo').candidates.length === 1, by('Prem Prakash Sahoo'));
+        const avi = by('Avinash Agnihotri');
+        const aviEmail = (avi.changes || []).find((c) => c.key === 'email');
+        check('a mistyped email domain is corrected and flagged', aviEmail && aviEmail.proposed === 'avinash.agnihotri04@gmail.com' && aviEmail.kind === 'conflict' && avi.warnings.some((w) => /gamil/.test(w)), avi);
+        check('numeric phone numbers are formatted', (by('Bens Bernard').changes.find((c) => c.key === 'phone') || {}).proposed === '918-896-0840');
+        const two = (await di.fetch('/api/directory-import/preview', { method: 'POST', body: JSON.stringify({ rows: [{ name: 'Parvathi Ramesh', phone: '346-402-7946/732-319-7677', email: 'rparvathi02@gmail.com', type: 'W2' }], apply: false }) })).body.plans[0];
+        check('a second phone number goes to the alternate phone', (two.changes.find((c) => c.key === 'phone') || {}).proposed === '346-402-7946' && (two.changes.find((c) => c.key === 'alt_phone') || {}).proposed === '732-319-7677', two);
+        check('values already in the Directory are marked the same', (by('Howard Joshua Shain').changes.find((c) => c.key === 'phone') || {}).kind === 'same');
+        check('C2C maps to Corp-to-Corp', (by('Anil Kumar Yepuri').changes.find((c) => c.key === 'worker_type') || {}).proposed === 'Corp-to-Corp');
+        check('a supplier company that exists is matched despite punctuation', by('Oleg Burstein').supplier && by('Oleg Burstein').supplier.match && by('Oleg Burstein').supplier.match.id === sAlef, by('Oleg Burstein').supplier);
+        check('a supplier that is not in the Directory is offered, not created', by('Anil Kumar Yepuri').supplier && !by('Anil Kumar Yepuri').supplier.match && (await dbConn.query('SELECT COUNT(*) n FROM subvendors WHERE organization_id = ? AND name LIKE ?', [org, 'Rapid%']))[0][0].n === 0);
+        check('"own company" with no name is flagged and not linked', by('Shyam Shivaram').supplier === null && by('Shyam Shivaram').warnings.some((w) => /own company/i.test(w)), by('Shyam Shivaram'));
+        const cs = by('Chandra Sagili').supplier;
+        check('company address is split into street, city, state and ZIP', cs && cs.changes.some((c) => c.key === 'city' && c.proposed === 'Iselin') && cs.changes.some((c) => c.key === 'state' && c.proposed === 'NJ') && cs.changes.some((c) => c.key === 'postal_code' && c.proposed === '08830') && cs.changes.some((c) => c.key === 'address' && c.proposed === '555 US Highway 1 South, Suite 220'), cs);
+
+        // apply: tick only a few things
+        const aviIdx = avi.idx, olegIdx = by('Oleg Burstein').idx, anilIdx = by('Anil Kumar Yepuri').idx, howIdx = by('Howard Joshua Shain').idx;
+        r = await di.fetch('/api/directory-import/apply', { method: 'POST', body: JSON.stringify({ rows: cards, picks: {
+          [aviIdx]: { fields: ['phone', 'skills', 'worker_type'], supplier: { mode: 'skip', fields: [] } },
+          [olegIdx]: { fields: ['email', 'phone', 'worker_type'], supplier: { mode: 'link', fields: ['phone', 'contact_name'], link: true } },
+          [anilIdx]: { fields: ['email', 'phone'], supplier: { mode: 'create', fields: ['email', 'contact_title'], link: true } },
+          [howIdx]: { fields: ['phone', 'email'], supplier: { mode: 'skip', fields: [] } },
+        } }) });
+        check('apply succeeds', r.status === 200 && r.body.results.every((x) => !x.error), r.body);
+        const [[a1]] = await dbConn.query('SELECT email, phone FROM consultants WHERE id = ?', [cAvi]);
+        check('a conflicting email is NOT replaced unless ticked', a1.email === 'old.avi@x.test' && a1.phone === '347-267-1449', a1);
+        const [[pa]] = await dbConn.query(`SELECT data FROM record_profiles WHERE organization_id = ? AND entity = 'consultants' AND record_id = ?`, [org, cAvi]);
+        check('skills and worker type are saved to the profile', JSON.parse(pa.data).skills === 'DB2 LUW DBA' && JSON.parse(pa.data).worker_type === 'Corp-to-Corp', pa);
+        const [[o1]] = await dbConn.query('SELECT email, phone FROM consultants WHERE id = ?', [cOleg]);
+        const [[op]] = await dbConn.query(`SELECT data FROM record_profiles WHERE organization_id = ? AND entity = 'consultants' AND record_id = ?`, [org, cOleg]);
+        check('a person is linked to the existing supplier company', o1.email === 'oleg.burstein@gmail.com' && String(JSON.parse(op.data).supplier_id) === String(sAlef), [o1, op]);
+        const [[sp]] = await dbConn.query(`SELECT data FROM record_profiles WHERE organization_id = ? AND entity = 'subvendors' AND record_id = ?`, [org, sAlef]);
+        const [[sr]] = await dbConn.query('SELECT phone, email FROM subvendors WHERE id = ?', [sAlef]);
+        check('only the ticked supplier fields were filled', sr.phone === '818-378-0867' && sr.email === null && JSON.parse(sp.data).contact_name === 'Oleg Burstein', [sr, sp]);
+        const [[nv]] = await dbConn.query('SELECT id, email FROM subvendors WHERE organization_id = ? AND name = ?', [org, 'Rapid Analytice Inc']);
+        check('a new supplier company is created only when ticked, with the ticked details', nv && nv.email === 'hr@ranalyticsinc.com', nv);
+        const [[sk]] = await dbConn.query('SELECT email FROM subvendors WHERE id = ?', [sAccurate]);
+        check('an untouched supplier keeps its data', sk.email === 'keep@accurate.test');
+        const [lg] = await dbConn.query(`SELECT body FROM record_notes WHERE organization_id = ? AND entity = 'consultants' AND record_id = ? AND kind = 'log'`, [org, cAvi]);
+        check('the change is written to the record log', lg.length >= 1 && /Directory import/.test(lg[0].body), lg);
+        // re-run: everything applied now shows as the same; re-applying changes nothing
+        r = await di.fetch('/api/directory-import/preview', { method: 'POST', body: JSON.stringify({ rows: cards, apply: false }) });
+        const again = r.body.plans.find((p) => p.name === 'Howard Joshua Shain');
+        check('after applying, the preview shows nothing left to fill for that person', again.changes.filter((c) => c.key === 'email' || c.key === 'phone').every((c) => c.kind === 'same'), again);
+        // another organisation cannot see or change this one's people
+        const other = makeJar();
+        await other.fetch('/api/auth/signup', { method: 'POST', body: JSON.stringify({ orgName: 'Other Imp Co', name: 'Oli Other', email: 'oli@otherimp.test', password: 'olipassword123' }) });
+        r = await other.fetch('/api/directory-import/preview', { method: 'POST', body: JSON.stringify({ rows: cards, apply: false }) });
+        check('another company sees no matches in this Directory', r.body.plans.every((p) => p.status === 'unmatched'), r.body.plans.map((p) => p.status));
+        // a member (not HR) is refused
+        const memJ = makeJar();
+        const [[mo]] = await dbConn.query("SELECT id FROM users WHERE email = 'ida@import.test'");
+        await dbConn.query("INSERT INTO users (organization_id, name, email, password_hash, role) SELECT ?, 'Mia Member', 'mia@import.test', password_hash, 'member' FROM users WHERE id = ?", [org, mo.id]);
+        await memJ.fetch('/api/auth/login', { method: 'POST', body: JSON.stringify({ email: 'mia@import.test', password: 'idapassword123' }) });
+        r = await memJ.fetch('/api/directory-import/preview', { method: 'POST', body: JSON.stringify({ rows: cards, apply: false }) });
+        check('only HR or an administrator can import Directory details', r.status === 403, r.status);
+      }
     } finally {
       await dbConn.end();
     }

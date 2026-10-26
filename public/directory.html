@@ -552,6 +552,7 @@
         '<a class="dir-back" href="/">← Back to dashboards</a>' +
         '<h1 class="dir-title">Directory.</h1>' +
         '<p class="dir-copy">Everyone and every account your team has ever uploaded, in one place — add an email, phone, or address once and it stays, no matter how many more files come in. Status tracks each upload automatically: active if it showed up that way in the most recent file, inactive otherwise. Open “Seen in” on a row to see exactly which uploads named it. On Consultants, open “Billing” to see or add their rate on each client/vendor.</p>' +
+        (state.user && (state.user.role === 'owner' || state.user.role === 'hr') ? '<p style="margin:0 0 12px"><a class="landing-btn" href="/directory-import.html" style="text-decoration:none;display:inline-block">Import details from a file</a></p>' : '') +
         '<div class="dir-tabs">' + tabsHtml + '</div>' +
         dupePanel +
         controls +
