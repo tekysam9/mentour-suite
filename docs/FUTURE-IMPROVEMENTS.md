@@ -32,3 +32,10 @@ Last updated 2026-10-23. Tick items off as they are done.
 
 ## Working rule
 Before any change: find everything else that reads or writes the same data, keep moves and renames transactional and re-runnable, add tests, run the full suite, then push.
+
+## Payments (on hold, decided 2026-10-27)
+The app tracks supplier payments (paid/unpaid, dates) but does not move money. Parked for now.
+- Agreed starting point when resumed: suppliers only first; payment runs prepared by HR and approved by the owner; a payment log of every run.
+- Step 1 (no provider needed): bank-file export (NACHA/CSV) of unpaid supplier payments using the saved bank details, then mark paid.
+- Step 2: direct send through an ACH service (e.g. Dwolla, Modern Treasury, Bill.com) with status updates back into the app. Check that service's current fees and approval steps first. Stripe Connect was priced (0.25% + 25¢ per payout, $2 per active account per month) but needs each supplier to set up a Stripe account.
+- Consultants: keep W-2 payroll with a payroll service (export hours and rates); 1099 consultants can follow suppliers.
