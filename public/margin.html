@@ -551,7 +551,7 @@
         inp('client', 'Client *', v.client, 'list="dl-clients" placeholder="e.g. RCA"') +
         inp('vendor', 'Vendor', prog, 'list="dl-vendors" placeholder="e.g. CDW (bill-to)"') +
         '<label class="cl-ed-f"><span>Employment</span><select data-f="employmentType">' + empOpts + '</select></label>' +
-        inp('supplier', 'Supplier (if subvendor)', sup, 'list="dl-suppliers" placeholder="Supplier company"') +
+        inp('supplier', 'Supplier (Subvendor: required · 1099: optional · W2: none)', sup, 'list="dl-suppliers" placeholder="Supplier company"') +
         inp('billing', 'Billing $/hr', v.billing, 'type="number" step="0.01" min="0"') +
         inp('cost', 'Pay / cost $/hr', v.cost, 'type="number" step="0.01" min="0"') +
         inp('joined', 'Joined', v.joined, 'placeholder="e.g. Mar 2025"') +

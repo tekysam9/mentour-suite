@@ -15,6 +15,7 @@ const { requireAuth } = require('../auth');
 const { TABLES: DIRECTORY_TABLES, scanDuplicates } = require('./directoryDedup');
 const { upsertAssignmentBilling } = require('./assignmentUpsert');
 const { findOrCreateDirectoryRecord, normalizeName } = require('./directoryUpsert');
+const { checkSupplierRule, repointMarginRows, defaultsFor, isHrUser, EMPLOYMENT_BY_PROFILE, KIND_BY_EMPLOYMENT } = require('../placementRules');
 const { aliasKey, splitClientText, isMissingTable, SCHEMA_NEEDED_MESSAGE } = require('./clientAliases');
 
 // Profile form data follows the surviving record when two records are merged:
@@ -209,10 +210,11 @@ router.get('/consultants', async (req, res, next) => {
     // extra query here instead of N later.
     const [assignmentRows] = await pool.query(
       `SELECT a.id, a.consultant_id, a.billing, a.pay_rate, a.source, a.status, a.left_date, a.client_id, a.program_id,
-         cl.name AS client_name, p.name AS program_name
+         a.employment_type, a.supplier_id, cl.name AS client_name, p.name AS program_name, sv.name AS supplier_name
        FROM consultant_assignments a
        LEFT JOIN clients cl ON cl.id = a.client_id
        LEFT JOIN programs p ON p.id = a.program_id
+       LEFT JOIN subvendors sv ON sv.id = a.supplier_id
        WHERE a.organization_id = ?
        ORDER BY a.status, cl.name, p.name`,
       [req.user.organization_id]
@@ -253,10 +255,11 @@ router.get('/consultants/:id/assignments', async (req, res, next) => {
 
     const [rows] = await pool.query(
       `SELECT a.id, a.billing, a.pay_rate, a.source, a.status, a.left_date, a.client_id, a.program_id,
-         cl.name AS client_name, p.name AS program_name
+         a.employment_type, a.supplier_id, cl.name AS client_name, p.name AS program_name, sv.name AS supplier_name
        FROM consultant_assignments a
        LEFT JOIN clients cl ON cl.id = a.client_id
        LEFT JOIN programs p ON p.id = a.program_id
+       LEFT JOIN subvendors sv ON sv.id = a.supplier_id
        WHERE a.organization_id = ? AND a.consultant_id = ?
        ORDER BY a.status, cl.name, p.name`,
       [req.user.organization_id, req.params.id]
@@ -286,6 +289,7 @@ router.post('/consultants/:id/assignments', async (req, res, next) => {
       return res.status(400).json({ error: 'Pay rate must be a number.' });
     }
 
+    if (!clientId) return res.status(400).json({ error: 'Every consultant needs a client. Choose the client.' });
     if (clientId) {
       const [clientRows] = await pool.query('SELECT id FROM clients WHERE id = ? AND organization_id = ?', [clientId, req.user.organization_id]);
       if (!clientRows.length) return res.status(400).json({ error: 'Unknown client.' });
@@ -302,13 +306,16 @@ router.post('/consultants/:id/assignments', async (req, res, next) => {
       organizationId: req.user.organization_id, consultantId: Number(req.params.id),
       clientId, programId, billing, payRate, source: 'manual', status: 'active',
     });
+    const dflt = await defaultsFor(pool, req.user.organization_id, Number(req.params.id));
+    await pool.query('UPDATE consultant_assignments SET employment_type = COALESCE(employment_type, ?), supplier_id = COALESCE(supplier_id, ?) WHERE id = ?', [dflt.employmentType, dflt.supplierId, assignmentId]);
 
     const [rows] = await pool.query(
       `SELECT a.id, a.billing, a.pay_rate, a.source, a.status, a.left_date, a.client_id, a.program_id,
-         cl.name AS client_name, p.name AS program_name
+         a.employment_type, a.supplier_id, cl.name AS client_name, p.name AS program_name, sv.name AS supplier_name
        FROM consultant_assignments a
        LEFT JOIN clients cl ON cl.id = a.client_id
        LEFT JOIN programs p ON p.id = a.program_id
+       LEFT JOIN subvendors sv ON sv.id = a.supplier_id
        WHERE a.id = ?`,
       [assignmentId]
     );
@@ -318,10 +325,25 @@ router.post('/consultants/:id/assignments', async (req, res, next) => {
   }
 });
 
+const ASSIGN_ONE = `SELECT a.id, a.consultant_id, a.billing, a.pay_rate, a.source, a.status, a.left_date, a.client_id, a.program_id,
+    a.employment_type, a.supplier_id, cl.name AS client_name, p.name AS program_name, sv.name AS supplier_name
+  FROM consultant_assignments a
+  LEFT JOIN clients cl ON cl.id = a.client_id
+  LEFT JOIN programs p ON p.id = a.program_id
+  LEFT JOIN subvendors sv ON sv.id = a.supplier_id
+  WHERE a.id = ? AND a.organization_id = ?`;
+
+// Billing and pay rate: anyone who can use the Directory. Client, vendor, supplier and worker
+// type: HR or an owner only, checked against the rules in placementRules.js.
 router.patch('/assignments/:id', async (req, res, next) => {
+  const conn = await pool.getConnection();
   try {
+    const orgId = req.user.organization_id;
     const body = req.body || {};
     const num = (v) => (v === undefined || v === null || v === '' ? null : Number(v));
+    const [curRows] = await conn.query(ASSIGN_ONE, [req.params.id, orgId]);
+    if (!curRows.length) return res.status(404).json({ error: 'Not found.' });
+    const cur = curRows[0];
     const sets = []; const params = [];
     for (const [key, col, label] of [['billing', 'billing', 'Billing'], ['pay_rate', 'pay_rate', 'Pay rate']]) {
       if (body[key] === undefined) continue;
@@ -329,17 +351,63 @@ router.patch('/assignments/:id', async (req, res, next) => {
       if (v !== null && (!Number.isFinite(v) || v < 0)) return res.status(400).json({ error: label + ' must be a number.' });
       sets.push(col + ' = ?'); params.push(v);
     }
+    const idOf = (v) => (v === undefined ? undefined : (v === null || v === '' ? null : Number(v)));
+    const want = { client: idOf(body.client_id), program: idOf(body.program_id), supplier: idOf(body.supplier_id), type: body.employment_type };
+    const structural = want.client !== undefined || want.program !== undefined || want.supplier !== undefined || want.type !== undefined;
+    let note = null; let moved = null;
+    if (structural) {
+      if (!isHrUser(req.user)) return res.status(403).json({ error: 'Only HR or an administrator can change a placement’s client, vendor, supplier or worker type.' });
+      const newClient = want.client !== undefined ? want.client : cur.client_id;
+      let newProgram = want.program !== undefined ? want.program : cur.program_id;
+      if (want.client !== undefined && want.client !== cur.client_id && want.program === undefined) newProgram = null; // the old vendor belonged to the old client
+      if (!newClient) return res.status(400).json({ error: 'Every consultant needs a client. Choose the client.' });
+      const [cl] = await conn.query('SELECT id, name FROM clients WHERE id = ? AND organization_id = ?', [newClient, orgId]);
+      if (!cl.length) return res.status(400).json({ error: 'Unknown client.' });
+      let pname = null;
+      if (newProgram) {
+        const [pr] = await conn.query('SELECT id, name FROM programs WHERE id = ? AND organization_id = ? AND client_id = ?', [newProgram, orgId, newClient]);
+        if (!pr.length) return res.status(400).json({ error: 'That vendor does not belong to the chosen client.' });
+        pname = pr[0].name;
+      }
+      let newSupplier = want.supplier !== undefined ? want.supplier : cur.supplier_id;
+      if (newSupplier) { const [sv] = await conn.query('SELECT id FROM subvendors WHERE id = ? AND organization_id = ?', [newSupplier, orgId]); if (!sv.length) return res.status(400).json({ error: 'Unknown supplier company.' }); }
+      let newType = want.type !== undefined ? String(want.type) : (cur.employment_type || 'Unspecified');
+      if (!['Subvendor', 'W2 (direct)', '1099 (direct)', 'Unspecified'].includes(newType)) return res.status(400).json({ error: 'Worker type must be Subvendor, W2 (direct), 1099 (direct) or Unspecified.' });
+      const typeChanged = newType !== (cur.employment_type || 'Unspecified');
+      const supplierChanged = newSupplier !== (cur.supplier_id || null);
+      if (typeChanged && newType === 'W2 (direct)' && want.supplier === undefined) newSupplier = null; // switching to W2 drops the supplier
+      const ruleErr = checkSupplierRule({ employmentType: newType, supplierId: newSupplier, enforce: typeChanged || supplierChanged });
+      if (ruleErr && (typeChanged || supplierChanged)) return res.status(400).json({ error: ruleErr });
+      const pairChanged = newClient !== cur.client_id || (newProgram || null) !== (cur.program_id || null);
+      if (pairChanged) {
+        const [clash] = await conn.query('SELECT id FROM consultant_assignments WHERE organization_id = ? AND consultant_id = ? AND client_id <=> ? AND program_id <=> ? AND id <> ?', [orgId, cur.consultant_id, newClient, newProgram || null, cur.id]);
+        if (clash.length) return res.status(409).json({ error: 'This consultant already has a placement with that client and vendor. Edit that one instead.' });
+        moved = { from: { clientId: cur.client_id, programId: cur.program_id }, to: { clientId: newClient, programId: newProgram || null, clientName: cl[0].name, programName: pname } };
+        sets.push('client_id = ?', 'program_id = ?'); params.push(newClient, newProgram || null);
+      }
+      if (typeChanged) { sets.push('employment_type = ?'); params.push(newType); }
+      if (supplierChanged || (typeChanged && newType === 'W2 (direct)')) { sets.push('supplier_id = ?'); params.push(newSupplier || null); }
+      const bits = [];
+      if (pairChanged) bits.push(`client/vendor ${cur.client_name || '(none)'}${cur.program_name ? ' / ' + cur.program_name : ''} → ${cl[0].name}${pname ? ' / ' + pname : ''}`);
+      if (typeChanged) bits.push(`worker type ${cur.employment_type || 'Unspecified'} → ${newType}`);
+      if (supplierChanged || (typeChanged && newType === 'W2 (direct)')) bits.push('supplier changed');
+      if (bits.length) note = 'Placement edited: ' + bits.join('; ');
+    }
     if (!sets.length) return res.status(400).json({ error: 'Nothing to update.' });
-    const [result] = await pool.query(
-      `UPDATE consultant_assignments SET ${sets.join(', ')}, source = 'manual' WHERE id = ? AND organization_id = ?`,
-      [...params, req.params.id, req.user.organization_id]
-    );
-    if (result.affectedRows === 0) return res.status(404).json({ error: 'Not found.' });
-    const [rows] = await pool.query('SELECT * FROM consultant_assignments WHERE id = ?', [req.params.id]);
+    await conn.beginTransaction();
+    await conn.query(`UPDATE consultant_assignments SET ${sets.join(', ')}, source = 'manual' WHERE id = ? AND organization_id = ?`, [...params, cur.id, orgId]);
+    if (moved) await repointMarginRows(conn, orgId, cur.consultant_id, moved.from, moved.to);
+    if (note) {
+      try { await conn.query(`INSERT INTO record_notes (organization_id, entity, record_id, kind, body, user_name) VALUES (?, 'consultants', ?, 'log', ?, ?)`, [orgId, cur.consultant_id, note, req.user.name || req.user.email]); }
+      catch (e) { if (!isMissingTable(e)) throw e; }
+    }
+    await conn.commit();
+    const [rows] = await pool.query(ASSIGN_ONE, [cur.id, orgId]);
     res.json({ assignment: rows[0] });
   } catch (err) {
+    try { await conn.rollback(); } catch (_) { /* no-op */ }
     next(err);
-  }
+  } finally { conn.release(); }
 });
 
 router.delete('/assignments/:id', async (req, res, next) => {
@@ -373,7 +441,7 @@ router.post('/consultants/:id/assignments/bulk', async (req, res, next) => {
       const client = normalizeName(x && x.client); if (!client) continue;
       const billing = money(x.billing); const payRate = money(x.pay_rate);
       if ((billing !== null && !Number.isFinite(billing)) || (payRate !== null && !Number.isFinite(payRate))) return res.status(400).json({ error: 'Billing and pay rate must be numbers.' });
-      rows.push({ client, vendor: normalizeName(x.vendor) || '', billing, payRate });
+      rows.push({ client, vendor: normalizeName(x.vendor) || '', billing, payRate, supplier: normalizeName(x.supplier) || '' });
     }
     for (const line of lines) {
       const cells = (line.includes('\t') ? line.split('\t') : line.split(',')).map((c) => c.trim().replace(/^\d+[.)]\s+/, ''));
@@ -388,23 +456,35 @@ router.post('/consultants/:id/assignments/bulk', async (req, res, next) => {
     }
     if (!rows.length) return res.status(400).json({ error: 'Add at least one line: Client, Vendor, Billing, Pay rate.' });
 
+    const dflt = await defaultsFor(conn, organizationId, consultant.id);
+    for (const r of rows) {
+      let sid = dflt.supplierId;
+      if (r.supplier) { const [sv] = await conn.query('SELECT id FROM subvendors WHERE organization_id = ? AND LOWER(name) = LOWER(?)', [organizationId, r.supplier]); sid = sv[0] ? sv[0].id : -1; }
+      const ruleErr = checkSupplierRule({ employmentType: dflt.employmentType, supplierId: sid || (r.supplier ? -1 : null), enforce: true });
+      if (ruleErr) return res.status(400).json({ error: ruleErr + (dflt.employmentType === 'Subvendor' ? ' Pick the supplier company for this project.' : '') });
+    }
     await conn.beginTransaction();
     for (const r of rows) {
       const client = await findOrCreateDirectoryRecord(conn, 'clients', { organizationId, name: r.client, status: 'active' });
       const program = r.vendor && r.vendor.toLowerCase() !== r.client.toLowerCase()
         ? await findOrCreateDirectoryRecord(conn, 'programs', { organizationId, clientId: client.id, name: r.vendor, status: 'active' }) : null;
-      await upsertAssignmentBilling(conn, {
+      const aid = await upsertAssignmentBilling(conn, {
         organizationId, consultantId: consultant.id, clientId: client.id, programId: program ? program.id : null,
         billing: r.billing, payRate: r.payRate, source: 'manual', status: 'active',
       });
+      let sid = dflt.supplierId;
+      if (r.supplier) sid = (await findOrCreateDirectoryRecord(conn, 'subvendors', { organizationId, name: r.supplier, status: 'active' })).id;
+      if (dflt.employmentType === 'W2 (direct)') sid = null;
+      await conn.query('UPDATE consultant_assignments SET employment_type = COALESCE(employment_type, ?), supplier_id = COALESCE(supplier_id, ?) WHERE id = ?', [dflt.employmentType, sid, aid]);
     }
     await conn.commit();
     const [assignments] = await pool.query(
       `SELECT a.id, a.billing, a.pay_rate, a.source, a.status, a.left_date, a.client_id, a.program_id,
-         cl.name AS client_name, p.name AS program_name
+         a.employment_type, a.supplier_id, cl.name AS client_name, p.name AS program_name, sv.name AS supplier_name
        FROM consultant_assignments a
        LEFT JOIN clients cl ON cl.id = a.client_id
        LEFT JOIN programs p ON p.id = a.program_id
+       LEFT JOIN subvendors sv ON sv.id = a.supplier_id
        WHERE a.organization_id = ? AND a.consultant_id = ?
        ORDER BY a.status, cl.name, p.name`, [organizationId, consultant.id]);
     res.status(201).json({ assignments, added: rows.length });
@@ -466,10 +546,11 @@ router.post('/consultants/:id/assignments/from-text', async (req, res, next) => 
     await conn.commit();
     const [rows] = await pool.query(
       `SELECT a.id, a.billing, a.pay_rate, a.source, a.status, a.left_date, a.client_id, a.program_id,
-         cl.name AS client_name, p.name AS program_name
+         a.employment_type, a.supplier_id, cl.name AS client_name, p.name AS program_name, sv.name AS supplier_name
        FROM consultant_assignments a
        LEFT JOIN clients cl ON cl.id = a.client_id
        LEFT JOIN programs p ON p.id = a.program_id
+       LEFT JOIN subvendors sv ON sv.id = a.supplier_id
        WHERE a.id = ?`,
       [assignmentId]
     );
@@ -678,6 +759,72 @@ const LEDGER_USAGE_COLUMN = {
   consultants: 'consultant_id',
   subvendors: 'subvendor_id',
 };
+
+// ---- Fix-it list: placements that break the client / supplier rules (HR or owner) ----
+const denyHr = (res) => res.status(403).json({ error: 'Only HR or an administrator can see or fix this.' });
+
+router.get('/placement-issues', async (req, res, next) => {
+  try {
+    if (!isHrUser(req.user)) return denyHr(res);
+    const orgId = req.user.organization_id;
+    const [noClient] = await pool.query(
+      `SELECT c.id, c.name, c.status FROM consultants c
+       WHERE c.organization_id = ? AND (c.status IS NULL OR c.status <> 'inactive')
+         AND NOT EXISTS (SELECT 1 FROM consultant_assignments a WHERE a.consultant_id = c.id AND a.client_id IS NOT NULL)
+       ORDER BY c.name`, [orgId]);
+    const [w2Placements] = await pool.query(
+      `SELECT a.id AS assignment_id, c.id AS consultant_id, c.name AS consultant, cl.name AS client, sv.name AS supplier
+       FROM consultant_assignments a JOIN consultants c ON c.id = a.consultant_id
+       LEFT JOIN clients cl ON cl.id = a.client_id JOIN subvendors sv ON sv.id = a.supplier_id
+       WHERE a.organization_id = ? AND a.employment_type = 'W2 (direct)' ORDER BY c.name`, [orgId]);
+    const [profiles] = await pool.query(
+      `SELECT p.record_id AS consultant_id, c.name AS consultant, p.data FROM record_profiles p JOIN consultants c ON c.id = p.record_id
+       WHERE p.organization_id = ? AND p.entity = 'consultants'`, [orgId]).catch(() => [[]]);
+    const w2Profiles = [];
+    for (const r of profiles || []) {
+      let d = {}; try { d = JSON.parse(r.data) || {}; } catch (e) { /* skip */ }
+      if (d.worker_type === 'W2' && d.supplier_id) w2Profiles.push({ consultant_id: r.consultant_id, consultant: r.consultant, supplier_id: d.supplier_id });
+    }
+    const [missingSupplier] = await pool.query(
+      `SELECT a.id AS assignment_id, c.id AS consultant_id, c.name AS consultant, cl.name AS client
+       FROM consultant_assignments a JOIN consultants c ON c.id = a.consultant_id LEFT JOIN clients cl ON cl.id = a.client_id
+       WHERE a.organization_id = ? AND a.employment_type = 'Subvendor' AND a.supplier_id IS NULL AND a.status = 'active' ORDER BY c.name`, [orgId]);
+    res.json({ noClient, w2Placements, w2Profiles, missingSupplier });
+  } catch (err) { next(err); }
+});
+
+// Clears the supplier from W2 consultants (their placements and, where set, their profile). Only rows that
+// really are W2 are touched; the caller lists the ids to clear.
+router.post('/placement-issues/clear-supplier', async (req, res, next) => {
+  const conn = await pool.getConnection();
+  try {
+    if (!isHrUser(req.user)) return denyHr(res);
+    const orgId = req.user.organization_id;
+    const aIds = (Array.isArray(req.body && req.body.assignmentIds) ? req.body.assignmentIds : []).map(Number).filter(Number.isInteger).slice(0, 2000);
+    const cIds = (Array.isArray(req.body && req.body.consultantIds) ? req.body.consultantIds : []).map(Number).filter(Number.isInteger).slice(0, 2000);
+    if (!aIds.length && !cIds.length) return res.status(400).json({ error: 'Nothing selected.' });
+    await conn.beginTransaction();
+    let placements = 0, profiles = 0;
+    if (aIds.length) {
+      const [r] = await conn.query(`UPDATE consultant_assignments SET supplier_id = NULL WHERE organization_id = ? AND id IN (?) AND employment_type = 'W2 (direct)'`, [orgId, aIds]);
+      placements = r.affectedRows;
+      const [who] = await conn.query(`SELECT DISTINCT consultant_id FROM consultant_assignments WHERE organization_id = ? AND id IN (?)`, [orgId, aIds]);
+      for (const w of who) await conn.query(`INSERT INTO record_notes (organization_id, entity, record_id, kind, body, user_name) VALUES (?, 'consultants', ?, 'log', ?, ?)`, [orgId, w.consultant_id, 'Supplier cleared from W2 placement(s) (W2 consultants have no supplier company)', req.user.name || req.user.email]);
+    }
+    for (const id of cIds) {
+      const [p] = await conn.query(`SELECT data FROM record_profiles WHERE organization_id = ? AND entity = 'consultants' AND record_id = ? FOR UPDATE`, [orgId, id]);
+      let d = {}; try { d = (p[0] && JSON.parse(p[0].data)) || {}; } catch (e) { d = {}; }
+      if (d.worker_type === 'W2' && d.supplier_id) {
+        delete d.supplier_id;
+        await conn.query(`UPDATE record_profiles SET data = ? WHERE organization_id = ? AND entity = 'consultants' AND record_id = ?`, [JSON.stringify(d), orgId, id]);
+        await conn.query(`INSERT INTO record_notes (organization_id, entity, record_id, kind, body, user_name) VALUES (?, 'consultants', ?, 'log', ?, ?)`, [orgId, id, 'Supplier cleared from the profile (W2 consultants have no supplier company)', req.user.name || req.user.email]);
+        profiles++;
+      }
+    }
+    await conn.commit();
+    res.json({ ok: true, placements, profiles });
+  } catch (err) { try { await conn.rollback(); } catch (_) { /* no-op */ } next(err); } finally { conn.release(); }
+});
 
 router.get('/:table/:id/usage', async (req, res, next) => {
   try {

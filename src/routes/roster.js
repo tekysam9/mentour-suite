@@ -8,6 +8,7 @@ const pool = require('../db');
 const { requireAuth } = require('../auth');
 const { normalizeName, upsertConsultant, upsertSubvendor, upsertClient, upsertProgram } = require('./directoryUpsert');
 const { upsertAssignmentBilling } = require('./assignmentUpsert');
+const { checkSupplierRule, repointMarginRows, isHrUser } = require('../placementRules');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -130,6 +131,8 @@ router.post('/', async (req, res, next) => {
     const { fields: f, error } = readFields(req.body || {}, false);
     if (error) return res.status(400).json({ error });
     if (!f.client) return res.status(400).json({ error: 'Enter the client.' });
+    const ruleErr = checkSupplierRule({ employmentType: f.employmentType, supplierId: f.supplier ? 1 : null, enforce: true });
+    if (ruleErr) return res.status(400).json({ error: ruleErr });
     await conn.beginTransaction();
     const consultantId = await upsertConsultant(conn, orgId, f.name, f.status === 'left' ? 'inactive' : 'active');
     const refs = await saveRefs(conn, orgId, f, {});
@@ -153,6 +156,22 @@ router.patch('/:id', async (req, res, next) => {
     const { fields: f, error } = readFields(req.body || {}, true);
     if (error) return res.status(400).json({ error });
     if (f.client !== undefined && !f.client) return res.status(400).json({ error: 'The client can’t be empty.' });
+    // Client, vendor, supplier and worker type are structural: only HR or an owner may change them.
+    const lc = (v) => String(v || '').trim().toLowerCase();
+    const changes = {
+      client: f.client !== undefined && lc(f.client) !== lc(current.client_name),
+      vendor: f.vendor !== undefined && lc(f.vendor) !== lc(current.program_name),
+      supplier: f.supplier !== undefined && lc(f.supplier) !== lc(current.supplier_name),
+      type: f.employmentType !== undefined && f.employmentType !== (current.employment_type || 'Unspecified'),
+    };
+    if ((changes.client || changes.vendor || changes.supplier || changes.type) && !isHrUser(req.user)) {
+      return res.status(403).json({ error: 'Only HR or an administrator can change a placement’s client, vendor, supplier or worker type.' });
+    }
+    if (changes.type && f.employmentType === 'W2 (direct)' && f.supplier === undefined) { f.supplier = ''; changes.supplier = !!current.supplier_name; }
+    const effType = f.employmentType !== undefined ? f.employmentType : (current.employment_type || 'Unspecified');
+    const effSupplier = f.supplier !== undefined ? f.supplier : current.supplier_name;
+    const ruleErr = checkSupplierRule({ employmentType: effType, supplierId: effSupplier ? 1 : null, enforce: changes.type || changes.supplier });
+    if (ruleErr && (changes.type || changes.supplier)) return res.status(400).json({ error: ruleErr });
     await conn.beginTransaction();
     const refs = await saveRefs(conn, orgId, f, current);
     const [clash] = await conn.query(
@@ -169,6 +188,11 @@ router.patch('/:id', async (req, res, next) => {
     } else if (f.leftDate !== undefined) { sets.push('left_date = ?'); params.push(f.leftDate); }
     sets.push("source = 'manual'");
     await conn.query(`UPDATE consultant_assignments SET ${sets.join(', ')} WHERE id = ?`, [...params, current.id]);
+    if (changes.client || changes.vendor) {
+      const [[nc]] = await conn.query('SELECT name FROM clients WHERE id = ?', [refs.clientId]);
+      let pn = null; if (refs.programId) { const [[np]] = await conn.query('SELECT name FROM programs WHERE id = ?', [refs.programId]); pn = np && np.name; }
+      await repointMarginRows(conn, orgId, current.consultant_id, { clientId: current.client_id, programId: current.program_id }, { clientId: refs.clientId, programId: refs.programId, clientName: nc && nc.name, programName: pn });
+    }
     await syncConsultantStatus(conn, current.consultant_id);
     await conn.commit();
     res.json({ record: await loadOne(current.id, orgId) });

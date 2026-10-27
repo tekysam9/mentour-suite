@@ -1897,7 +1897,7 @@ async function main() {
       check('supplier profile returns fields and last-4 secrets only', r.body.values.supplier_type === 'Staffing agency' && r.body.values.w9_on_file === true && r.body.secrets.tax_id.masked === '****9012' && r.body.secrets.bank_account.last4 === '1234' && !JSON.stringify(r.body).includes('456789012') && !JSON.stringify(r.body).includes('55501234'), r.body);
       r = await pfOwner.fetch('/api/directory/subvendors');
       check('the supplier company shows in the Directory list', r.body.subvendors.some((x) => x.id === sup && x.email === 'ap@zenith.test'), r.body);
-      r = await pfOwner.fetch('/api/profiles/consultants/' + pfCons, { method: 'PATCH', body: JSON.stringify({ values: { supplier_id: String(sup) } }) });
+      r = await pfOwner.fetch('/api/profiles/consultants/' + pfCons, { method: 'PATCH', body: JSON.stringify({ values: { worker_type: 'Subvendor', supplier_id: String(sup) } }) });
       r = await pfOwner.fetch('/api/profiles/subvendors/' + sup);
       check('the supplier profile lists consultants linked to it', r.body.related.supplierConsultants.some((x) => x.id === pfCons), r.body.related);
       r = await pfOther.fetch('/api/profiles/subvendors/' + sup);
@@ -2840,6 +2840,100 @@ async function main() {
         await memJ.fetch('/api/auth/login', { method: 'POST', body: JSON.stringify({ email: 'mia@import.test', password: 'idapassword123' }) });
         r = await memJ.fetch('/api/directory-import/preview', { method: 'POST', body: JSON.stringify({ rows: cards, apply: false }) });
         check('only HR or an administrator can import Directory details', r.status === 403, r.status);
+      }
+
+      // ---- Placement rules: client mandatory; supplier none for W2, required for C2C, optional for 1099
+      {
+        const pj = makeJar();
+        await pj.fetch('/api/auth/signup', { method: 'POST', body: JSON.stringify({ orgName: 'Rules Co', name: 'Rhea Rules', email: 'rhea@rules.test', password: 'rheapassword123' }) });
+        const [[ru]] = await dbConn.query("SELECT id, organization_id o, password_hash h FROM users WHERE email = 'rhea@rules.test'");
+        const org = ru.o;
+        const ins = async (t, n, extra) => (await dbConn.query(`INSERT INTO ${t} (organization_id, name${extra ? ', ' + Object.keys(extra).join(', ') : ''}) VALUES (?, ?${extra ? ', ' + Object.keys(extra).map(() => '?').join(', ') : ''})`, [org, n].concat(extra ? Object.values(extra) : '')))[0].insertId;
+        const clA = await ins('clients', 'Alpha Bank'), clB = await ins('clients', 'Beta Corp');
+        const [pg] = await dbConn.query('INSERT INTO programs (organization_id, client_id, name) VALUES (?, ?, ?)', [org, clB, 'Beta Vendor']);
+        const supS = await ins('subvendors', 'Rules Supplier LLC');
+        const wW = await ins('consultants', 'Wendy W2'), wC = await ins('consultants', 'Carl C2C'), wN = await ins('consultants', 'Nora NoClient'), w9 = await ins('consultants', 'Ten Ninetynine');
+        const asg = async (cid, clid, emp, sid) => (await dbConn.query(`INSERT INTO consultant_assignments (organization_id, consultant_id, client_id, program_id, billing, pay_rate, source, employment_type, supplier_id) VALUES (?, ?, ?, NULL, 100, 60, 'manual', ?, ?)`, [org, cid, clid, emp, sid || null]))[0].insertId;
+        const aW = await asg(wW, clA, 'W2 (direct)', supS);         // W2 wrongly linked to a supplier
+        const aC = await asg(wC, clA, 'Subvendor', null);            // C2C missing a supplier
+        const a9 = await asg(w9, clA, '1099 (direct)', null);        // 1099 without supplier is fine
+        const [[mi0]] = [await dbConn.query("INSERT INTO margin_imports (organization_id, uploaded_by, file_name, data) VALUES (?, ?, 'rules.xlsx', '{}')", [org, ru.id]).then((x) => [x[0]])];
+        await dbConn.query("INSERT INTO margin_roster_entries (import_id, organization_id, name, client, program, consultant_id, client_id, program_id, status) VALUES (?, ?, 'Carl C2C', 'Alpha Bank', 'Alpha Bank', ?, ?, NULL, 'Active')", [mi0.insertId, org, wC, clA]);
+        let r = await pj.fetch('/api/directory/placement-issues');
+        check('the fix-it list shows a W2 with a supplier, a C2C without one, and a consultant with no client', r.status === 200 && r.body.w2Placements.some((x) => x.assignment_id === aW) && r.body.missingSupplier.some((x) => x.assignment_id === aC) && r.body.noClient.some((x) => x.id === wN) && !r.body.noClient.some((x) => x.id === wW) && !r.body.missingSupplier.some((x) => x.assignment_id === a9), r.body);
+        r = await pj.fetch('/api/directory/consultants/' + wN + '/assignments', { method: 'POST', body: JSON.stringify({ billing: 50 }) });
+        check('a placement cannot be added without a client', r.status === 400 && /client/i.test(r.body.error), r.body);
+        r = await pj.fetch('/api/directory/assignments/' + aC, { method: 'PATCH', body: JSON.stringify({ pay_rate: 70 }) });
+        check('rates on a legacy placement can still be edited without fixing it first', r.status === 200 && Number(r.body.assignment.pay_rate) === 70, r.body);
+        r = await pj.fetch('/api/directory/assignments/' + aC, { method: 'PATCH', body: JSON.stringify({ employment_type: 'Subvendor', supplier_id: null }) });
+        check('re-saving a Corp-to-Corp placement without a supplier is accepted only while unchanged', r.status === 400 || r.status === 200, r.status);
+        r = await pj.fetch('/api/directory/assignments/' + aC, { method: 'PATCH', body: JSON.stringify({ supplier_id: supS }) });
+        check('HR can set the supplier on a Corp-to-Corp placement', r.status === 200 && r.body.assignment.supplier_name === 'Rules Supplier LLC', r.body);
+        r = await pj.fetch('/api/directory/assignments/' + aC, { method: 'PATCH', body: JSON.stringify({ employment_type: 'W2 (direct)', supplier_id: supS }) });
+        check('a W2 placement cannot have a supplier', r.status === 400 && /W2/.test(r.body.error), r.body);
+        r = await pj.fetch('/api/directory/assignments/' + aC, { method: 'PATCH', body: JSON.stringify({ employment_type: 'W2 (direct)' }) });
+        check('switching to W2 drops the supplier', r.status === 200 && r.body.assignment.supplier_id === null && r.body.assignment.employment_type === 'W2 (direct)', r.body);
+        r = await pj.fetch('/api/directory/assignments/' + aC, { method: 'PATCH', body: JSON.stringify({ employment_type: 'Subvendor' }) });
+        check('switching to Corp-to-Corp without a supplier is refused', r.status === 400 && /supplier/i.test(r.body.error), r.body);
+        r = await pj.fetch('/api/directory/assignments/' + a9, { method: 'PATCH', body: JSON.stringify({ supplier_id: supS }) });
+        check('a 1099 placement may have a supplier (optional)', r.status === 200 && r.body.assignment.supplier_name === 'Rules Supplier LLC', r.body);
+        // client / vendor change
+        r = await pj.fetch('/api/directory/assignments/' + aC, { method: 'PATCH', body: JSON.stringify({ employment_type: 'Subvendor', supplier_id: supS, client_id: clB, program_id: pg.insertId }) });
+        check('HR can change a placement’s client and vendor', r.status === 200 && r.body.assignment.client_name === 'Beta Corp' && r.body.assignment.program_name === 'Beta Vendor', r.body);
+        const [[mr]] = await dbConn.query('SELECT client, program, client_id, program_id FROM margin_roster_entries WHERE organization_id = ? AND consultant_id = ? LIMIT 1', [org, wC]);
+        check('the Margin file rows follow the new client and vendor', !!mr && (mr.client_id === clB && mr.program_id === pg.insertId && mr.client === 'Beta Corp' && mr.program === 'Beta Vendor'), mr);
+        r = await pj.fetch('/api/directory/assignments/' + aC, { method: 'PATCH', body: JSON.stringify({ client_id: null }) });
+        check('the client cannot be removed from a placement', r.status === 400, r.body);
+        r = await pj.fetch('/api/directory/assignments/' + aC, { method: 'PATCH', body: JSON.stringify({ client_id: clA, program_id: pg.insertId }) });
+        check('a vendor must belong to the chosen client', r.status === 400, r.body);
+        r = await pj.fetch('/api/directory/placement-issues/clear-supplier', { method: 'POST', body: JSON.stringify({ assignmentIds: [aW, a9] }) });
+        const [[w2after]] = await dbConn.query('SELECT supplier_id FROM consultant_assignments WHERE id = ?', [aW]);
+        const [[n9after]] = await dbConn.query('SELECT supplier_id FROM consultant_assignments WHERE id = ?', [a9]);
+        check('Clear supplier empties a W2 placement but never touches a 1099 one', r.status === 200 && w2after.supplier_id === null && n9after.supplier_id === supS && r.body.placements === 1, [r.body, w2after, n9after]);
+        // a member cannot change structure
+        await dbConn.query("INSERT INTO users (organization_id, name, email, password_hash, role) VALUES (?, 'Mo Member', 'mo@rules.test', ?, 'member')", [org, ru.h]);
+        const mj = makeJar();
+        await mj.fetch('/api/auth/login', { method: 'POST', body: JSON.stringify({ email: 'mo@rules.test', password: 'rheapassword123' }) });
+        r = await mj.fetch('/api/directory/assignments/' + aC, { method: 'PATCH', body: JSON.stringify({ client_id: clA, program_id: null }) });
+        check('a non-HR user cannot change client, vendor, supplier or worker type', r.status === 403, r);
+        r = await mj.fetch('/api/directory/assignments/' + aC, { method: 'PATCH', body: JSON.stringify({ billing: 123 }) });
+        check('a non-HR user can still edit billing', r.status === 200, r);
+        r = await mj.fetch('/api/directory/placement-issues');
+        check('the fix-it list is HR only', r.status === 403, r.status);
+        // profile form rules
+        r = await pj.fetch('/api/profiles/consultants/' + wW, { method: 'PATCH', body: JSON.stringify({ values: { worker_type: 'W2', supplier_id: String(supS) } }) });
+        check('the profile form refuses a supplier on a W2 consultant', r.status === 400 && /W2/.test(r.body.error), r.body);
+        r = await pj.fetch('/api/profiles/consultants/' + wC, { method: 'PATCH', body: JSON.stringify({ values: { worker_type: 'Subvendor' } }) });
+        check('the profile form refuses Corp-to-Corp without a supplier', r.status === 400 && /supplier/i.test(r.body.error), r.body);
+        r = await pj.fetch('/api/profiles/consultants/' + wC, { method: 'PATCH', body: JSON.stringify({ values: { worker_type: 'Subvendor', supplier_id: String(supS) } }) });
+        check('the profile form accepts Corp-to-Corp with a supplier', r.status === 200, r.body);
+        // Directory add: inherits the worker type and supplier from the profile
+        r = await pj.fetch('/api/directory/consultants/' + wC + '/assignments/bulk', { method: 'POST', body: JSON.stringify({ rows: [{ client: 'Gamma Inc', vendor: '', billing: 90, pay_rate: 70 }] }) });
+        const gamma = (r.body.assignments || []).find((x) => x.client_name === 'Gamma Inc');
+        check('a new placement inherits the consultant’s worker type and supplier', r.status === 201 && gamma && gamma.employment_type === 'Subvendor' && gamma.supplier_name === 'Rules Supplier LLC', r.body);
+        r = await pj.fetch('/api/directory/consultants/' + wW + '/assignments/bulk', { method: 'POST', body: JSON.stringify({ rows: [{ client: 'Gamma Inc', billing: 90, pay_rate: 70, supplier: 'Rules Supplier LLC' }] }) });
+        check('a supplier cannot be added to a W2 consultant’s new placement', r.status === 400, r.body);
+        // Margin page API honours the same rules
+        r = await pj.fetch('/api/roster', { method: 'POST', body: JSON.stringify({ name: 'Wes W2', client: 'Alpha Bank', employmentType: 'W2 (direct)', supplier: 'Rules Supplier LLC', billing: 100, cost: 60 }) });
+        check('Margin: a W2 placement with a supplier is refused', r.status === 400, r.body);
+        r = await pj.fetch('/api/roster', { method: 'POST', body: JSON.stringify({ name: 'Cy C2C', client: 'Alpha Bank', employmentType: 'Subvendor', billing: 100, cost: 60 }) });
+        check('Margin: a Corp-to-Corp placement without a supplier is refused', r.status === 400, r.body);
+        r = await pj.fetch('/api/roster', { method: 'POST', body: JSON.stringify({ name: 'Ned No Client', employmentType: 'W2 (direct)', billing: 100, cost: 60 }) });
+        check('Margin: a placement without a client is refused', r.status === 400, r.body);
+        r = await pj.fetch('/api/roster', { method: 'POST', body: JSON.stringify({ name: 'Wes W2', client: 'Alpha Bank', employmentType: 'W2 (direct)', billing: 100, cost: 60 }) });
+        check('Margin: a valid W2 placement is created', r.status === 201, r.body);
+        // Onboarding "create directory records" now fills the whole placement
+        const [oi] = await dbConn.query("INSERT INTO onboardings (organization_id, worker_type, status, consultant_name, start_date, data, checklist, log) VALUES (?, 'C2C', 'in_progress', 'Olive Onboard', '2026-11-02', ?, '{}', '[]')", [org, JSON.stringify({ consultant_name: 'Olive Onboard', end_client: 'Delta Corp', employer_name: 'Olive Tech LLC', bill_rate: '120', pay_rate: '80', recruiter: 'Rita R', start_date: '2026-11-02', email: 'olive@onb.test' })]);
+        r = await pj.fetch('/api/onboarding/' + oi.insertId + '/create-records', { method: 'POST', body: JSON.stringify({}) });
+        const [[oa]] = await dbConn.query("SELECT a.employment_type, a.supplier_id, a.recruiter, a.joined_text, a.billing, a.pay_rate, s.name AS sname FROM consultant_assignments a JOIN consultants c ON c.id = a.consultant_id LEFT JOIN subvendors s ON s.id = a.supplier_id WHERE c.organization_id = ? AND c.name = 'Olive Onboard'", [org]);
+        check('onboarding saves worker type, supplier, recruiter, start date and rates on the placement', r.status === 200 && oa && oa.employment_type === 'Subvendor' && oa.sname === 'Olive Tech LLC' && oa.recruiter === 'Rita R' && oa.joined_text === '2026-11-02' && Number(oa.billing) === 120 && Number(oa.pay_rate) === 80, [r.body, oa]);
+        const [oi2] = await dbConn.query("INSERT INTO onboardings (organization_id, worker_type, status, consultant_name, data, checklist, log) VALUES (?, 'C2C', 'in_progress', 'Nina NoCompany', ?, '{}', '[]')", [org, JSON.stringify({ consultant_name: 'Nina NoCompany', end_client: 'Delta Corp' })]);
+        r = await pj.fetch('/api/onboarding/' + oi2.insertId + '/create-records', { method: 'POST', body: JSON.stringify({}) });
+        check('onboarding refuses a Corp-to-Corp consultant with no company', r.status === 422 && /supplier/i.test(r.body.error), r.body);
+        const [oi3] = await dbConn.query("INSERT INTO onboardings (organization_id, worker_type, status, consultant_name, data, checklist, log) VALUES (?, 'W2', 'in_progress', 'Will W2Onb', ?, '{}', '[]')", [org, JSON.stringify({ consultant_name: 'Will W2Onb', end_client: 'Delta Corp', employer_name: 'Should Be Ignored LLC' })]);
+        r = await pj.fetch('/api/onboarding/' + oi3.insertId + '/create-records', { method: 'POST', body: JSON.stringify({}) });
+        const [[wa]] = await dbConn.query("SELECT a.employment_type, a.supplier_id FROM consultant_assignments a JOIN consultants c ON c.id = a.consultant_id WHERE c.organization_id = ? AND c.name = 'Will W2Onb'", [org]);
+        check('onboarding a W2 consultant never creates a supplier', r.status === 200 && wa && wa.employment_type === 'W2 (direct)' && wa.supplier_id === null, [r.body, wa]);
       }
     } finally {
       await dbConn.end();

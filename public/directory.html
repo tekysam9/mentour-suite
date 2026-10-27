@@ -110,6 +110,8 @@
   .dir-assign-left { color: var(--text-muted); text-decoration: line-through; text-decoration-color: rgba(0,0,0,.25); }
   .dir-assign-left-row td { opacity: .75; }
   .dir-assign-source { font-size: 10px; color: var(--text-muted); font-style: italic; }
+  .dir-assign-add-row { flex-wrap: wrap; white-space: normal; }
+  .dir-assign-add-row select, .dir-assign-add-row input { max-width: 100%; box-sizing: border-box; }
   .dir-assign-add-row select, .dir-assign-add-row input {
     border: 1px solid var(--line); border-radius: 5px; padding: 5px 8px; font-size: 12.5px;
     font-family: inherit; color: var(--text); background: var(--card); outline: none;
@@ -148,6 +150,7 @@
     dupeBusyId: null, // flag_id currently being merged/dismissed, or null
     expandedAssignmentsId: null, // consultant id whose Assignments panel is open, or null
     assignments: {}, // consultantId -> array of assignment rows (null while loading)
+    fixit: null, fixitOpen: false, assignError: '',
     editingAssignmentId: null, // assignment id whose billing input is open
     assignmentStatus: null, // 'saving' | 'error' | null
     expandedUsageKey: null, // "tabKey:id" whose "Seen in" panel is open, or null
@@ -442,6 +445,19 @@
       '<button class="dir-btn dir-btn-small" data-action="bulk-cancel">Cancel</button> <span data-role="bulk-msg" class="dir-btn-save-status"></span></div></div>';
   }
 
+  function isHrUser() { return !!(state.user && (state.user.role === 'owner' || state.user.role === 'hr')); }
+  function optionsHtml(items, selectedId, blank) {
+    return (blank ? '<option value="">' + escapeHtml(blank) + '</option>' : '') + items.map(function (x) {
+      return '<option value="' + x.id + '"' + (String(x.id) === String(selectedId) ? ' selected' : '') + '>' + escapeHtml(x.name) + '</option>';
+    }).join('');
+  }
+  var EMP_TYPES = [['Subvendor', 'Corp-to-Corp (Subvendor)'], ['W2 (direct)', 'W2'], ['1099 (direct)', '1099'], ['Unspecified', 'Not set']];
+  function empLabel(t) { var m = EMP_TYPES.filter(function (x) { return x[0] === t; })[0]; return m ? m[1] : (t || 'Not set'); }
+  function vendorOptions(clientId, selectedId) {
+    var progs = (state.cache.programs || []).filter(function (p) { return String(p.client_id) === String(clientId); });
+    return optionsHtml(progs, selectedId, '— no vendor —');
+  }
+
   function renderAssignAddRow(consultantId) {
     var clients = state.cache.clients || [];
     var programs = state.cache.programs || [];
@@ -455,6 +471,8 @@
         '<datalist id="dl-asg-vendors">' + Object.keys(vendorNames).sort().map(function (n) { return '<option value="' + escapeHtml(n) + '">'; }).join('') + '</datalist>' +
         '<input list="dl-asg-clients" placeholder="Client *" data-role="new-assignment-client" style="width:170px">' +
         '<input list="dl-asg-vendors" placeholder="Vendor (bill-to)" data-role="new-assignment-vendor" style="width:170px">' +
+        '<datalist id="dl-asg-suppliers">' + (state.cache.subvendors || []).map(function (x) { return '<option value="' + escapeHtml(x.name) + '">'; }).join('') + '</datalist>' +
+        '<input list="dl-asg-suppliers" placeholder="Supplier (Corp-to-Corp / 1099)" data-role="new-assignment-supplier" style="width:190px">' +
         '<input type="number" step="0.01" placeholder="Billing $/hr" data-role="new-assignment-billing" style="width:110px">' +
         '<input type="number" step="0.01" placeholder="Pay rate $/hr" data-role="new-assignment-pay" style="width:120px">' +
         '<button class="dir-btn dir-btn-small dir-btn-primary" data-action="assign-add" data-consultant-id="' + consultantId + '">+ Add</button>' +
@@ -472,8 +490,15 @@
       var rows = list.map(function (a) {
         var editing = state.editingAssignmentId === a.id;
         var dashCell = '<span class="dir-empty-cell">—</span>';
-        var clientCell = a.client_name ? escapeHtml(a.client_name) : dashCell;
-        var programCell = a.program_name ? escapeHtml(a.program_name) : dashCell;
+        var hrEdit = editing && isHrUser();
+        var clientCell = hrEdit ? '<select class="dir-field-input" data-assign-client>' + optionsHtml(state.cache.clients || [], a.client_id, '— choose client —') + '</select>'
+          : (a.client_name ? escapeHtml(a.client_name) : '<span class="dir-empty-cell" style="color:#C62F25">⚠ no client</span>');
+        var programCell = hrEdit ? '<select class="dir-field-input" data-assign-program>' + vendorOptions(a.client_id, a.program_id) + '</select>'
+          : (a.program_name ? escapeHtml(a.program_name) : dashCell);
+        var typeCell = hrEdit ? '<select class="dir-field-input" data-assign-type>' + EMP_TYPES.map(function (t) { return '<option value="' + escapeHtml(t[0]) + '"' + ((a.employment_type || 'Unspecified') === t[0] ? ' selected' : '') + '>' + escapeHtml(t[1]) + '</option>'; }).join('') + '</select>'
+          : escapeHtml(empLabel(a.employment_type));
+        var supplierCell = hrEdit ? '<select class="dir-field-input" data-assign-supplier>' + optionsHtml(state.cache.subvendors || [], a.supplier_id, '— none —') + '</select>'
+          : (a.supplier_name ? escapeHtml(a.supplier_name) : ((a.employment_type === 'Subvendor') ? '<span class="dir-empty-cell" style="color:#C62F25">⚠ needed</span>' : dashCell));
         var stateCell = a.status === 'left'
           ? '<span class="dir-assign-left">Left' + (a.left_date ? ' ' + escapeHtml(String(a.left_date).slice(0, 10)) : '') + ' — not invoiced</span>'
           : 'Active';
@@ -491,17 +516,53 @@
         return '<tr' + (a.status === 'left' ? ' class="dir-assign-left-row"' : '') + '>' +
           '<td>' + clientCell + '</td>' +
           '<td>' + programCell + '</td>' +
+          '<td>' + typeCell + '</td>' +
+          '<td>' + supplierCell + '</td>' +
           '<td>' + stateCell + '</td>' +
           '<td>' + billingCell + '</td>' +
           '<td>' + payCell + '</td>' +
           '<td><span class="dir-assign-source">' + (a.source === 'upload' ? 'from upload' : 'manual') + '</span></td>' +
-          '<td>' + actions + (state.assignmentStatus === 'error' && editing ? ' <span class="dir-btn-save-status" style="color:#C62F25">Couldn’t save</span>' : '') + '</td>' +
+          '<td>' + actions + (state.assignmentStatus === 'error' && editing ? ' <span class="dir-btn-save-status" style="color:#C62F25">' + escapeHtml(state.assignError || 'Couldn’t save') + '</span>' : '') + '</td>' +
         '</tr>';
       }).join('');
-      body = '<table class="dir-assign-table"><thead><tr><th>Client</th><th>Vendor</th><th>Status</th><th>Billing $/hr</th><th>Pay rate $/hr</th><th></th><th></th></tr></thead><tbody>' + rows + '</tbody></table>' +
+      body = '<table class="dir-assign-table"><thead><tr><th>Client</th><th>Vendor</th><th>Worker type</th><th>Supplier</th><th>Status</th><th>Billing $/hr</th><th>Pay rate $/hr</th><th></th><th></th></tr></thead><tbody>' + rows + '</tbody></table>' +
         renderAssignAddRow(consultant.id);
     }
     return '<tr class="dir-assign-row"><td colspan="' + rowColspan(tab) + '">' + body + '</td></tr>';
+  }
+
+  // Fix-it list (HR / owner): placements that break the client / supplier rules.
+  function loadFixit() {
+    if (!isHrUser()) return;
+    fetch('/api/directory/placement-issues').then(function (r) { return r.ok ? r.json() : null; }).then(function (b) { if (b) { state.fixit = b; render(); } }).catch(function () {});
+  }
+  function renderFixit() {
+    var f = state.fixit;
+    if (!f || !isHrUser()) return '';
+    var n = f.noClient.length + f.w2Placements.length + f.w2Profiles.length + f.missingSupplier.length;
+    if (!n) return '';
+    var h = '<div class="dir-assign-row" style="background:#FFF7E6;border:1px solid #E0A100;border-radius:8px;padding:10px 14px;margin:0 0 14px">' +
+      '<button class="dir-btn dir-btn-small" data-action="fixit-toggle">' + (state.fixitOpen ? 'Hide' : 'Review') + '</button> ' +
+      '<b>' + n + ' placement' + (n === 1 ? '' : 's') + ' to fix.</b> <span class="dir-assign-empty">Every consultant needs a client; Corp-to-Corp needs a supplier company; W2 has none.</span>';
+    if (state.fixitOpen) {
+      var chip = function (name, id) { return '<a href="#" data-action="fixit-open" data-id="' + id + '">' + escapeHtml(name) + '</a>'; };
+      if (f.noClient.length) h += '<div style="margin-top:10px"><b>No client (' + f.noClient.length + '):</b> ' + f.noClient.map(function (c) { return chip(c.name, c.id); }).join(', ') + '<div class="dir-assign-empty">Open the consultant’s Billing panel and add or fix the client.</div></div>';
+      if (f.missingSupplier.length) h += '<div style="margin-top:10px"><b>Corp-to-Corp without a supplier company (' + f.missingSupplier.length + '):</b> ' + f.missingSupplier.map(function (c) { return chip(c.consultant + (c.client ? ' @ ' + c.client : ''), c.consultant_id); }).join(', ') + '</div>';
+      if (f.w2Placements.length || f.w2Profiles.length) {
+        h += '<div style="margin-top:10px"><b>W2 consultants who have a supplier company:</b> <button class="dir-btn dir-btn-small dir-btn-primary" data-action="fixit-clear-all">Clear all of these</button>' +
+          '<div style="overflow-x:auto"><table class="dir-assign-table" style="margin-top:6px"><thead><tr><th>Consultant</th><th>Where</th><th>Supplier</th><th></th></tr></thead><tbody>' +
+          f.w2Placements.map(function (r) { return '<tr><td>' + chip(r.consultant, r.consultant_id) + '</td><td>Placement' + (r.client ? ' @ ' + escapeHtml(r.client) : '') + '</td><td>' + escapeHtml(r.supplier) + '</td><td><button class="dir-btn dir-btn-small" data-action="fixit-clear" data-kind="a" data-id="' + r.assignment_id + '">Clear supplier</button></td></tr>'; }).join('') +
+          f.w2Profiles.map(function (r) { return '<tr><td>' + chip(r.consultant, r.consultant_id) + '</td><td>Profile</td><td>#' + escapeHtml(r.supplier_id) + '</td><td><button class="dir-btn dir-btn-small" data-action="fixit-clear" data-kind="c" data-id="' + r.consultant_id + '">Clear supplier</button></td></tr>'; }).join('') +
+          '</tbody></table></div></div>';
+      }
+    }
+    return h + '</div>';
+  }
+  function fixitClear(aIds, cIds) {
+    fetch('/api/directory/placement-issues/clear-supplier', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ assignmentIds: aIds, consultantIds: cIds }) })
+      .then(function (r) { return r.json().catch(function () { return {}; }).then(function (b) { if (!r.ok) throw new Error(b.error || 'Could not clear.'); return b; }); })
+      .then(function () { delete state.cache.consultants; loadTab('consultants'); loadFixit(); })
+      .catch(function (err) { if (!/^Cancelled/.test(err.message)) window.alert(err.message); });
   }
 
   function ensureClientsAndProgramsLoaded(cb) {
@@ -511,6 +572,9 @@
     }
     if (!state.cache.programs) {
       need.push(fetch('/api/directory/programs').then(function (r) { return r.json(); }).then(function (b) { state.cache.programs = b.programs || []; }));
+    }
+    if (!state.cache.subvendors) {
+      need.push(fetch('/api/directory/subvendors').then(function (r) { return r.json(); }).then(function (b) { state.cache.subvendors = b.subvendors || []; }));
     }
     if (!need.length) { cb(); return; }
     Promise.all(need).then(cb).catch(cb);
@@ -554,6 +618,7 @@
         '<p class="dir-copy">Everyone and every account your team has ever uploaded, in one place — add an email, phone, or address once and it stays, no matter how many more files come in. Status tracks each upload automatically: active if it showed up that way in the most recent file, inactive otherwise. Open “Seen in” on a row to see exactly which uploads named it. On Consultants, open “Billing” to see or add their rate on each client/vendor.</p>' +
         (state.user && (state.user.role === 'owner' || state.user.role === 'hr') ? '<p style="margin:0 0 12px"><a class="landing-btn" href="/directory-import.html" style="text-decoration:none;display:inline-block">Import details from a file</a></p>' : '') +
         '<div class="dir-tabs">' + tabsHtml + '</div>' +
+        (activeTab.key === 'consultants' ? renderFixit() : '') +
         dupePanel +
         controls +
         body +
@@ -584,6 +649,7 @@
   function loadTab(tabKey) {
     var tab = TABS.filter(function (t) { return t.key === tabKey; })[0];
     if (!state.duplicates[tabKey]) loadDuplicates(tabKey);
+    if (tabKey === 'consultants') loadFixit();
     if (state.cache[tabKey]) { render(); return; }
     state.loading = true;
     render();
@@ -796,6 +862,15 @@
       return;
     }
 
+    var fxT = e.target.closest('[data-action="fixit-toggle"]');
+    if (fxT) { state.fixitOpen = !state.fixitOpen; render(); return; }
+    var fxO = e.target.closest('[data-action="fixit-open"]');
+    if (fxO) { e.preventDefault(); var oid = Number(fxO.getAttribute('data-id')); state.expandedAssignmentsId = oid; state.editingAssignmentId = null; state.search = (state.cache.consultants || []).filter(function (c) { return c.id === oid; }).map(function (c) { return c.name; })[0] || ''; ensureClientsAndProgramsLoaded(function () { render(); }); render(); return; }
+    var fxC = e.target.closest('[data-action="fixit-clear"]');
+    if (fxC) { var fid = Number(fxC.getAttribute('data-id')); fixitClear(fxC.getAttribute('data-kind') === 'a' ? [fid] : [], fxC.getAttribute('data-kind') === 'c' ? [fid] : []); return; }
+    var fxA = e.target.closest('[data-action="fixit-clear-all"]');
+    if (fxA && state.fixit) { fixitClear(state.fixit.w2Placements.map(function (r) { return r.assignment_id; }), state.fixit.w2Profiles.map(function (r) { return r.consultant_id; })); return; }
+
     var assignEditBtn = e.target.closest('[data-action="assign-edit"]');
     if (assignEditBtn) {
       state.editingAssignmentId = Number(assignEditBtn.getAttribute('data-assignment-id'));
@@ -820,12 +895,19 @@
       var payInputEl = assignSaveBtn.closest('tr').querySelector('[data-assign-pay]');
       var payVal = payInputEl ? payInputEl.value : '';
       var consultantIdForSave = state.expandedAssignmentsId;
-      state.assignmentStatus = 'saving';
+      state.assignmentStatus = 'saving'; state.assignError = '';
+      var payload = { billing: billingVal, pay_rate: payVal };
+      var rowEl = assignSaveBtn.closest('tr');
+      if (isHrUser() && rowEl.querySelector('[data-assign-client]')) {
+        payload.client_id = rowEl.querySelector('[data-assign-client]').value || null;
+        payload.program_id = rowEl.querySelector('[data-assign-program]').value || null;
+        payload.employment_type = rowEl.querySelector('[data-assign-type]').value;
+        payload.supplier_id = rowEl.querySelector('[data-assign-supplier]').value || null;
+      }
       fetch('/api/directory/assignments/' + assignmentId, {
-        method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ billing: billingVal, pay_rate: payVal }),
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
       }).then(function (res) {
-        if (!res.ok) throw new Error('save failed');
-        return res.json();
+        return res.json().catch(function () { return {}; }).then(function (b) { if (!res.ok) throw new Error(b.error || 'save failed'); return b; });
       }).then(function (body) {
         var list = state.assignments[consultantIdForSave] || [];
         var idx = list.findIndex(function (a) { return a.id === Number(assignmentId); });
@@ -835,9 +917,11 @@
         if (savedCRec) savedCRec.assignments = list;
         state.editingAssignmentId = null;
         state.assignmentStatus = null;
+        loadFixit();
         render();
-      }).catch(function () {
-        state.assignmentStatus = 'error';
+      }).catch(function (err) {
+        if (/^Cancelled/.test(err.message)) { state.assignmentStatus = null; render(); return; }
+        state.assignmentStatus = 'error'; state.assignError = err.message === 'save failed' ? '' : err.message;
         render();
       });
       return;
@@ -896,7 +980,7 @@
       if (!clientName) { state.assignmentStatus = 'error'; window.alert('Enter the client.'); return; }
       fetch('/api/directory/consultants/' + addConsultantId + '/assignments/bulk', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ rows: [{ client: clientName, vendor: val('new-assignment-vendor'), billing: val('new-assignment-billing'), pay_rate: val('new-assignment-pay') }] }),
+        body: JSON.stringify({ rows: [{ client: clientName, vendor: val('new-assignment-vendor'), supplier: val('new-assignment-supplier'), billing: val('new-assignment-billing'), pay_rate: val('new-assignment-pay') }] }),
       }).then(function (res) {
         return res.json().then(function (b) { if (!res.ok) throw new Error(b.error || 'add failed'); return b; });
       }).then(function (body) {
@@ -905,7 +989,7 @@
         var cRec = (state.cache.consultants || []).find(function (c) { return c.id === cid; });
         if (cRec) { cRec.assignment_count = body.assignments.length; cRec.assignments = body.assignments; }
         // New clients/vendors may have been created: refresh the pick lists.
-        delete state.cache.clients; delete state.cache.programs;
+        delete state.cache.clients; delete state.cache.programs; delete state.cache.subvendors; loadFixit();
         return new Promise(function (resolve) { ensureClientsAndProgramsLoaded(resolve); });
       }).then(render).catch(function (err) {
         if (/^Cancelled/.test(err.message)) return;
@@ -929,6 +1013,8 @@
   });
 
   appEl.addEventListener('change', function (e) {
+    var cSel = e.target.closest('[data-assign-client]');
+    if (cSel) { var pSel = cSel.closest('tr').querySelector('[data-assign-program]'); if (pSel) pSel.innerHTML = vendorOptions(cSel.value, null); return; }
     var statusSelect = e.target.closest('[data-filter="status"]');
     if (statusSelect) {
       state.statusFilter = statusSelect.value;

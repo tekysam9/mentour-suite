@@ -11,6 +11,7 @@
     [/^\/api\/directory\/consultants\/\d+\/assignments/, 'billing pairing'],
     [/^\/api\/directory\/assignments/, 'billing pairing'],
     [/^\/api\/directory-import/, 'Directory import'],
+    [/^\/api\/directory\/placement-issues/, 'supplier clean-up'],
     [/^\/api\/directory\/duplicates/, 'duplicate record'],
     [/^\/api\/directory\/consultants/, 'consultant'],
     [/^\/api\/directory\/clients/, 'client'],
@@ -27,7 +28,7 @@
     [/^\/api\/margin/, 'Margin file import'],
     [/^\/api\/ledger/, 'Ledger file import'],
   ];
-  var ACTION_WORDS = /\/(generate|import-hours|import-workbook|bulk-status|fill-rates|from-ledger|status|create-records|merge|bulk|email|dismiss|checklist|apply|submit|approve|return|reject)\b/;
+  var ACTION_WORDS = /\/(generate|import-hours|import-workbook|bulk-status|fill-rates|from-ledger|status|create-records|merge|bulk|email|dismiss|checklist|apply|clear-supplier|submit|approve|return|reject)\b/;
   var SECRET = /pass(word)?|secret|token|ssn|tin\b|account_?(no|number)|routing|iban|swift/i;
   var SKIP_FIELDS = /^(_|id$|organization|csrf|apply$)/;
 

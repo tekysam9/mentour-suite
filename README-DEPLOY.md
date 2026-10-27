@@ -470,3 +470,9 @@ Needs: `FIELD_ENCRYPTION_KEY` (passwords are stored encrypted), and a re-run of 
 
 ## Importing details into the Directory
 Directory → "Import details from a file" (HR/owner only). Upload the contact-card workbook; the page matches people to existing Directory records, shows every proposed change, and saves only what is ticked. Blank fields are filled; different values are replaced only when ticked; nobody is added or deleted; missing supplier companies are created only when ticked. No schema change needed.
+
+## Placement rules (client, vendor, supplier)
+- Every consultant placement needs a **client**; the **vendor** is optional.
+- Supplier company: **W2** none, **Corp-to-Corp (Subvendor)** required, **1099** optional. Enforced when a placement or profile is created or when its worker type / supplier is changed (Margin, Directory, Onboarding, profile form).
+- HR and owners edit client, vendor, supplier and worker type in Directory → Consultants → Billing → Edit. Margin rows follow a client/vendor change; invoices and supplier payments already created are left as they are. Changes are written to the consultant's change log.
+- Directory → Consultants shows a fix-it list (HR/owner) for existing records that break the rules, with "Clear supplier" for W2 consultants. No schema change needed.

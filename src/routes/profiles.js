@@ -314,6 +314,20 @@ router.patch('/:entity/:id', async (req, res, next) => {
     const { core, data, errors, touched } = await prepare(spec, req.body, orgId, { creating: false });
     if (errors.length) return res.status(400).json({ error: errors[0], errors });
 
+    // Worker type and supplier company must agree: W2 none, Corp-to-Corp / Subvendor required, 1099 optional.
+    if (entity === 'consultants' && ('worker_type' in data || 'supplier_id' in data)) {
+      const [pcur] = await pool.query(`SELECT data FROM record_profiles WHERE organization_id = ? AND entity = 'consultants' AND record_id = ?`, [orgId, id]);
+      let curData = {}; try { curData = (pcur[0] && JSON.parse(pcur[0].data)) || {}; } catch (e) { curData = {}; }
+      if (data.worker_type === 'W2' && !('supplier_id' in data) && curData.supplier_id) data.supplier_id = ''; // switching to W2 drops the supplier
+      const merged = Object.assign({}, curData, data);
+      const wt = merged.worker_type; const sup = merged.supplier_id;
+      const touchedRule = ('worker_type' in data && String(data.worker_type || '') !== String(curData.worker_type || '')) ||
+        ('supplier_id' in data && String(data.supplier_id || '') !== String(curData.supplier_id || ''));
+      if (!touchedRule) { /* unrelated edit: existing records that break the rule are listed in the Directory fix-it list instead */ }
+      else if (wt === 'W2' && sup) return res.status(400).json({ error: 'A W2 consultant has no supplier company. Clear the supplier, or change the worker type.' });
+      else if ((wt === 'Subvendor' || wt === 'Corp-to-Corp') && !sup) return res.status(400).json({ error: 'A Corp-to-Corp (Subvendor) consultant needs a supplier company. Choose one.' });
+    }
+
     // A vendor (program) can be renamed and moved to another client.
     let progMove = null;
     if (entity === 'programs' && (core.name !== undefined || core.client_id !== undefined)) {

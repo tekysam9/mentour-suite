@@ -33,6 +33,7 @@ const NEXT = {
   complete: ['in_progress'],
   cancelled: ['draft'],
 };
+const { EMPLOYMENT_BY_WORKER } = require('../placementRules');
 const PROFILE_TYPE = { W2: 'W2', C2C: 'Subvendor', '1099': '1099' };
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -908,6 +909,10 @@ router.post('/:id/create-records', async (req, res, next) => {
     if (vendorName && vendorName.toLowerCase() === clientName.toLowerCase()) vendorName = '';
     if (!clientName) return res.status(422).json({ error: 'Fill in the end client first (or type the client name).' });
     if (!data.consultant_name) return res.status(422).json({ error: 'Consultant name is required.' });
+    // Supplier company rules: W2 none, Corp-to-Corp (C2C) required, 1099 optional.
+    const supplierNameFor = row.worker_type === 'C2C' ? vendorOf('C2C', Object.assign({ consultant_name: row.consultant_name }, data))
+      : row.worker_type === '1099' ? oneLine(data.employer_name) : '';
+    if (row.worker_type === 'C2C' && !supplierNameFor) return res.status(422).json({ error: 'A Corp-to-Corp consultant needs a supplier company. Fill in the consultant’s company first.' });
 
     conn = await pool.getConnection();
     await conn.beginTransaction();
@@ -932,8 +937,8 @@ router.post('/:id/create-records', async (req, res, next) => {
 
     // Supplier company (the consultant's own company, C2C)
     let supplierId = null;
-    const vnameRec = vendorOf(row.worker_type, Object.assign({ consultant_name: row.consultant_name }, data));
-    if (row.worker_type === 'C2C' && vnameRec) {
+    const vnameRec = supplierNameFor;
+    if ((row.worker_type === 'C2C' || row.worker_type === '1099') && vnameRec) {
       const eAddr = [data.employer_address, [data.employer_city, data.employer_state, data.employer_zip].filter(Boolean).join(' ')].filter(Boolean).join(', ');
       const sup = await find(`SELECT id FROM subvendors WHERE organization_id = ? AND LOWER(name) = LOWER(?)`, [orgId, vnameRec]);
       if (sup) {
@@ -968,10 +973,12 @@ router.post('/:id/create-records', async (req, res, next) => {
     const payRateVal = data.pay_rate !== undefined && data.pay_rate !== '' && Number.isFinite(prn) ? prn : null;
     const asg = await find(`SELECT id FROM consultant_assignments WHERE organization_id = ? AND consultant_id = ? AND client_id = ? AND program_id <=> ?`, [orgId, consultantId, clientId, programId]);
     let assignmentId;
-    if (asg) { assignmentId = asg.id; await conn.query(`UPDATE consultant_assignments SET billing = ?, pay_rate = ?, status = 'active', left_date = NULL WHERE id = ?`, [billing, payRateVal, assignmentId]); made.push('updated the billing pairing'); }
+    const empType = EMPLOYMENT_BY_WORKER[row.worker_type] || 'Unspecified';
+    const joinedText = data.start_date ? String(data.start_date).slice(0, 64) : null;
+    if (asg) { assignmentId = asg.id; await conn.query(`UPDATE consultant_assignments SET billing = ?, pay_rate = ?, status = 'active', left_date = NULL, employment_type = ?, supplier_id = ?, recruiter = COALESCE(?, recruiter), joined_text = COALESCE(?, joined_text) WHERE id = ?`, [billing, payRateVal, empType, supplierId, data.recruiter || null, joinedText, assignmentId]); made.push('updated the billing pairing'); }
     else {
-      const [r] = await conn.query(`INSERT INTO consultant_assignments (organization_id, consultant_id, client_id, program_id, billing, pay_rate, source) VALUES (?, ?, ?, ?, ?, ?, 'manual')`,
-        [orgId, consultantId, clientId, programId, billing, payRateVal]);
+      const [r] = await conn.query(`INSERT INTO consultant_assignments (organization_id, consultant_id, client_id, program_id, billing, pay_rate, source, employment_type, supplier_id, recruiter, joined_text) VALUES (?, ?, ?, ?, ?, ?, 'manual', ?, ?, ?, ?)`,
+        [orgId, consultantId, clientId, programId, billing, payRateVal, empType, supplierId, data.recruiter || null, joinedText]);
       assignmentId = r.insertId; made.push('added the billing pairing');
     }
 
