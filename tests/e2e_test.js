@@ -2935,6 +2935,37 @@ async function main() {
         const [[wa]] = await dbConn.query("SELECT a.employment_type, a.supplier_id FROM consultant_assignments a JOIN consultants c ON c.id = a.consultant_id WHERE c.organization_id = ? AND c.name = 'Will W2Onb'", [org]);
         check('onboarding a W2 consultant never creates a supplier', r.status === 200 && wa && wa.employment_type === 'W2 (direct)' && wa.supplier_id === null, [r.body, wa]);
       }
+      // ---- Swap client/vendor, placement end date, consultant status
+      {
+        const pj = makeJar();
+        await pj.fetch('/api/auth/signup', { method: 'POST', body: JSON.stringify({ orgName: 'Swap Co', name: 'Sam Swap', email: 'sam@swap.test', password: 'samspassword123' }) });
+        const [[su]] = await dbConn.query("SELECT id, organization_id o FROM users WHERE email = 'sam@swap.test'");
+        const org = su.o;
+        const clH = (await dbConn.query('INSERT INTO clients (organization_id, name) VALUES (?, ?)', [org, 'HCL']))[0].insertId;
+        const pgT = (await dbConn.query('INSERT INTO programs (organization_id, client_id, name) VALUES (?, ?, ?)', [org, clH, 'T-mobile']))[0].insertId;
+        const kid = (await dbConn.query("INSERT INTO consultants (organization_id, name, status) VALUES (?, 'Kratika Jain', 'active')", [org]))[0].insertId;
+        const aid = (await dbConn.query("INSERT INTO consultant_assignments (organization_id, consultant_id, client_id, program_id, billing, pay_rate, source, employment_type) VALUES (?, ?, ?, ?, 90, 60, 'manual', 'W2 (direct)')", [org, kid, clH, pgT]))[0].insertId;
+        const [mi] = await dbConn.query("INSERT INTO margin_imports (organization_id, uploaded_by, file_name, data) VALUES (?, ?, 'swap.xlsx', '{}')", [org, su.id]);
+        await dbConn.query("INSERT INTO margin_roster_entries (import_id, organization_id, name, client, program, consultant_id, client_id, program_id, status) VALUES (?, ?, 'Kratika Jain', 'HCL', 'T-mobile', ?, ?, ?, 'Active')", [mi.insertId, org, kid, clH, pgT]);
+        let r = await pj.fetch('/api/directory/assignments/' + aid + '/swap', { method: 'POST', body: JSON.stringify({}) });
+        const [[sa]] = await dbConn.query('SELECT c.name cn, p.name pn, a.billing FROM consultant_assignments a JOIN clients c ON c.id = a.client_id JOIN programs p ON p.id = a.program_id WHERE a.id = ?', [aid]);
+        const [[sm]] = await dbConn.query('SELECT client, program FROM margin_roster_entries WHERE consultant_id = ?', [kid]);
+        check('swap turns Client HCL / Vendor T-mobile into Client T-mobile / Vendor HCL, rates and margin rows follow', r.status === 200 && sa.cn === 'T-mobile' && sa.pn === 'HCL' && Number(sa.billing) === 90 && sm.client === 'T-mobile' && sm.program === 'HCL', [r.body, sa, sm]);
+        r = await pj.fetch('/api/directory/assignments/' + aid + '/swap', { method: 'POST', body: JSON.stringify({}) });
+        const [[sb]] = await dbConn.query('SELECT c.name cn, p.name pn FROM consultant_assignments a JOIN clients c ON c.id = a.client_id JOIN programs p ON p.id = a.program_id WHERE a.id = ?', [aid]);
+        check('swapping again puts it back, creating no duplicate clients', r.status === 200 && sb.cn === 'HCL' && sb.pn === 'T-mobile' && (await dbConn.query("SELECT id FROM clients WHERE organization_id = ? AND name = 'HCL'", [org]))[0].length === 1, sb);
+        r = await pj.fetch('/api/directory/consultants/' + kid + '/status', { method: 'POST', body: JSON.stringify({ status: 'inactive', endDate: '2026-10-15' }) });
+        const [[sc]] = await dbConn.query('SELECT c.status cs, a.status ast, a.left_date FROM consultants c JOIN consultant_assignments a ON a.consultant_id = c.id WHERE c.id = ?', [kid]);
+        check('making a consultant inactive closes the placement with the end date', r.status === 200 && sc.cs === 'inactive' && sc.ast === 'left' && String(sc.left_date.toISOString ? sc.left_date.toISOString() : sc.left_date).slice(0, 10) === '2026-10-15', [r.body, sc]);
+        r = await pj.fetch('/api/directory/consultants/' + kid + '/status', { method: 'POST', body: JSON.stringify({ status: 'active' }) });
+        const [[sd]] = await dbConn.query('SELECT c.status cs, a.status ast, a.left_date FROM consultants c JOIN consultant_assignments a ON a.consultant_id = c.id WHERE c.id = ?', [kid]);
+        check('reactivating reopens the placement and clears the end date', r.status === 200 && sd.cs === 'active' && sd.ast === 'active' && !sd.left_date, [r.body, sd]);
+        r = await pj.fetch('/api/directory/assignments/' + aid, { method: 'PATCH', body: JSON.stringify({ status: 'left', left_date: '2026-09-30' }) });
+        const [[se]] = await dbConn.query('SELECT status FROM consultants WHERE id = ?', [kid]);
+        check('ending the only placement from the placement editor also makes the consultant inactive', r.status === 200 && se.status === 'inactive', [r.body, se]);
+        r = await pj.fetch('/api/directory/consultants/' + kid + '/status', { method: 'POST', body: JSON.stringify({ status: 'inactive', endDate: 'garbage' }) });
+        check('a bad end date is rejected', r.status === 400, r.body);
+      }
     } finally {
       await dbConn.end();
     }

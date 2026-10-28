@@ -301,6 +301,13 @@
     };
   }
 
+  function statusEditor(r) {
+    var latestEnd = ((state.assignments[r.id] || []).filter(function (a) { return a.status === 'left' && a.left_date; }).map(function (a) { return String(a.left_date).slice(0, 10); }).sort().pop()) || '';
+    return '<select class="dir-field-input" data-status-select>' +
+      '<option value="active"' + (r.status === 'inactive' ? '' : ' selected') + '>Active</option><option value="inactive"' + (r.status === 'inactive' ? ' selected' : '') + '>Inactive</option></select>' +
+      '<div class="dir-assign-empty" style="padding:4px 0 0">End date (when inactive)</div><input type="date" class="dir-field-input" data-status-end value="' + escapeHtml(latestEnd) + '">';
+  }
+
   function contactCell(record, field) {
     if (state.editingId === record.id) {
       return '<input class="dir-field-input" data-field="' + field + '" value="' + escapeHtml(record[field] || '') + '">';
@@ -360,12 +367,12 @@
         var expanded = state.expandedAssignmentsId === r.id;
         var n = typeof r.assignment_count === 'number' ? r.assignment_count : null;
         assignToggle = '<button class="dir-assign-toggle" data-action="toggle-assignments" data-id="' + r.id + '">' +
-          (expanded ? '▾ Hide billing' : '▸ Billing' + (n ? ' (' + n + ')' : '')) + '</button>';
+          (expanded ? '▾ Hide placements' : '▸ Client / vendor / billing' + (n ? ' (' + n + ')' : '')) + '</button>';
       }
       var mainRow = '<tr>' +
         nameCell +
         billingCols +
-        '<td>' + statusBadge(r.status) + '</td>' +
+        '<td>' + ((editing && tab.key === 'consultants' && isHrUser()) ? statusEditor(r) : statusBadge(r.status)) + '</td>' +
         '<td>' + contactCell(r, 'email') + '</td>' +
         '<td>' + contactCell(r, 'phone') + '</td>' +
         '<td>' + contactCell(r, 'address') + '</td>' +
@@ -499,7 +506,9 @@
           : escapeHtml(empLabel(a.employment_type));
         var supplierCell = hrEdit ? '<select class="dir-field-input" data-assign-supplier>' + optionsHtml(state.cache.subvendors || [], a.supplier_id, '— none —') + '</select>'
           : (a.supplier_name ? escapeHtml(a.supplier_name) : ((a.employment_type === 'Subvendor') ? '<span class="dir-empty-cell" style="color:#C62F25">⚠ needed</span>' : dashCell));
-        var stateCell = a.status === 'left'
+        var stateCellEdit = hrEdit ? '<select class="dir-field-input" data-assign-status><option value="active"' + (a.status === 'left' ? '' : ' selected') + '>Active</option><option value="left"' + (a.status === 'left' ? ' selected' : '') + '>Left</option></select>' +
+          '<input type="date" class="dir-field-input" data-assign-end title="Last day (when Left)" value="' + escapeHtml(a.left_date ? String(a.left_date).slice(0, 10) : '') + '">' : null;
+        var stateCell = stateCellEdit ? stateCellEdit : a.status === 'left'
           ? '<span class="dir-assign-left">Left' + (a.left_date ? ' ' + escapeHtml(String(a.left_date).slice(0, 10)) : '') + ' — not invoiced</span>'
           : 'Active';
         var billingCell = editing
@@ -512,6 +521,7 @@
           ? '<button class="dir-btn dir-btn-small dir-btn-primary" data-action="assign-save" data-assignment-id="' + a.id + '">Save</button>' +
             '<button class="dir-btn dir-btn-small" data-action="assign-cancel">Cancel</button>'
           : '<button class="dir-btn dir-btn-small" data-action="assign-edit" data-assignment-id="' + a.id + '">Edit</button>' +
+            (isHrUser() && a.client_name && a.program_name ? '<button class="dir-btn dir-btn-small" data-action="assign-swap" data-assignment-id="' + a.id + '" title="Client and vendor are the wrong way round: swap them">Swap client ↔ vendor</button>' : '') +
             '<button class="dir-btn dir-btn-small" data-action="assign-delete" data-assignment-id="' + a.id + '">Remove</button>';
         return '<tr' + (a.status === 'left' ? ' class="dir-assign-left-row"' : '') + '>' +
           '<td>' + clientCell + '</td>' +
@@ -668,6 +678,12 @@
         state.cache[tabKey].forEach(function (r) { state.assignments[r.id] = r.assignments || []; });
       }
       state.loading = false;
+      if (tabKey === 'consultants' && !state.deepLinked) {
+        state.deepLinked = true;
+        var dl = Number((new URLSearchParams(location.search)).get('c'));
+        var hit = dl && state.cache.consultants.filter(function (c) { return c.id === dl; })[0];
+        if (hit && isHrUser()) { state.search = hit.name; state.editingId = hit.id; state.expandedAssignmentsId = hit.id; ensureClientsAndProgramsLoaded(function () { render(); }); }
+      }
       render();
     }).catch(function () {
       state.cache[tabKey] = [];
@@ -708,6 +724,11 @@
     if (editBtn) {
       state.editingId = Number(editBtn.getAttribute('data-id'));
       state.saveStatus = null;
+      if (state.activeTab === 'consultants' && isHrUser()) {
+        // Client, vendor, supplier, worker type, end date and status live in the placement panel: open it with the row.
+        state.expandedAssignmentsId = state.editingId; state.editingAssignmentId = null;
+        ensureClientsAndProgramsLoaded(function () { render(); });
+      }
       render();
       return;
     }
@@ -744,12 +765,28 @@
         var list = state.cache[tabKey] || [];
         var idx = list.findIndex(function (r) { return r.id === Number(id); });
         if (idx > -1) list[idx] = Object.assign({}, list[idx], body.record);
+        var selEl = row.querySelector('[data-status-select]');
+        var wanted = selEl ? selEl.value : null;
+        var current = idx > -1 ? list[idx].status : null;
+        if (tabKey === 'consultants' && wanted && wanted !== (current === 'inactive' ? 'inactive' : 'active')) {
+          var endEl = row.querySelector('[data-status-end]');
+          return fetch('/api/directory/consultants/' + id + '/status', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: wanted, endDate: endEl ? endEl.value : '' }),
+          }).then(function (res) { return res.json().catch(function () { return {}; }).then(function (b) { if (!res.ok) throw new Error(b.error || 'Could not change the status.'); return b; }); })
+            .then(function (b) {
+              if (idx > -1) { list[idx] = Object.assign({}, list[idx], b.consultant, { assignments: b.assignments, assignment_count: b.assignments.length }); state.assignments[Number(id)] = b.assignments; }
+              loadFixit();
+            });
+        }
+      }).then(function () {
         state.editingId = null;
         state.saveStatus = 'saved';
         render();
-      }).catch(function () {
-        state.saveStatus = 'error';
+      }).catch(function (err) {
+        if (/^Cancelled/.test(err.message)) { state.saveStatus = null; render(); return; }
+        state.saveStatus = 'error'; state.assignError = err.message === 'save failed' ? '' : err.message;
         render();
+        if (state.assignError) window.alert(state.assignError);
       });
       return;
     }
@@ -887,6 +924,22 @@
       return;
     }
 
+    var assignSwapBtn = e.target.closest('[data-action="assign-swap"]');
+    if (assignSwapBtn) {
+      var swapId = Number(assignSwapBtn.getAttribute('data-assignment-id'));
+      var swapCons = state.expandedAssignmentsId;
+      fetch('/api/directory/assignments/' + swapId + '/swap', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) })
+        .then(function (res) { return res.json().catch(function () { return {}; }).then(function (b) { if (!res.ok) throw new Error(b.error || 'Could not swap.'); return b; }); })
+        .then(function (b) {
+          var l = state.assignments[swapCons] || [];
+          var i = l.findIndex(function (x) { return x.id === swapId; });
+          if (i > -1) l[i] = Object.assign({}, l[i], b.assignment);
+          delete state.cache.clients; delete state.cache.programs;
+          return new Promise(function (resolve) { ensureClientsAndProgramsLoaded(resolve); });
+        }).then(render).catch(function (err) { if (!/^Cancelled/.test(err.message)) window.alert(err.message); });
+      return;
+    }
+
     var assignSaveBtn = e.target.closest('[data-action="assign-save"]');
     if (assignSaveBtn) {
       var assignmentId = assignSaveBtn.getAttribute('data-assignment-id');
@@ -903,6 +956,8 @@
         payload.program_id = rowEl.querySelector('[data-assign-program]').value || null;
         payload.employment_type = rowEl.querySelector('[data-assign-type]').value;
         payload.supplier_id = rowEl.querySelector('[data-assign-supplier]').value || null;
+        payload.status = rowEl.querySelector('[data-assign-status]').value;
+        payload.left_date = payload.status === 'left' ? (rowEl.querySelector('[data-assign-end]').value || null) : null;
       }
       fetch('/api/directory/assignments/' + assignmentId, {
         method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
@@ -914,7 +969,7 @@
         if (idx > -1) list[idx] = Object.assign({}, list[idx], body.assignment);
         state.assignments[consultantIdForSave] = list;
         var savedCRec = (state.cache.consultants || []).find(function (c) { return c.id === Number(consultantIdForSave); });
-        if (savedCRec) savedCRec.assignments = list;
+        if (savedCRec) { savedCRec.assignments = list; if (payload.status) savedCRec.status = list.some(function (x) { return x.status !== 'left'; }) ? 'active' : 'inactive'; }
         state.editingAssignmentId = null;
         state.assignmentStatus = null;
         loadFixit();

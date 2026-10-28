@@ -50,6 +50,13 @@ async function defaultsFor(conn, orgId, consultantId) {
   return { employmentType, supplierId };
 }
 
+// A consultant is Active while at least one placement is; Inactive once all are marked Left.
+async function syncConsultantStatus(conn, consultantId) {
+  await conn.query(
+    `UPDATE consultants c SET c.status = IF(EXISTS (SELECT 1 FROM consultant_assignments a WHERE a.consultant_id = c.id AND a.status = 'active'), 'active', 'inactive')
+     WHERE c.id = ?`, [consultantId]);
+}
+
 const isHrUser = (user) => !!user && (user.role === 'owner' || user.role === 'hr');
 
-module.exports = { EMPLOYMENT_BY_WORKER, KIND_BY_EMPLOYMENT, EMPLOYMENT_BY_PROFILE, checkSupplierRule, repointMarginRows, defaultsFor, isHrUser };
+module.exports = { EMPLOYMENT_BY_WORKER, KIND_BY_EMPLOYMENT, EMPLOYMENT_BY_PROFILE, checkSupplierRule, repointMarginRows, defaultsFor, syncConsultantStatus, isHrUser };

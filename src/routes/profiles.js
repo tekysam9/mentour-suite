@@ -350,7 +350,7 @@ router.patch('/:entity/:id', async (req, res, next) => {
     await conn.beginTransaction();
     const sets = []; const params = [];
     for (const [k, v] of Object.entries(core)) {
-      if (k === 'status') { if (v) { sets.push('status = ?'); params.push(v); } continue; }
+      if (k === 'status') { if (v && entity !== 'consultants') { sets.push('status = ?'); params.push(v); } continue; } // a consultant's status follows their placements: use the status control
       sets.push(`${k} = ?`); params.push(v === '' ? null : v);
     }
     if (sets.length) await conn.query(`UPDATE ${entity} SET ${sets.join(', ')} WHERE id = ? AND organization_id = ?`, [...params, id, orgId]);

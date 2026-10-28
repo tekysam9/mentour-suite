@@ -476,3 +476,8 @@ Directory → "Import details from a file" (HR/owner only). Upload the contact-c
 - Supplier company: **W2** none, **Corp-to-Corp (Subvendor)** required, **1099** optional. Enforced when a placement or profile is created or when its worker type / supplier is changed (Margin, Directory, Onboarding, profile form).
 - HR and owners edit client, vendor, supplier and worker type in Directory → Consultants → Billing → Edit. Margin rows follow a client/vendor change; invoices and supplier payments already created are left as they are. Changes are written to the consultant's change log.
 - Directory → Consultants shows a fix-it list (HR/owner) for existing records that break the rules, with "Clear supplier" for W2 consultants. No schema change needed.
+
+## Fixing client/vendor and ending a consultant (HR / owner)
+- Directory → consultant row → **Edit** now opens the contact fields, a **Status** selector with an **End date**, and the placements panel (client, vendor, worker type, supplier, status, end date).
+- **Swap client ↔ vendor** fixes a placement entered the wrong way round (e.g. Client HCL / Vendor T-Mobile becomes Client T-Mobile / Vendor HCL). The consultant's margin rows follow; invoices and supplier payments already created are not changed.
+- Making a consultant **Inactive** closes all their open placements on the end date; **Active** reopens the latest one. The same control is on the person's own page. No database changes.

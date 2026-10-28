@@ -133,6 +133,12 @@
     if (TYPE === 'consultants') {
       html += '<div class="rec-card rec-side"><h2>Client &amp; vendor pairings</h2>';
       var a = r.assignments || [];
+      var hr = S.user && (S.user.role === 'owner' || S.user.role === 'hr');
+      var st = S.rec.values && S.rec.values.status === 'inactive' ? 'inactive' : 'active';
+      html += '<p style="margin:0 0 8px"><strong>Status:</strong> ' + (st === 'inactive' ? 'Inactive' : 'Active') + '</p>';
+      if (hr) html += '<div class="rec-grid" style="margin-bottom:10px"><div class="rec-field"><label for="st-sel">Change status</label><select id="st-sel"><option value="active"' + (st === 'active' ? ' selected' : '') + '>Active</option><option value="inactive"' + (st === 'inactive' ? ' selected' : '') + '>Inactive</option></select></div>' +
+        '<div class="rec-field"><label for="st-end">End date (when inactive)</label><input id="st-end" type="date"></div></div><p><button class="rec-btn rec-btn-small" id="st-save" type="button">Update status</button></p>' +
+        '<p class="rec-muted">Making someone inactive closes all their open placements on that end date. To change a client or vendor, use <a href="/directory.html?c=' + ID + '">Directory → Edit</a>.</p>';
       html += a.length ? '<ul>' + a.map(function (x) {
         return '<li>' + (x.clientId ? '<a href="/record.html?type=clients&id=' + x.clientId + '">' + esc(x.clientName) + '</a>' : '—') +
           (x.programId ? ' / <a href="/record.html?type=programs&id=' + x.programId + '">' + esc(x.programName) + '</a>' : '') +
@@ -177,7 +183,7 @@
     var banner = '';
     if (!S.schema.encryptionConfigured) banner = '<div class="rec-banner">Sensitive fields (SSN, tax ID, bank numbers) can’t be saved until the server’s encryption key is set. Everything else saves normally.</div>';
     var sections = sp.sections.map(function (sec) {
-      return '<div class="rec-card"><h2>' + esc(sec.title) + '</h2><div class="rec-grid">' + sec.fields.map(fieldHtml).join('') + '</div></div>';
+      return '<div class="rec-card"><h2>' + esc(sec.title) + '</h2><div class="rec-grid">' + sec.fields.filter(function (f) { return !(TYPE === 'consultants' && !IS_NEW && f.key === 'status'); }).map(fieldHtml).join('') + '</div></div>';
     }).join('');
     appEl.innerHTML =
       '<div class="landing-header"><div><div class="landing-wordmark">Mentour Suite</div><div class="landing-sub">' + esc(S.user.organization.name) + '</div></div>' +
@@ -193,6 +199,14 @@
       fetch('/api/auth/logout', { method: 'POST' }).then(function () { location.href = '/login.html'; });
     });
     document.getElementById('save-btn').addEventListener('click', save);
+    var stb = document.getElementById('st-save');
+    if (stb) stb.addEventListener('click', function () {
+      var v = document.getElementById('st-sel').value, e = document.getElementById('st-end').value;
+      api('POST', '/api/directory/consultants/' + ID + '/status', { status: v, endDate: e }).then(function (r) {
+        if (!r.ok) { S.msg = r.body.error || 'Could not change the status.'; S.msgKind = 'err'; render(); return; }
+        load().then(function () { S.msg = 'Status updated.'; S.msgKind = 'ok'; render(); });
+      });
+    });
     var nb = document.getElementById('note-add');
     if (nb) nb.addEventListener('click', addNote);
   }

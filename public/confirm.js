@@ -28,7 +28,7 @@
     [/^\/api\/margin/, 'Margin file import'],
     [/^\/api\/ledger/, 'Ledger file import'],
   ];
-  var ACTION_WORDS = /\/(generate|import-hours|import-workbook|bulk-status|fill-rates|from-ledger|status|create-records|merge|bulk|email|dismiss|checklist|apply|clear-supplier|submit|approve|return|reject)\b/;
+  var ACTION_WORDS = /\/(generate|import-hours|import-workbook|bulk-status|fill-rates|from-ledger|status|create-records|merge|bulk|email|dismiss|checklist|apply|clear-supplier|swap|submit|approve|return|reject)\b/;
   var SECRET = /pass(word)?|secret|token|ssn|tin\b|account_?(no|number)|routing|iban|swift/i;
   var SKIP_FIELDS = /^(_|id$|organization|csrf|apply$)/;
 

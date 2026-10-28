@@ -15,7 +15,7 @@ const { requireAuth } = require('../auth');
 const { TABLES: DIRECTORY_TABLES, scanDuplicates } = require('./directoryDedup');
 const { upsertAssignmentBilling } = require('./assignmentUpsert');
 const { findOrCreateDirectoryRecord, normalizeName } = require('./directoryUpsert');
-const { checkSupplierRule, repointMarginRows, defaultsFor, isHrUser, EMPLOYMENT_BY_PROFILE, KIND_BY_EMPLOYMENT } = require('../placementRules');
+const { checkSupplierRule, repointMarginRows, defaultsFor, syncConsultantStatus, isHrUser, EMPLOYMENT_BY_PROFILE, KIND_BY_EMPLOYMENT } = require('../placementRules');
 const { aliasKey, splitClientText, isMissingTable, SCHEMA_NEEDED_MESSAGE } = require('./clientAliases');
 
 // Profile form data follows the surviving record when two records are merged:
@@ -351,6 +351,18 @@ router.patch('/assignments/:id', async (req, res, next) => {
       if (v !== null && (!Number.isFinite(v) || v < 0)) return res.status(400).json({ error: label + ' must be a number.' });
       sets.push(col + ' = ?'); params.push(v);
     }
+    const dayOf = (v) => { const t = v ? String(v).slice(0, 10) : ''; return /^\d{4}-\d{2}-\d{2}$/.test(t) && !Number.isNaN(Date.parse(t + 'T00:00:00Z')) ? t : null; };
+    let statusChange = null;
+    if (body.status !== undefined || body.left_date !== undefined) {
+      if (!isHrUser(req.user)) return res.status(403).json({ error: 'Only HR or an administrator can end or reopen a placement.' });
+      const st = body.status !== undefined ? String(body.status).toLowerCase() : cur.status;
+      if (!['active', 'left'].includes(st)) return res.status(400).json({ error: 'Status must be Active or Left.' });
+      let ld = st === 'left' ? (body.left_date !== undefined ? dayOf(body.left_date) : (cur.left_date ? dayOf(new Date(cur.left_date).toISOString()) : null)) : null;
+      if (st === 'left' && body.left_date && !dayOf(body.left_date)) return res.status(400).json({ error: 'The end date must be a date.' });
+      statusChange = { status: st, leftDate: ld };
+      sets.push('status = ?', 'left_date = ?'); params.push(st, ld);
+      if (st === 'active') sets.push('left_text = NULL');
+    }
     const idOf = (v) => (v === undefined ? undefined : (v === null || v === '' ? null : Number(v)));
     const want = { client: idOf(body.client_id), program: idOf(body.program_id), supplier: idOf(body.supplier_id), type: body.employment_type };
     const structural = want.client !== undefined || want.program !== undefined || want.supplier !== undefined || want.type !== undefined;
@@ -394,8 +406,10 @@ router.patch('/assignments/:id', async (req, res, next) => {
       if (bits.length) note = 'Placement edited: ' + bits.join('; ');
     }
     if (!sets.length) return res.status(400).json({ error: 'Nothing to update.' });
+    if (statusChange) note = (note ? note + '; ' : 'Placement edited: ') + (statusChange.status === 'left' ? `ended${statusChange.leftDate ? ' ' + statusChange.leftDate : ''}` : 'reopened');
     await conn.beginTransaction();
     await conn.query(`UPDATE consultant_assignments SET ${sets.join(', ')}, source = 'manual' WHERE id = ? AND organization_id = ?`, [...params, cur.id, orgId]);
+    if (statusChange) await syncConsultantStatus(conn, cur.consultant_id);
     if (moved) await repointMarginRows(conn, orgId, cur.consultant_id, moved.from, moved.to);
     if (note) {
       try { await conn.query(`INSERT INTO record_notes (organization_id, entity, record_id, kind, body, user_name) VALUES (?, 'consultants', ?, 'log', ?, ?)`, [orgId, cur.consultant_id, note, req.user.name || req.user.email]); }
@@ -408,6 +422,68 @@ router.patch('/assignments/:id', async (req, res, next) => {
     try { await conn.rollback(); } catch (_) { /* no-op */ }
     next(err);
   } finally { conn.release(); }
+});
+
+// Swap client and vendor on one placement (they were entered the wrong way round): the old vendor name
+// becomes the client and the old client name becomes the vendor under it. Missing records are created.
+router.post('/assignments/:id/swap', async (req, res, next) => {
+  const conn = await pool.getConnection();
+  try {
+    if (!isHrUser(req.user)) return res.status(403).json({ error: 'Only HR or an administrator can swap a placement’s client and vendor.' });
+    const orgId = req.user.organization_id;
+    const [curRows] = await conn.query(ASSIGN_ONE, [req.params.id, orgId]);
+    if (!curRows.length) return res.status(404).json({ error: 'Not found.' });
+    const cur = curRows[0];
+    if (!cur.client_name || !cur.program_name) return res.status(400).json({ error: 'Nothing to swap: this placement needs both a client and a vendor.' });
+    await conn.beginTransaction();
+    const newClient = await findOrCreateDirectoryRecord(conn, 'clients', { organizationId: orgId, name: cur.program_name, status: 'active' });
+    const newProgram = await findOrCreateDirectoryRecord(conn, 'programs', { organizationId: orgId, clientId: newClient.id, name: cur.client_name, status: 'active' });
+    const [clash] = await conn.query('SELECT id FROM consultant_assignments WHERE organization_id = ? AND consultant_id = ? AND client_id <=> ? AND program_id <=> ? AND id <> ?', [orgId, cur.consultant_id, newClient.id, newProgram.id, cur.id]);
+    if (clash.length) { await conn.rollback(); return res.status(409).json({ error: 'This consultant already has a placement with that client and vendor. Edit or remove one of them.' }); }
+    await conn.query(`UPDATE consultant_assignments SET client_id = ?, program_id = ?, source = 'manual' WHERE id = ? AND organization_id = ?`, [newClient.id, newProgram.id, cur.id, orgId]);
+    await repointMarginRows(conn, orgId, cur.consultant_id, { clientId: cur.client_id, programId: cur.program_id }, { clientId: newClient.id, programId: newProgram.id, clientName: cur.program_name, programName: cur.client_name });
+    try { await conn.query(`INSERT INTO record_notes (organization_id, entity, record_id, kind, body, user_name) VALUES (?, 'consultants', ?, 'log', ?, ?)`, [orgId, cur.consultant_id, `Placement swapped: client ${cur.client_name} / vendor ${cur.program_name} → client ${cur.program_name} / vendor ${cur.client_name}`, req.user.name || req.user.email]); }
+    catch (e) { if (!isMissingTable(e)) throw e; }
+    await conn.commit();
+    const [rows] = await pool.query(ASSIGN_ONE, [cur.id, orgId]);
+    res.json({ assignment: rows[0] });
+  } catch (err) { try { await conn.rollback(); } catch (_) { /* no-op */ } next(err); } finally { conn.release(); }
+});
+
+// Employment status of a consultant. Inactive: every active placement is ended on the end date (today when
+// none is given). Active: the most recently ended placement is reopened. HR or owner only.
+router.post('/consultants/:id/status', async (req, res, next) => {
+  const conn = await pool.getConnection();
+  try {
+    if (!isHrUser(req.user)) return res.status(403).json({ error: 'Only HR or an administrator can change a consultant’s status.' });
+    const orgId = req.user.organization_id;
+    const consultant = await findConsultant(req.params.id, orgId);
+    if (!consultant) return res.status(404).json({ error: 'Not found.' });
+    const status = String((req.body && req.body.status) || '').toLowerCase();
+    if (!['active', 'inactive'].includes(status)) return res.status(400).json({ error: 'Choose Active or Inactive.' });
+    const rawEnd = req.body && req.body.endDate ? String(req.body.endDate).slice(0, 10) : '';
+    if (rawEnd && (!/^\d{4}-\d{2}-\d{2}$/.test(rawEnd) || Number.isNaN(Date.parse(rawEnd + 'T00:00:00Z')))) return res.status(400).json({ error: 'The end date must be a date.' });
+    const end = rawEnd || new Date().toISOString().slice(0, 10);
+    await conn.beginTransaction();
+    let changed = 0;
+    if (status === 'inactive') {
+      const [r] = await conn.query(`UPDATE consultant_assignments SET status = 'left', left_date = ?, source = 'manual' WHERE organization_id = ? AND consultant_id = ? AND status = 'active'`, [end, orgId, consultant.id]);
+      changed = r.affectedRows;
+      await conn.query(`UPDATE consultants SET status = 'inactive' WHERE id = ? AND organization_id = ?`, [consultant.id, orgId]);
+    } else {
+      const [last] = await conn.query(`SELECT id FROM consultant_assignments WHERE organization_id = ? AND consultant_id = ? AND status = 'left' ORDER BY left_date IS NULL, left_date DESC, id DESC LIMIT 1`, [orgId, consultant.id]);
+      const [act] = await conn.query(`SELECT id FROM consultant_assignments WHERE organization_id = ? AND consultant_id = ? AND status = 'active' LIMIT 1`, [orgId, consultant.id]);
+      if (!act.length && !last.length) { await conn.rollback(); return res.status(409).json({ error: 'This consultant has no placement yet. Add a placement with a client first.' }); }
+      if (!act.length) { await conn.query(`UPDATE consultant_assignments SET status = 'active', left_date = NULL, left_text = NULL, source = 'manual' WHERE id = ?`, [last[0].id]); changed = 1; }
+      await conn.query(`UPDATE consultants SET status = 'active' WHERE id = ? AND organization_id = ?`, [consultant.id, orgId]);
+    }
+    try { await conn.query(`INSERT INTO record_notes (organization_id, entity, record_id, kind, body, user_name) VALUES (?, 'consultants', ?, 'log', ?, ?)`, [orgId, consultant.id, status === 'inactive' ? `Marked inactive; ${changed} placement(s) ended ${end}` : `Marked active${changed ? '; latest placement reopened' : ''}`, req.user.name || req.user.email]); }
+    catch (e) { if (!isMissingTable(e)) throw e; }
+    await conn.commit();
+    const [rows] = await pool.query('SELECT * FROM consultants WHERE id = ?', [consultant.id]);
+    const [assignments] = await pool.query(`${ASSIGN_ONE.replace('WHERE a.id = ? AND a.organization_id = ?', 'WHERE a.consultant_id = ? AND a.organization_id = ? ORDER BY a.status, cl.name, p.name')}`, [consultant.id, orgId]);
+    res.json({ consultant: rows[0], assignments, changed });
+  } catch (err) { try { await conn.rollback(); } catch (_) { /* no-op */ } next(err); } finally { conn.release(); }
 });
 
 router.delete('/assignments/:id', async (req, res, next) => {
