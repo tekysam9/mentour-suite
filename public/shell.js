@@ -61,6 +61,7 @@
     { label: 'Import history', href: '/invoices.html#hximport', icon: 'history', page: ['/invoices.html'], tab: 'hximport', crumb: ['Fin-Module', 'Import history'] },
     { section: 'Settings', hr: true },
     { label: 'My email', href: '/mail-settings.html', icon: 'mail', page: ['/mail-settings.html'], crumb: ['Settings', 'My email'], hr: true },
+    { label: 'Data check', href: '/data-check.html', icon: 'history', page: ['/data-check.html'], crumb: ['Settings', 'Data check'], hr: true },
     { section: 'Support', everyone: true },
     { label: 'Help', href: '/help.html', icon: 'help', page: ['/help.html'], crumb: ['Support', 'Help'], everyone: true }
   ];

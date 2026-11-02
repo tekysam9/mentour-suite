@@ -2966,6 +2966,38 @@ async function main() {
         r = await pj.fetch('/api/directory/consultants/' + kid + '/status', { method: 'POST', body: JSON.stringify({ status: 'inactive', endDate: 'garbage' }) });
         check('a bad end date is rejected', r.status === 400, r.body);
       }
+      // ---- Data check: finds payments that an earlier upload had and the newest one lacks; "use again" restores them
+      {
+        const pj = makeJar();
+        await pj.fetch('/api/auth/signup', { method: 'POST', body: JSON.stringify({ orgName: 'Check Co', name: 'Cara Check', email: 'cara@check.test', password: 'carapassword123' }) });
+        const pl = (name, sv, period, amount) => ({ subvendor: sv, period, name, amount, rate: 50, hours: amount / 50, verify: null, notes: null, paidDate: null, month: 'March', clientTag: 'Unspecified', year: '2026', unpaid: false });
+        const full = { consultants: [
+          { name: 'Dana Data', placements: [pl('Dana Data', 'Acme LLC', 'Jan', 1000), pl('Dana Data', 'Acme LLC', 'Feb', 1100)] },
+          { name: 'Eli Entry', placements: [pl('Eli Entry', 'Beta Inc', 'Jan', 2000)] } ] };
+        const partial = { consultants: [{ name: 'Dana Data', placements: [pl('Dana Data', 'Acme LLC', 'Jan', 1000)] }] };
+        let r = await pj.fetch('/api/ledger', { method: 'POST', body: JSON.stringify({ fileName: 'full.xlsx', data: full }) });
+        const firstId = r.body.import.id;
+        r = await pj.fetch('/api/ledger', { method: 'POST', body: JSON.stringify({ fileName: 'partial.xlsx', data: partial }) });
+        r = await pj.fetch('/api/data-check');
+        const g = r.status === 200 && r.body.ledgerGaps.find((x) => x.importId === firstId);
+        check('data check reports the 2 payments (and $3,100) that the newest Ledger upload no longer has', !!g && g.missingCount === 2 && Math.abs(g.missingAmount - 3100) < 0.01 && g.sample.some((x) => x.consultant === 'Eli Entry'), r.body.ledgerGaps);
+        check('data check lists every upload with its row counts and marks the newest', r.body.ledgerImports.length === 2 && r.body.ledgerImports[0].rows_total === 1 && r.body.ledgerImports[1].rows_total === 3, r.body.ledgerImports);
+        const [[beforeRows]] = await dbConn.query('SELECT COUNT(*) n FROM ledger_roster_entries l JOIN ledger_imports i ON i.id = l.import_id JOIN users u ON u.id = i.uploaded_by WHERE u.email = ?', ['cara@check.test']);
+        r = await pj.fetch('/api/data-check/reuse/ledger/' + firstId, { method: 'POST', body: '{}' });
+        check('"use this upload again" saves it as a new upload without touching the old ones', r.status === 201 && (await dbConn.query('SELECT COUNT(*) n FROM ledger_roster_entries l JOIN ledger_imports i ON i.id = l.import_id JOIN users u ON u.id = i.uploaded_by WHERE u.email = ?', ['cara@check.test']))[0][0].n === beforeRows.n + 3, r.body);
+        r = await pj.fetch('/api/data-check');
+        check('after using it again the newest upload has all 3 payments and nothing is reported missing', r.body.ledgerImports[0].rows_total === 3 && r.body.ledgerGaps.every((x) => x.missingCount === 0 || x.importId === r.body.ledgerImports[0].id), r.body.ledgerGaps);
+        r = await pj.fetch('/api/data-check/reuse/ledger/99999999', { method: 'POST', body: '{}' });
+        check('re-using an upload that is not yours or does not exist is refused', r.status === 404, r.status);
+        const anon = await fetch(BASE + '/api/data-check');
+        check('the data check needs a sign-in', anon.status === 401, anon.status);
+        const [[cu]] = await dbConn.query("SELECT organization_id o FROM users WHERE email = 'cara@check.test'");
+        await dbConn.query("INSERT INTO users (organization_id, email, password_hash, name, role) SELECT ?, 'mem@check.test', password_hash, 'Mem', 'member' FROM users WHERE email = 'cara@check.test'", [cu.o]);
+        const mj = makeJar();
+        await mj.fetch('/api/auth/login', { method: 'POST', body: JSON.stringify({ email: 'mem@check.test', password: 'carapassword123' }) });
+        r = await mj.fetch('/api/data-check');
+        check('a normal member cannot open the data check', r.status === 403, r.status);
+      }
     } finally {
       await dbConn.end();
     }

@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Data check — Mentour Suite</title>
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<meta name="theme-color" content="#0875E1">
+<link rel="stylesheet" href="/shared.css">
+<link rel="stylesheet" href="/shell.css">
+<link rel="stylesheet" href="/theme.css">
+<style>
+  .dc-wrap { max-width: 1000px; padding: 8px 4px 48px; }
+  .dc-wrap h1 { margin: 0 0 4px; }
+  .dc-card { background: #fff; border: 1px solid #E3E6EA; border-radius: 10px; padding: 16px 20px; margin: 0 0 16px; line-height: 1.5; overflow-x: auto; }
+  .dc-card h2 { margin: 0 0 8px; font-size: 17px; }
+  .dc-muted { color: #5b6673; font-size: 13px; }
+  .dc-t { border-collapse: collapse; width: 100%; font-size: 13.5px; }
+  .dc-t th, .dc-t td { text-align: left; padding: 6px 10px; border-bottom: 1px solid #EDF0F3; vertical-align: top; }
+  .dc-t th { font-size: 12px; color: #5b6673; }
+  .dc-num { text-align: right !important; white-space: nowrap; }
+  .dc-cur { background: #E4F6E9; font-weight: 700; padding: 1px 8px; border-radius: 99px; font-size: 12px; color: #1B7A3A; }
+  .dc-warn { background: #FFF7E6; border-left: 3px solid #E0A100; padding: 8px 12px; border-radius: 4px; font-size: 13px; margin: 8px 0; }
+  .dc-ok { background: #E4F6E9; border-left: 3px solid #1B7A3A; padding: 8px 12px; border-radius: 4px; font-size: 13px; margin: 8px 0; }
+  .dc-btn { border: 1px solid #cfd5db; background: #fff; border-radius: 5px; padding: 5px 11px; font-size: 12.5px; font-weight: 600; cursor: pointer; font-family: inherit; }
+  details summary { cursor: pointer; font-weight: 600; margin: 6px 0; }
+  .dc-kpis { display: flex; flex-wrap: wrap; gap: 10px 26px; }
+  .dc-kpis b { display: block; font-size: 22px; }
+</style>
+</head>
+<body>
+<div id="app"><p style="padding:24px">Loading…</p></div>
+<script src="/shell.js"></script>
+<script>
+(function () {
+  var appEl = document.getElementById('app');
+  function esc(s) { return s === null || s === undefined ? '' : String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
+  function d(s) { return s ? esc(new Date(s).toLocaleString('en-US', { year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })) : '—'; }
+  function money(n) { return n === null || n === undefined ? '—' : '$' + Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+  function n0(v) { return Number(v || 0).toLocaleString('en-US'); }
+  var D = null, msg = '';
+
+  function importsTable(list, kind) {
+    if (!list.length) return '<p class="dc-muted">No uploads saved yet.</p>';
+    return '<table class="dc-t"><thead><tr><th>Upload</th><th>File</th><th>By</th><th class="dc-num">Rows</th>' + (kind === 'ledger' ? '<th class="dc-num">Paid</th><th class="dc-num">Unpaid</th>' : '') + '<th class="dc-num">People</th><th></th></tr></thead><tbody>' +
+      list.map(function (r, i) {
+        return '<tr><td>#' + r.id + '<br><span class="dc-muted">' + d(r.imported_at) + '</span></td><td>' + esc(r.file_name) + (i === 0 ? ' <span class="dc-cur">in use now</span>' : '') + '</td><td>' + esc(r.uploaded_by || '') + '</td>' +
+          '<td class="dc-num">' + n0(r.rows_total) + '</td>' + (kind === 'ledger' ? '<td class="dc-num">' + n0(r.rows_paid) + '</td><td class="dc-num">' + n0(r.rows_unpaid) + '</td>' : '') + '<td class="dc-num">' + n0(r.people) + '</td>' +
+          '<td>' + (i === 0 ? '' : '<button class="dc-btn" data-reuse="' + kind + ':' + r.id + '">Use this upload again</button>') + '</td></tr>';
+      }).join('') + '</tbody></table>';
+  }
+  function ledgerGaps() {
+    if (!D.ledgerGaps.length) return '<p class="dc-muted">Only one Ledger upload exists, so there is nothing earlier to compare with.</p>';
+    return D.ledgerGaps.map(function (g) {
+      var head = '<b>Upload #' + g.importId + '</b> (' + esc(g.file_name) + ', ' + d(g.imported_at) + '): ';
+      if (!g.missingCount) return '<div class="dc-ok">' + head + 'every payment in it is also in the upload now in use.</div>';
+      return '<div class="dc-warn">' + head + '<b>' + n0(g.missingCount) + ' payment row(s), ' + money(g.missingAmount) + '</b> are in this earlier upload but not in the one in use.</div>' +
+        '<details><summary>Show ' + Math.min(g.sample.length, g.missingCount) + ' of them</summary><table class="dc-t"><thead><tr><th>Consultant</th><th>Supplier</th><th>Label</th><th>Year</th><th>Sheet</th><th class="dc-num">Amount</th></tr></thead><tbody>' +
+        g.sample.map(function (r) { return '<tr><td>' + esc(r.consultant) + '</td><td>' + esc(r.supplier) + '</td><td>' + esc(r.label) + '</td><td>' + esc(r.year) + '</td><td>' + esc(r.sheet) + (r.unpaid ? ' (unpaid)' : '') + '</td><td class="dc-num">' + money(r.amount) + '</td></tr>'; }).join('') + '</tbody></table></details>';
+    }).join('');
+  }
+  function marginGaps() {
+    if (!D.marginGaps.length) return '<p class="dc-muted">Only one Margin upload exists, so there is nothing earlier to compare with.</p>';
+    return D.marginGaps.map(function (g) {
+      var head = '<b>Upload #' + g.importId + '</b> (' + esc(g.file_name) + ', ' + d(g.imported_at) + '): ';
+      if (!g.missingCount) return '<div class="dc-ok">' + head + 'every consultant / client / vendor line in it is also in the upload now in use.</div>';
+      return '<div class="dc-warn">' + head + '<b>' + n0(g.missingCount) + '</b> line(s) are in this earlier upload but not in the one in use.</div>' +
+        '<details><summary>Show ' + Math.min(g.sample.length, g.missingCount) + ' of them</summary><table class="dc-t"><thead><tr><th>Consultant</th><th>Client</th><th>Vendor</th><th>Status</th></tr></thead><tbody>' +
+        g.sample.map(function (r) { return '<tr><td>' + esc(r.consultant) + '</td><td>' + esc(r.client) + '</td><td>' + esc(r.vendor) + '</td><td>' + esc(r.status) + '</td></tr>'; }).join('') + '</tbody></table></details>';
+    }).join('');
+  }
+  function render() {
+    var n = D.now;
+    appEl.innerHTML = '<div class="dc-wrap"><h1>Data check</h1><p class="dc-muted">A read-only look at what is stored. Nothing on this page changes or deletes anything, except “Use this upload again”, which saves an earlier upload as the newest one (the same as uploading that file again).</p>' +
+      (msg ? '<div class="dc-ok">' + esc(msg) + '</div>' : '') +
+      '<div class="dc-card"><h2>What the app holds now</h2><div class="dc-kpis">' +
+        '<div><b>' + n0(n.consultants.total) + '</b>consultants<br><span class="dc-muted">' + n0(n.consultants.active) + ' active · ' + n0(n.consultants.inactive) + ' inactive</span></div>' +
+        '<div><b>' + n0(n.placements.total) + '</b>placements<br><span class="dc-muted">' + n0(n.placements.active) + ' active · ' + n0(n.placements.gone) + ' left</span></div>' +
+        '<div><b>' + n0(n.suppliers.total) + '</b>supplier companies</div>' +
+        '<div><b>' + n0(n.supplierInvoices.total) + '</b>supplier payments created in the app<br><span class="dc-muted">' + n0(n.supplierInvoices.edited_file_rows) + ' edited file rows</span></div>' +
+        '<div><b>' + n0(n.clientInvoices.total) + '</b>client invoices</div></div></div>' +
+      '<div class="dc-card"><h2>Ledger uploads (supplier payments file)</h2><p class="dc-muted">Supplier payments and the Ledger page show the upload marked “in use now”. Earlier uploads are all still stored.</p>' + importsTable(D.ledgerImports, 'ledger') + '<h3 style="margin:14px 0 4px;font-size:15px">Payments in earlier uploads that the one in use does not have</h3>' + ledgerGaps() + '</div>' +
+      '<div class="dc-card"><h2>Margin uploads</h2>' + importsTable(D.marginImports, 'margin') + '<h3 style="margin:14px 0 4px;font-size:15px">Lines in earlier uploads that the one in use does not have</h3>' + marginGaps() + '</div>' +
+      '<div class="dc-card"><h2>Possible removals</h2>' +
+        (D.fileOnly ? (D.fileOnly.count ? '<div class="dc-warn"><b>' + n0(D.fileOnly.count) + '</b> consultant / client / vendor line(s) in the Margin upload in use have no placement in the app (someone may have removed or changed them):</div><table class="dc-t"><thead><tr><th>Consultant</th><th>Client</th><th>Vendor</th><th>Status in file</th></tr></thead><tbody>' + D.fileOnly.sample.map(function (r) { return '<tr><td>' + esc(r.name) + '</td><td>' + esc(r.client) + '</td><td>' + esc(r.program) + '</td><td>' + esc(r.status) + '</td></tr>'; }).join('') + '</tbody></table>' : '<div class="dc-ok">Every line of the Margin upload in use still has its placement in the app.</div>') : '<p class="dc-muted">No Margin upload yet.</p>') +
+        (D.paidNoPlacement ? (D.paidNoPlacement.count ? '<div class="dc-warn" style="margin-top:12px"><b>' + n0(D.paidNoPlacement.count) + '</b> consultant(s) have payments on the Ledger upload in use but no placement at all:</div><p>' + D.paidNoPlacement.sample.map(function (r) { return esc(r.name); }).join(', ') + '</p>' : '<div class="dc-ok" style="margin-top:12px">Every consultant paid on the Ledger upload in use has at least one placement.</div>') : '') +
+      '</div></div>';
+  }
+  function load() {
+    return fetch('/api/data-check').then(function (r) { return r.json().then(function (b) { if (!r.ok) throw new Error(b.error || 'Could not load.'); return b; }); })
+      .then(function (b) { D = b; render(); })
+      .catch(function (e) { appEl.innerHTML = '<div class="dc-wrap"><p>' + esc(e.message) + '</p></div>'; });
+  }
+  appEl.addEventListener('click', function (e) {
+    var b = e.target.closest('[data-reuse]'); if (!b) return;
+    var p = b.getAttribute('data-reuse').split(':');
+    fetch('/api/data-check/reuse/' + p[0] + '/' + p[1], { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })
+      .then(function (r) { return r.json().catch(function () { return {}; }).then(function (j) { if (!r.ok) throw new Error(j.error || 'Could not save.'); return j; }); })
+      .then(function () { msg = 'Saved upload #' + p[1] + ' again as the newest ' + p[0] + ' upload.'; return load(); })
+      .catch(function (err) { if (!/^Cancelled/.test(err.message)) window.alert(err.message); });
+  });
+  load();
+})();
+</script>
+</body>
+</html>

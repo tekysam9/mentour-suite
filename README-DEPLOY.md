@@ -481,3 +481,6 @@ Directory → "Import details from a file" (HR/owner only). Upload the contact-c
 - Directory → consultant row → **Edit** now opens the contact fields, a **Status** selector with an **End date**, and the placements panel (client, vendor, worker type, supplier, status, end date).
 - **Swap client ↔ vendor** fixes a placement entered the wrong way round (e.g. Client HCL / Vendor T-Mobile becomes Client T-Mobile / Vendor HCL). The consultant's margin rows follow; invoices and supplier payments already created are not changed.
 - Making a consultant **Inactive** closes all their open placements on the end date; **Active** reopens the latest one. The same control is on the person's own page. No database changes.
+
+## Data check (owner / HR): when records seem to be missing
+Settings → **Data check** is a read-only report: every saved Ledger and Margin upload with its row counts, which one the app is showing, payments/lines that an earlier upload had and the one in use does not, and Margin lines whose placement is no longer in the app. Earlier uploads are never deleted; **Use this upload again** saves one as the newest (same as re-uploading that file). No database changes.
