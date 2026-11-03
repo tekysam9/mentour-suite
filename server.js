@@ -60,6 +60,7 @@ app.use('/api/roster', rosterRoutes);
 app.use('/api/margin', createImportRouter('margin_imports', { onSave: saveMarginRoster }));
 app.use('/api/directory-import', directoryImportRoutes);
 app.use('/api/data-check', require('./src/routes/dataCheck'));
+app.use('/api/payment-history', require('./src/routes/paymentHistory'));
 app.use('/api/directory', directoryRoutes);
 app.use('/api/profiles', profileRoutes);
 app.use('/api/forms', formRoutes);

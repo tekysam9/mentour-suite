@@ -93,6 +93,7 @@ const REFERENCING_COLUMNS = {
   consultants: [
     { table: 'margin_roster_entries', column: 'consultant_id' },
     { table: 'ledger_roster_entries', column: 'consultant_id' },
+    { table: 'supplier_payment_history', column: 'consultant_id', optional: true },
     { table: 'consultant_assignments', column: 'consultant_id' },
     { table: 'invoices', column: 'consultant_id' },
     // Generated subvendor invoices are regenerable, so a pairing both records
@@ -103,6 +104,7 @@ const REFERENCING_COLUMNS = {
   subvendors: [
     { table: 'margin_roster_entries', column: 'subvendor_id' },
     { table: 'ledger_roster_entries', column: 'subvendor_id' },
+    { table: 'supplier_payment_history', column: 'subvendor_id', optional: true },
     { table: 'subvendor_invoices', column: 'subvendor_id', ignore: true },
     { table: 'onboardings', column: 'supplier_id', optional: true },
     { table: 'consultant_assignments', column: 'supplier_id', optional: true },

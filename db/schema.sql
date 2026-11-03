@@ -438,7 +438,8 @@ ALTER TABLE subvendor_invoices ADD COLUMN IF NOT EXISTS payment_status ENUM('unp
 ALTER TABLE subvendor_invoices ADD COLUMN IF NOT EXISTS timesheet_submitted ENUM('yes', 'no') NOT NULL DEFAULT 'no' AFTER payment_status;
 ALTER TABLE subvendor_invoices ADD COLUMN IF NOT EXISTS notes VARCHAR(1000) NULL AFTER timesheet_submitted;
 ALTER TABLE subvendor_invoices MODIFY COLUMN hours DECIMAL(8,2) NULL;
-ALTER TABLE subvendor_invoices MODIFY COLUMN rate_source ENUM('ledger', 'margin', 'hours_file') NOT NULL;
+-- (kept at the full final list so re-running this file can never narrow the column and fail on rows that use a later value)
+ALTER TABLE subvendor_invoices MODIFY COLUMN rate_source ENUM('ledger', 'margin', 'hours_file', 'manual', 'placement') NOT NULL;
 ALTER TABLE subvendor_invoices MODIFY COLUMN amount DECIMAL(12,2) NULL;
 
 -- Session store table (used by express-mysql-session; it will create/manage
@@ -521,7 +522,7 @@ ALTER TABLE record_forms    MODIFY entity ENUM('consultants', 'clients', 'progra
 -- edited copies of payments-file rows (they replace the file's row in the list). Safe to re-run.
 ALTER TABLE subvendor_invoices ADD COLUMN IF NOT EXISTS paid_date DATE NULL;
 ALTER TABLE subvendor_invoices ADD COLUMN IF NOT EXISTS overrides_ledger TINYINT(1) NOT NULL DEFAULT 0;
-ALTER TABLE subvendor_invoices MODIFY rate_source ENUM('ledger', 'margin', 'hours_file', 'manual') NOT NULL;
+ALTER TABLE subvendor_invoices MODIFY rate_source ENUM('ledger', 'margin', 'hours_file', 'manual', 'placement') NOT NULL;
 
 -- Onboarding: the placement information a recruiter hands to the HR admin, plus the
 -- paperwork checklist for the way the person is engaged (W2 / C2C / 1099).
@@ -665,4 +666,51 @@ CREATE TABLE IF NOT EXISTS user_mail_settings (
   updated_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
   FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- ---------------------------------------------------------------------------
+-- Supplier payment HISTORY (older years, imported from the payment-history workbook after a review).
+-- Additive and safe to re-run. Unlike a Ledger upload, these rows are permanent: a newer upload never
+-- hides them, and one import can be undone as a whole (payment_history_imports.undone_at).
+-- One row per payment. consultant_id / subvendor_id have no foreign key on purpose (same as
+-- ledger_roster_entries): a Directory merge repoints them, and deleting a Directory record never
+-- silently deletes payment history.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS payment_history_imports (
+  id              INT AUTO_INCREMENT PRIMARY KEY,
+  organization_id INT NOT NULL,
+  uploaded_by     INT NOT NULL,
+  file_name       VARCHAR(255) NOT NULL,
+  rows_added      INT NOT NULL DEFAULT 0,
+  total_amount    DECIMAL(14,2) NOT NULL DEFAULT 0,
+  summary         JSON NULL,
+  created_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  undone_at       DATETIME NULL,
+  FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE,
+  FOREIGN KEY (uploaded_by) REFERENCES users(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS supplier_payment_history (
+  id              INT AUTO_INCREMENT PRIMARY KEY,
+  organization_id INT NOT NULL,
+  import_id       INT NOT NULL,
+  consultant_id   INT NOT NULL,
+  subvendor_id    INT NOT NULL,
+  period_month    DATE NOT NULL,            -- the HOURS month, always the 1st
+  amount          DECIMAL(12,2) NOT NULL,
+  deduction       DECIMAL(12,2) NULL,
+  paid_date       DATE NULL,
+  pay_method      VARCHAR(32) NULL,
+  client_text     VARCHAR(255) NULL,        -- client / vendor as written in the file (a label only)
+  supplier_text   VARCHAR(255) NULL,        -- supplier cell as written in the file
+  note            VARCHAR(1000) NULL,
+  source_sheet    VARCHAR(128) NULL,
+  source_ref      VARCHAR(64) NULL,
+  source_key      CHAR(40) NOT NULL,
+  created_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE,
+  FOREIGN KEY (import_id) REFERENCES payment_history_imports(id) ON DELETE CASCADE,
+  UNIQUE KEY uq_payment_history_key (organization_id, source_key),
+  INDEX idx_payment_history_pair (organization_id, subvendor_id, consultant_id, period_month),
+  INDEX idx_payment_history_import (import_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

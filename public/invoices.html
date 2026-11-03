@@ -530,7 +530,7 @@
 
   function svRow(inv, idx) {
     var src = inv.kind === 'paid'
-      ? 'Payments file' + (inv.paid_in ? ' · paid in ' + inv.paid_in : '') + (inv.multi_month ? ' · multi-month' : '')
+      ? (inv.source === 'history' ? 'Payment history (older years)' + (inv.history_file ? ' · ' + inv.history_file : '') : 'Payments file' + (inv.paid_in ? ' · paid in ' + inv.paid_in : '') + (inv.multi_month ? ' · multi-month' : ''))
       : (inv.overrides_ledger ? 'Edited copy of payments file' : inv.rate_source === 'manual' ? 'Added by hand' : inv.rate_source === 'margin' ? 'Generated · Margin cost rate' : inv.rate_source === 'hours_file' ? 'Imported · hours file' : 'Generated · Ledger rate');
     var head =
       '<td class="fin-sno">' + (idx + 1) + '</td>' +

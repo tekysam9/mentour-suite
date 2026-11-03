@@ -484,3 +484,10 @@ Directory → "Import details from a file" (HR/owner only). Upload the contact-c
 
 ## Data check (owner / HR): when records seem to be missing
 Settings → **Data check** is a read-only report: every saved Ledger and Margin upload with its row counts, which one the app is showing, payments/lines that an earlier upload had and the one in use does not, and Margin lines whose placement is no longer in the app. Earlier uploads are never deleted; **Use this upload again** saves one as the newest (same as re-uploading that file). No database changes.
+
+## Payment history import (owner / HR): bringing in older supplier payments
+**Before deploying:** run `db/schema.sql` once on the live database (safe to re-run). It adds two tables, `payment_history_imports` and `supplier_payment_history`. Until then the page shows a "run the schema" message and nothing else changes.
+
+Fin-Module → **Payment history import**: choose the decade payment workbook (read in the browser, nothing is sent to the database yet). The app reads it with rules for its quirks (columns without years, "2400-216.55bgv" deductions, split payments, supplier alias cells, W2 "Employee" rows, two corporations, duplicate rows), then asks about everything it is unsure of: which year each column is, what a deduction means, which existing consultant/supplier a spelling is, duplicates, doubtful dates, unreadable cells. Months already in the app are skipped (the app's figure wins), so nothing is doubled.
+
+Nothing is written until **Save**. Saved payments go into `supplier_payment_history`, so a newer Ledger upload can never hide them; they appear on Supplier payments labelled "Payment history". Each import can be **undone** (removes only its payments; Directory records it created stay). Only the owner or HR can use it.

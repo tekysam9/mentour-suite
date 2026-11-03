@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Payment history import — Mentour Suite</title>
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<meta name="theme-color" content="#0875E1">
+<link rel="stylesheet" href="/shared.css">
+<link rel="stylesheet" href="/shell.css">
+<link rel="stylesheet" href="/theme.css">
+<style>
+  .ph-wrap { max-width: 1040px; padding: 8px 4px 90px; }
+  .ph-wrap h1 { margin: 0 0 4px; }
+  .ph-card { background: #fff; border: 1px solid #E3E6EA; border-radius: 10px; padding: 16px 20px; margin: 0 0 14px; line-height: 1.5; overflow-x: auto; }
+  .ph-card h2 { margin: 0 0 4px; font-size: 16px; }
+  .ph-card.open { border-left: 4px solid #E0A100; }
+  .ph-card.done { border-left: 4px solid #1B7A3A; }
+  .ph-muted { color: #5b6673; font-size: 13px; }
+  .ph-req { display: inline-block; font-size: 11.5px; font-weight: 700; padding: 2px 9px; border-radius: 99px; margin-left: 8px; background: #FFF5E5; color: #8A5A00; }
+  .ph-t { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 8px; }
+  .ph-t th { text-align: left; font-size: 11.5px; color: #5b6673; padding: 4px 8px; border-bottom: 1px solid #E3E6EA; }
+  .ph-t td { padding: 6px 8px; border-bottom: 1px solid #F0F2F4; vertical-align: top; word-break: break-word; }
+  .ph-num { text-align: right !important; white-space: nowrap; }
+  .ph-opt { display: block; margin: 5px 0; font-size: 13.5px; }
+  .ph-opt input { margin-right: 7px; }
+  .ph-sel, .ph-in { border: 1px solid #cfd5db; border-radius: 5px; padding: 6px 8px; font-size: 13px; font-family: inherit; max-width: 100%; }
+  .ph-btn { border: 1px solid #cfd5db; background: #fff; border-radius: 5px; padding: 8px 15px; font-size: 13.5px; font-weight: 600; cursor: pointer; font-family: inherit; }
+  .ph-btn.primary { background: #0B5CAD; border-color: #0B5CAD; color: #fff; }
+  .ph-btn[disabled] { opacity: .5; cursor: default; }
+  .ph-kpis { display: flex; flex-wrap: wrap; gap: 10px 28px; margin: 8px 0; }
+  .ph-kpis b { display: block; font-size: 22px; }
+  .ph-bar { position: sticky; bottom: 0; background: #fff; border-top: 1px solid #E3E6EA; padding: 12px 8px; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-top: 10px; box-shadow: 0 -4px 12px rgba(0,0,0,.05); }
+  .ph-msg { font-size: 13px; font-weight: 600; } .ph-msg.err { color: #B3261E; } .ph-msg.ok { color: #1B7A3A; }
+  .ph-ok { background: #E4F6E9; border-left: 3px solid #1B7A3A; padding: 8px 12px; border-radius: 4px; font-size: 13px; margin: 8px 0; }
+  .ph-warn { background: #FFF7E6; border-left: 3px solid #E0A100; padding: 8px 12px; border-radius: 4px; font-size: 13px; margin: 8px 0; }
+  .ph-tag { font-size: 11px; font-weight: 700; padding: 1px 7px; border-radius: 99px; background: #EEF1F4; color: #5b6673; margin-right: 5px; }
+  .ph-tag.c { background: #E3F1FD; color: #0B5CAD; } .ph-tag.s { background: #FBF3E6; color: #8A5A00; }
+  details summary { cursor: pointer; font-weight: 600; margin: 6px 0; }
+  .ph-drop { border: 2px dashed #b8c2cc; border-radius: 10px; padding: 26px; text-align: center; background: #fafbfc; }
+</style>
+</head>
+<body>
+<div id="app"><p style="padding:24px">Loading…</p></div>
+<script src="/lib/xlsx.full.min.js"></script>
+<script src="/shell.js"></script>
+<script>
+(function () {
+  var appEl = document.getElementById('app');
+  var S = { fileName: '', sheets: null, answers: null, pv: null, busy: false, seq: 0, msg: '', kind: '', result: null, imports: [], reviewed: false };
+  function esc(s) { return s === null || s === undefined ? '' : String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
+  function money(n) { return n === null || n === undefined ? '—' : '$' + Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+  function n0(v) { return Number(v || 0).toLocaleString('en-US'); }
+  function api(m, u, b) {
+    return fetch(u, { method: m, headers: { 'Content-Type': 'application/json' }, body: b ? JSON.stringify(b) : undefined })
+      .then(function (r) { return r.json().catch(function () { return {}; }).then(function (j) { return { ok: r.ok, status: r.status, body: j }; }); });
+  }
+  function freshAnswers() { return { years: null, deduction: null, dates: undefined, entities: {}, groups: {}, dupes: {}, aliases: {}, clients: {}, fixes: {} }; }
+
+  // ---- reading the workbook (in the browser; nothing is sent until you press Review) ----
+  function readFile(file) {
+    S.msg = 'Reading ' + file.name + '…'; S.kind = ''; render();
+    var fr = new FileReader();
+    fr.onload = function () {
+      try {
+        var wb = XLSX.read(new Uint8Array(fr.result), { type: 'array', cellDates: true });
+        var sheets = {};
+        wb.SheetNames.forEach(function (n) { sheets[n] = XLSX.utils.sheet_to_json(wb.Sheets[n], { header: 1, raw: true, defval: null }); });
+        S.fileName = file.name; S.sheets = sheets; S.answers = freshAnswers(); S.result = null; S.reviewed = false;
+        preview();
+      } catch (e) { S.msg = 'That file could not be read as a spreadsheet.'; S.kind = 'err'; render(); }
+    };
+    fr.readAsArrayBuffer(file);
+  }
+  function preview() {
+    var seq = ++S.seq; S.busy = true; S.msg = ''; S.kind = '';
+    var st = document.getElementById('ph-status'); if (st) st.textContent = 'Reviewing your answers…';
+    var sv = document.getElementById('ph-save'); if (sv) sv.disabled = true;
+    return api('POST', '/api/payment-history/preview', { apply: false, fileName: S.fileName, sheets: S.sheets, answers: S.answers }).then(function (r) {
+      if (seq !== S.seq) return;
+      S.busy = false;
+      if (!r.ok) { S.msg = r.body.error || 'Could not review this file.'; S.kind = 'err'; S.pv = null; render(); return; }
+      S.pv = r.body; S.msg = ''; renderKeep();
+    }).catch(function () { if (seq !== S.seq) return; S.busy = false; S.msg = 'The connection dropped. Nothing was saved.'; S.kind = 'err'; render(); });
+  }
+  function apply() {
+    S.busy = true; S.msg = 'Saving…'; S.kind = ''; render();
+    api('POST', '/api/payment-history/apply', { fileName: S.fileName, sheets: S.sheets, answers: S.answers, confirm: true }).then(function (r) {
+      S.busy = false;
+      if (!r.ok) { S.msg = (r.body.error || 'Could not save.') + ' Nothing was saved.'; S.kind = 'err'; render(); return; }
+      S.result = r.body; S.msg = ''; S.pv = null; S.sheets = null; loadImports().then(render);
+    }).catch(function (e) { S.busy = false; if (e && /^Cancelled/.test(e.message)) { S.msg = ''; } else { S.msg = 'The connection dropped. Nothing was saved.'; S.kind = 'err'; } render(); });
+  }
+  function loadImports() { return api('GET', '/api/payment-history/imports').then(function (r) { S.imports = r.ok ? (r.body.imports || []) : []; }); }
+
+  // ---- rendering ----
+  function renderKeep() { var y = window.scrollY; render(); window.scrollTo(0, y); }
+  function qCard(q, inner) {
+    var open = false;
+    if (q.type === 'entities') open = q.items.some(function (i) { return i.needs && !i.value; });
+    else if (q.type === 'groups') open = q.items.some(function (i) { return i.required && !i.value; });
+    else if (q.required) open = !q.value;
+    return '<div class="ph-card ' + (open ? 'open' : 'done') + '"><h2>' + esc(q.title) + (open ? '<span class="ph-req">needs your answer</span>' : '') + '</h2>' + (q.detail ? '<div class="ph-muted">' + esc(q.detail) + '</div>' : '') + inner + '</div>';
+  }
+  function radios(name, options, value) {
+    return options.map(function (o) { return '<label class="ph-opt"><input type="radio" name="' + esc(name) + '" value="' + esc(o.value) + '"' + (value === o.value ? ' checked' : '') + '>' + esc(o.label) + '</label>'; }).join('');
+  }
+  function entityValue(i) { var v = i.value; if (!v) return ''; if (v.action === 'existing') return 'dir:' + v.id; if (v.action === 'new') return 'new'; if (v.action === 'skip') return 'skip'; if (v.action === 'merge') return 'file:' + v.key; return ''; }
+  function entitySelect(i) {
+    var cur = entityValue(i);
+    var opts = '<option value=""' + (cur === '' ? ' selected' : '') + '>— choose —</option>';
+    i.candidates.forEach(function (c) { var v = c.type === 'dir' ? 'dir:' + c.id : 'file:' + c.key; opts += '<option value="' + esc(v) + '"' + (cur === v ? ' selected' : '') + '>' + (c.type === 'dir' ? 'Use existing: ' : 'Same as: ') + esc(c.name) + ' (' + esc(c.why) + ')</option>'; });
+    opts += '<option value="new"' + (cur === 'new' ? ' selected' : '') + '>Create “' + esc(i.name) + '” as new</option><option value="skip"' + (cur === 'skip' ? ' selected' : '') + '>Skip these payments</option>';
+    return '<select class="ph-sel" data-entity="' + esc(i.key) + '">' + opts + '</select>';
+  }
+  function questionHtml(q) {
+    if (q.type === 'choice') return qCard(q, radios('q-' + q.id, q.options, q.value) + (q.items && q.items.length ? '<details><summary>Show examples</summary><table class="ph-t"><thead><tr><th>Consultant</th><th>Month</th><th>In the file</th><th>Date as read</th></tr></thead><tbody>' + q.items.map(function (x) { return '<tr><td>' + esc(x.consultant) + '</td><td>' + esc(x.month) + '</td><td>' + esc(x.text) + '</td><td>' + esc(x.read) + '</td></tr>'; }).join('') + '</tbody></table></details>' : ''));
+    if (q.type === 'aliases') return qCard(q, q.items.map(function (i) { return '<div class="ph-sub" style="margin-top:10px"><b>' + esc(i.label) + '</b> <span class="ph-muted">· ' + i.payments + ' payments · e.g. ' + esc(i.consultants.join(', ')) + '</span><select class="ph-sel" style="display:block;margin-top:4px" data-alias="' + esc(i.key) + '">' + i.options.map(function (o) { return '<option value="' + esc(o.value) + '"' + (i.value === o.value ? ' selected' : '') + '>' + esc(o.label) + '</option>'; }).join('') + '</select></div>'; }).join(''));
+    if (q.type === 'groups') return qCard(q, q.items.map(function (i) { return '<div style="margin-top:10px"><b>' + esc(i.label) + '</b>' + (i.detail ? '<div class="ph-muted">' + esc(i.detail) + '</div>' : '') + radios('g-' + i.id, i.options, i.value) .replace(/name="g-/g, 'data-group="' + esc(i.id) + '" name="g-') + '</div>'; }).join(''));
+    if (q.type === 'dupes') return qCard(q, '<table class="ph-t"><thead><tr><th>Consultant</th><th>Supplier</th><th>Where</th><th>What is it?</th></tr></thead><tbody>' + q.items.map(function (i) { return '<tr><td>' + esc(i.consultant) + '</td><td>' + esc(i.supplier) + '</td><td>' + esc(i.rowA) + ' (' + i.countA + ' payments) and ' + esc(i.rowB) + ' (' + i.countB + ')' + (i.overlapMonths ? ', ' + i.overlapMonths + ' same month(s)' : '') + '</td><td><select class="ph-sel" data-dupe="' + esc(i.id) + '">' + i.options.map(function (o) { return '<option value="' + esc(o.value) + '"' + (i.value === o.value ? ' selected' : '') + '>' + esc(o.label) + '</option>'; }).join('') + '</select></td></tr>'; }).join('') + '</tbody></table>');
+    if (q.type === 'entities') {
+      var unans = q.items.filter(function (i) { return i.needs && !i.value; }).length;
+      return qCard(q, '<div style="margin:8px 0">' + (unans ? '<button class="ph-btn" data-fill-suggestions="1" type="button">Fill the ' + unans + ' unanswered with my suggestions</button> <span class="ph-muted">(you can change any of them afterwards)</span>' : '<span class="ph-muted">All answered. Change any if needed.</span>') + '</div><table class="ph-t"><thead><tr><th>Name in the file</th><th class="ph-num">Payments</th><th class="ph-num">Total</th><th>Months</th><th>Which record is it?</th></tr></thead><tbody>' + q.items.map(function (i) {
+        return '<tr><td><span class="ph-tag ' + i.kind + '">' + (i.kind === 'c' ? 'Consultant' : 'Supplier') + '</span>' + esc(i.name) + (i.spellings.length > 1 ? '<div class="ph-muted">also written: ' + esc(i.spellings.filter(function (x) { return x !== i.name; }).join(' · ')) + '</div>' : '') + (i.left ? '<div class="ph-muted">on the “Left” sheet</div>' : '') + '</td><td class="ph-num">' + i.payments + '</td><td class="ph-num">' + money(i.total) + '</td><td>' + esc(i.from) + ' → ' + esc(i.to) + '</td><td>' + entitySelect(i) + '</td></tr>'; }).join('') + '</tbody></table>');
+    }
+    if (q.type === 'fixes') return qCard(q, '<details><summary>Show the ' + q.items.length + ' cells (type an amount only for the ones you want)</summary><table class="ph-t"><thead><tr><th>Where</th><th>Consultant</th><th>Month</th><th>Cell says</th><th>Amount</th><th>Paid date</th></tr></thead><tbody>' + q.items.map(function (i) { return '<tr><td>' + esc(i.sheet) + ' row ' + i.row + '</td><td>' + esc(i.consultant) + '</td><td>' + esc(i.hoursMonth) + '</td><td>' + esc(i.text) + '<div class="ph-muted">' + esc(i.why) + '</div></td><td>' + (i.hoursMonth && i.consultant ? '<input class="ph-in" style="width:90px" type="number" step="0.01" min="0" data-fix-amt="' + esc(i.id) + '" value="' + (i.fix ? esc(i.fix.amount) : '') + '">' : '<span class="ph-muted">can’t be placed</span>') + '</td><td>' + (i.hoursMonth && i.consultant ? '<input class="ph-in" type="date" data-fix-date="' + esc(i.id) + '" value="' + (i.fix && i.fix.paidDate ? esc(i.fix.paidDate) : '') + '">' : '') + '</td></tr>'; }).join('') + '</tbody></table></details>');
+    if (q.type === 'clients') return qCard(q, q.items.map(function (i) { return '<div style="margin-top:8px">' + radios('c-' + i.id, i.options, i.value).replace(/name="c-/g, 'data-client="' + esc(i.id) + '" name="c-') + '</div>'; }).join(''));
+    if (q.type === 'info') return qCard(q, '<details><summary>Show them</summary><table class="ph-t"><thead><tr><th>Consultant</th><th>Supplier</th><th>Month</th><th class="ph-num">In the file</th><th class="ph-num">Already in the app</th></tr></thead><tbody>' + q.items.map(function (i) { return '<tr' + (Math.abs(i.fileAmount - i.appAmount) > 1 ? ' style="background:#FFF9EC"' : '') + '><td>' + esc(i.consultant) + '</td><td>' + esc(i.supplier) + '</td><td>' + esc(i.month) + '</td><td class="ph-num">' + money(i.fileAmount) + '</td><td class="ph-num">' + money(i.appAmount) + '</td></tr>'; }).join('') + '</tbody></table></details>');
+    return '';
+  }
+  function summaryHtml(pv) {
+    var st = pv.stats; var years = Object.keys(st.byYear).sort();
+    var sk = Object.keys(st.skipped);
+    return '<div class="ph-card"><h2>What I found in “' + esc(S.fileName) + '”</h2><div class="ph-kpis"><div><b>' + n0(st.read) + '</b>payments read</div><div><b>' + n0(st.willSave) + '</b>would be saved<br><span class="ph-muted">' + money(st.willSaveTotal) + '</span></div><div><b>' + n0(st.alreadyInApp) + '</b>already in the app<br><span class="ph-muted">not imported again</span></div><div><b>' + n0(st.unreadable) + '</b>cells not understood</div><div><b>' + n0(st.newConsultants.length) + ' / ' + n0(st.newSuppliers.length) + '</b>new people / suppliers</div></div>' +
+      '<details><summary>By year</summary><table class="ph-t"><thead><tr><th>Hours year</th><th class="ph-num">Payments</th><th class="ph-num">Total</th></tr></thead><tbody>' + years.map(function (y) { return '<tr><td>' + y + '</td><td class="ph-num">' + n0(st.byYear[y].payments) + '</td><td class="ph-num">' + money(st.byYear[y].total) + '</td></tr>'; }).join('') + '</tbody></table></details>' +
+      '<details><summary>Sheets</summary><table class="ph-t"><thead><tr><th>Sheet</th><th>Layout</th><th class="ph-num">Payments</th><th class="ph-num">Notes (done, no invoice…)</th><th class="ph-num">Not understood</th></tr></thead><tbody>' + pv.sheets.map(function (s) { return '<tr><td>' + esc(s.sheet) + '</td><td>' + (s.layout === 'matrix' ? 'month-by-month grid' : 'monthly AR/AP') + '</td><td class="ph-num">' + s.payments + '</td><td class="ph-num">' + s.statuses + '</td><td class="ph-num">' + s.unreadable + '</td></tr>'; }).join('') + pv.skippedSheets.map(function (s) { return '<tr><td>' + esc(s.sheet) + '</td><td colspan="4" class="ph-muted">' + esc(s.why) + '</td></tr>'; }).join('') + '</tbody></table></details>' +
+      (sk.length ? '<details><summary>Left out (' + n0(sk.reduce(function (t, k) { return t + st.skipped[k]; }, 0)) + ')</summary><table class="ph-t"><tbody>' + sk.map(function (k) { return '<tr><td>' + esc(k) + '</td><td class="ph-num">' + st.skipped[k] + '</td></tr>'; }).join('') + '</tbody></table></details>' : '') +
+      (st.newConsultants.length || st.newSuppliers.length ? '<details><summary>New records that would be created</summary><div class="ph-muted">Consultants (' + st.newConsultants.length + '): ' + esc(st.newConsultants.map(function (c) { return c.name; }).join(', ')) + '</div><div class="ph-muted" style="margin-top:6px">Suppliers (' + st.newSuppliers.length + '): ' + esc(st.newSuppliers.map(function (c) { return c.name; }).join(', ')) + '</div></details>' : '') +
+      '<details><summary>First payments that would be saved</summary><table class="ph-t"><thead><tr><th>Consultant</th><th>Supplier</th><th>Hours month</th><th>Paid</th><th class="ph-num">Amount</th><th>Note</th></tr></thead><tbody>' + pv.sample.map(function (r) { return '<tr><td>' + esc(r.consultant) + '</td><td>' + esc(r.supplier) + '</td><td>' + esc(r.month) + '</td><td>' + esc(r.paid || '—') + '</td><td class="ph-num">' + money(r.amount) + '</td><td class="ph-muted">' + esc(r.note) + '</td></tr>'; }).join('') + '</tbody></table></details></div>';
+  }
+  var ORDER = ['years', 'aliases', 'deduction', 'entities', 'dupes', 'groups', 'dates', 'clients', 'overlap', 'unreadable'];
+  function importsHtml() {
+    if (!S.imports.length) return '';
+    return '<div class="ph-card"><h2>Earlier payment-history imports</h2><div class="ph-muted">Undo removes only the payments that import added. People and suppliers it created stay in the Directory.</div><table class="ph-t"><thead><tr><th>Import</th><th>File</th><th class="ph-num">Payments</th><th class="ph-num">Total</th><th></th></tr></thead><tbody>' + S.imports.map(function (i) { return '<tr><td>#' + i.id + '<br><span class="ph-muted">' + esc(new Date(i.created_at).toLocaleString('en-US')) + ' · ' + esc(i.by || '') + '</span></td><td>' + esc(i.file_name) + '</td><td class="ph-num">' + n0(i.undone_at ? 0 : i.rows_now) + '</td><td class="ph-num">' + money(i.total_amount) + '</td><td>' + (i.undone_at ? '<span class="ph-muted">undone</span>' : '<button class="ph-btn" data-undo="' + i.id + '" type="button">Undo this import</button>') + '</td></tr>'; }).join('') + '</tbody></table></div>';
+  }
+  function render() {
+    var h = '<div class="ph-wrap"><h1>Payment history import</h1><p class="ph-muted">Bring in older supplier payments from your payment-history workbook. Nothing is saved until you have answered the questions below and pressed Save. Payments are kept permanently (a newer upload never hides them) and one import can be undone as a whole.</p>';
+    h += '<div class="ph-msg ' + S.kind + '" id="ph-status" role="status" style="margin:6px 0;min-height:18px">' + esc(S.msg) + '</div>';
+    if (S.result) {
+      var r = S.result;
+      h += '<div class="ph-card done"><h2>Saved</h2><div class="ph-ok"><b>' + n0(r.added) + ' payments (' + money(r.total) + ')</b> were added' + (r.alreadyThere ? ', ' + n0(r.alreadyThere) + ' were already there' : '') + '. They now appear on <a href="/invoices.html#subvendor">Supplier payments</a> and the Ledger page.</div>' +
+        '<div class="ph-muted">Created ' + r.created.consultants.length + ' consultant(s) and ' + r.created.suppliers.length + ' supplier(s) in the Directory (consultants on the “Left” sheet are marked inactive).</div></div>';
+    }
+    if (!S.pv) {
+      h += '<div class="ph-card"><div class="ph-drop"><p><b>Choose the payment-history workbook (.xlsx)</b></p><input type="file" id="ph-file" accept=".xlsx,.xlsm,.xls"></div></div>';
+    } else {
+      var pv = S.pv;
+      h += '<p><button class="ph-btn" id="ph-other" type="button">Choose a different file</button></p>' + summaryHtml(pv);
+      var byId = {}; pv.questions.forEach(function (q) { byId[q.id] = q; });
+      ORDER.forEach(function (id) { if (byId[id]) h += questionHtml(byId[id]); });
+      var open = pv.requiredOpen.length;
+      h += '<div class="ph-bar"><label style="font-size:13.5px"><input type="checkbox" id="ph-reviewed"' + (S.reviewed ? ' checked' : '') + '> I have gone through the answers above</label><button class="ph-btn primary" id="ph-save" type="button"' + (pv.canApply && S.reviewed && !S.busy ? '' : ' disabled') + '>Save ' + n0(pv.stats.willSave) + ' payments (' + money(pv.stats.willSaveTotal) + ')</button><span class="ph-muted">' + (open ? open + ' question(s) still need an answer.' : (pv.stats.willSave ? '' : 'Nothing new to save.')) + '</span></div>';
+    }
+    h += importsHtml() + '</div>';
+    appEl.innerHTML = h;
+  }
+
+  // ---- events ----
+  appEl.addEventListener('change', function (e) {
+    var t = e.target; var A = S.answers;
+    if (t.id === 'ph-file' && t.files[0]) { readFile(t.files[0]); return; }
+    if (t.id === 'ph-reviewed') { S.reviewed = t.checked; renderKeep(); return; }
+    if (!A) return;
+    var name = t.getAttribute('name') || '';
+    if (t.type === 'radio' && /^q-/.test(name)) { A[name.slice(2)] = t.value; S.reviewed = false; preview(); return; }
+    if (t.hasAttribute('data-group')) { A.groups[t.getAttribute('data-group')] = t.value; preview(); return; }
+    if (t.hasAttribute('data-client')) { A.clients[t.getAttribute('data-client')] = t.value; preview(); return; }
+    if (t.hasAttribute('data-alias')) { A.aliases[t.getAttribute('data-alias')] = t.value; preview(); return; }
+    if (t.hasAttribute('data-dupe')) { A.dupes[t.getAttribute('data-dupe')] = t.value; preview(); return; }
+    if (t.hasAttribute('data-entity')) {
+      var key = t.getAttribute('data-entity'); var v = t.value;
+      if (!v) delete A.entities[key];
+      else if (v === 'new') A.entities[key] = { action: 'new' };
+      else if (v === 'skip') A.entities[key] = { action: 'skip' };
+      else if (v.indexOf('dir:') === 0) A.entities[key] = { action: 'existing', id: Number(v.slice(4)) };
+      else if (v.indexOf('file:') === 0) A.entities[key] = { action: 'merge', key: v.slice(5), name: t.options[t.selectedIndex].text.replace(/^Same as: /, '').replace(/ \(.*\)$/, '') };
+      S.reviewed = false; preview(); return;
+    }
+    if (t.hasAttribute('data-fix-amt') || t.hasAttribute('data-fix-date')) {
+      var id = t.getAttribute('data-fix-amt') || t.getAttribute('data-fix-date');
+      var row = t.closest('tr'); var amt = row.querySelector('[data-fix-amt]').value; var dt = row.querySelector('[data-fix-date]').value;
+      if (Number(amt) > 0) A.fixes[id] = { amount: Number(amt), paidDate: dt || null }; else delete A.fixes[id];
+      preview(); return;
+    }
+  });
+  appEl.addEventListener('click', function (e) {
+    var t = e.target.closest('button'); if (!t) return;
+    if (t.id === 'ph-other') { S.pv = null; S.sheets = null; S.answers = null; S.msg = ''; render(); return; }
+    if (t.id === 'ph-save') { apply(); return; }
+    if (t.hasAttribute('data-fill-suggestions')) {
+      var q = S.pv.questions.filter(function (x) { return x.id === 'entities'; })[0];
+      q.items.forEach(function (i) { if (i.needs && !i.value && i.suggestion) S.answers.entities[i.key] = i.suggestion; });
+      S.reviewed = false; preview(); return;
+    }
+    if (t.hasAttribute('data-undo')) {
+      api('POST', '/api/payment-history/imports/' + t.getAttribute('data-undo') + '/undo', {}).then(function (r) {
+        if (!r.ok) { S.msg = r.body.error || 'Could not undo.'; S.kind = 'err'; } else { S.msg = 'Undone: ' + r.body.removed + ' payments removed.'; S.kind = 'ok'; }
+        return loadImports();
+      }).then(render).catch(function (err) { if (!/^Cancelled/.test(err.message)) { S.msg = 'Could not undo.'; S.kind = 'err'; render(); } });
+    }
+  });
+
+  api('GET', '/api/auth/me').then(function (r) {
+    if (!r.ok) { location.href = '/login.html'; return; }
+    return loadImports().then(render);
+  });
+})();
+</script>
+</body>
+</html>

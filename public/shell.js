@@ -59,6 +59,7 @@
     { label: 'Year & month view', href: '/invoices.html#history', icon: 'calendar', page: ['/invoices.html'], tab: 'history', crumb: ['Fin-Module', 'Year & month view'] },
     { label: 'Import hours', href: '/invoices.html#import', icon: 'upload', page: ['/invoices.html'], tab: 'import', crumb: ['Fin-Module', 'Import hours'] },
     { label: 'Import history', href: '/invoices.html#hximport', icon: 'history', page: ['/invoices.html'], tab: 'hximport', crumb: ['Fin-Module', 'Import history'] },
+    { label: 'Payment history import', href: '/payment-history.html', icon: 'upload', page: ['/payment-history.html'], crumb: ['Fin-Module', 'Payment history import'], hr: true },
     { section: 'Settings', hr: true },
     { label: 'My email', href: '/mail-settings.html', icon: 'mail', page: ['/mail-settings.html'], crumb: ['Settings', 'My email'], hr: true },
     { label: 'Data check', href: '/data-check.html', icon: 'history', page: ['/data-check.html'], crumb: ['Settings', 'Data check'], hr: true },

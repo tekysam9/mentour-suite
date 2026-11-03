@@ -171,6 +171,35 @@ async function ledgerMonthlyRecords(conn, organizationId) {
   return { imp, records, unreadable };
 }
 
+// Older payments imported from the payment-history workbook (see paymentHistory routes). They are kept in their
+// own table so a newer Ledger upload never hides them. Where the Ledger file already has the same supplier +
+// consultant + month, the file's rows win and the history row stays out of the list. These rows are only for
+// showing and editing: they never feed invoice generation (see pairLastMonths / generate).
+async function historyRecords(conn, organizationId, fileRecords) {
+  let rows;
+  try {
+    [rows] = await conn.query(
+      `SELECT h.id, h.consultant_id, h.subvendor_id, h.period_month, h.amount, h.paid_date, h.client_text, h.note, i.file_name,
+              c.name AS consultant_name, c.status AS consultant_status, s.name AS subvendor_name
+       FROM supplier_payment_history h
+       JOIN payment_history_imports i ON i.id = h.import_id AND i.undone_at IS NULL
+       JOIN consultants c ON c.id = h.consultant_id AND c.organization_id = h.organization_id
+       JOIN subvendors s ON s.id = h.subvendor_id AND s.organization_id = h.organization_id
+       WHERE h.organization_id = ? ORDER BY h.id`, [organizationId]);
+  } catch (err) {
+    if (err && (err.code === 'ER_NO_SUCH_TABLE' || err.errno === 1146)) return [];
+    throw err;
+  }
+  const have = new Set((fileRecords || []).filter((r) => r.subvendor_id && r.consultant_id).map((r) => r.subvendor_id + '|' + r.consultant_id + '|' + r.period_month));
+  return rows
+    .map((r) => ({
+      key: 'hist' + r.id, row_id: 'h' + r.id, history: true, history_file: r.file_name, period_month: dateStr(r.period_month), multi_month: false, paid_in: null,
+      label: r.note || null, subvendor_id: r.subvendor_id, subvendor_name: r.subvendor_name, consultant_id: r.consultant_id, consultant_name: r.consultant_name,
+      consultant_status: r.consultant_status, client_tag: r.client_text || null, rate: null, hours: null, amount: Number(r.amount), paid_date: dateStr(r.paid_date),
+    }))
+    .filter((r) => !have.has(r.subvendor_id + '|' + r.consultant_id + '|' + r.period_month));
+}
+
 // Per (subvendor, consultant): the last hours month on the file.
 function pairLastMonths(records) {
   const last = new Map();
@@ -185,7 +214,7 @@ function pairLastMonths(records) {
 function paidInvoice(rec) {
   const ym = rec.period_month.slice(0, 7).replace('-', '');
   return {
-    kind: 'paid',
+    kind: 'paid', source: rec.history ? 'history' : 'file', history_file: rec.history_file || null,
     invoice_number: 'SVP-' + ym + '-' + (rec.subvendor_id || 'x') + '-' + (rec.consultant_id || 'x') + '-' + rec.row_id,
     paid_in: rec.paid_in, multi_month: rec.multi_month, label: rec.label,
     period_month: rec.period_month,
@@ -212,7 +241,9 @@ router.get('/', async (req, res, next) => {
     }
     const subvendorId = req.query.subvendorId ? Number(req.query.subvendorId) : null;
 
-    const { imp, records, unreadable } = await ledgerMonthlyRecords(pool, organizationId);
+    const { imp, records: fileRecords, unreadable } = await ledgerMonthlyRecords(pool, organizationId);
+    const histRecords = await historyRecords(pool, organizationId, fileRecords);
+    const records = fileRecords.concat(histRecords);
     const paidKeys = new Set(records.filter((r) => r.subvendor_id && r.consultant_id)
       .map((r) => r.subvendor_id + '|' + r.consultant_id + '|' + r.period_month));
 
@@ -268,7 +299,7 @@ router.get('/', async (req, res, next) => {
     res.json({
       invoices,
       subvendors,
-      generationStart: generationStartMonth(records),
+      generationStart: generationStartMonth(fileRecords),
       unreadable,
       ledgerFile: imp ? { file_name: imp.file_name, imported_at: imp.imported_at } : null,
     });
@@ -579,7 +610,8 @@ router.post('/from-ledger', async (req, res, next) => {
     const b = req.body || {};
     const periodMonth = normalizePeriodMonth(b.periodMonth);
     if (!periodMonth) return res.status(400).json({ error: 'periodMonth must look like YYYY-MM.' });
-    const { records } = await ledgerMonthlyRecords(pool, orgId);
+    const fileOnly = await ledgerMonthlyRecords(pool, orgId);
+    const records = fileOnly.records.concat(await historyRecords(pool, orgId, fileOnly.records));
     const hits = records.filter((r) => String(r.subvendor_id) === String(b.subvendorId) && String(r.consultant_id) === String(b.consultantId) && r.period_month === periodMonth.slice(0, 7) + '-01');
     if (!hits.length) return res.status(404).json({ error: 'That month is not on the payments file.' });
     const [dup] = await pool.query(
@@ -625,4 +657,5 @@ router.delete('/:id', async (req, res, next) => {
 module.exports = router;
 module.exports.parseHoursMonth = parseHoursMonth;
 module.exports.ledgerMonthlyRecords = ledgerMonthlyRecords;
+module.exports.historyRecords = historyRecords;
 module.exports.latestImport = latestImport;

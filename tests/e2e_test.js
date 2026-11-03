@@ -2998,6 +2998,54 @@ async function main() {
         r = await mj.fetch('/api/data-check');
         check('a normal member cannot open the data check', r.status === 403, r.status);
       }
+      // ---- Payment history import: review first, nothing saved until confirmed, kept apart from uploads, undoable
+      {
+        const hj = makeJar();
+        await hj.fetch('/api/auth/signup', { method: 'POST', body: JSON.stringify({ orgName: 'History Co', name: 'Hana History', email: 'hana@hist.test', password: 'hanapassword123' }) });
+        const hdr = [null, 'Vendor', 'Consultant', "Jan'25", "Feb'25", "Mar'25", "Apr'25", "May'25", "Jun'25"];
+        const sheets = { 'Accounts Payable Past Due': [hdr,
+          ['Zeta', 'Acme Hist LLC', 'Dana Hist', 'Apr 10-1000', 'May 12-1100', null, null, null, null],
+          ['Zeta', 'Beta Hist Inc', 'Eli Hist', 'Apr 10-2000', 'garbled ??', null, null, null, null]] };
+        const body = (extra) => JSON.stringify(Object.assign({ fileName: 'hist.xlsx', sheets, answers: {}, apply: false }, extra || {}));
+        const count = async () => (await dbConn.query('SELECT COUNT(*) n FROM supplier_payment_history'))[0][0].n;
+        const before = await count();
+        let r = await hj.fetch('/api/payment-history/preview', { method: 'POST', body: body() });
+        check('payment history preview works and asks to confirm the years', r.status === 200 && r.body.requiredOpen.includes('years') && r.body.canApply === false, r.body);
+        check('preview reads 3 payments and reports the unreadable cell', r.body.stats.read === 3 && r.body.stats.unreadable === 1, r.body.stats);
+        check('preview saves nothing', (await count()) === before);
+        r = await hj.fetch('/api/payment-history/apply', { method: 'POST', body: body({ confirm: true }) });
+        check('apply is refused until the years are confirmed', r.status === 409, [r.status, r.body]);
+        const answers = { years: 'ok' };
+        r = await hj.fetch('/api/payment-history/apply', { method: 'POST', body: body({ answers }) });
+        check('apply is refused without an explicit confirmation', r.status === 400, [r.status, r.body]);
+        r = await hj.fetch('/api/payment-history/preview', { method: 'POST', body: body({ answers }) });
+        check('with years confirmed the import can be applied', r.body.canApply === true && r.body.stats.willSave === 3 && Math.abs(r.body.stats.willSaveTotal - 4100) < 0.01, r.body.stats);
+        r = await hj.fetch('/api/payment-history/apply', { method: 'POST', body: body({ answers, confirm: true }) });
+        check('apply saves the 3 payments', r.status === 201 && r.body.added === 3 && Math.abs(r.body.total - 4100) < 0.01, r.body);
+        const impId = r.body.importId;
+        const [[st]] = await dbConn.query("SELECT COUNT(*) n, MIN(period_month) mn, MAX(paid_date) pd FROM supplier_payment_history h JOIN payment_history_imports i ON i.id = h.import_id WHERE i.id = ?", [impId]);
+        check('payments are stored against the hours month', st.n === 3 && String(st.mn.toISOString ? st.mn.toISOString() : st.mn).startsWith('2025-01'), st);
+        r = await hj.fetch('/api/subvendor-invoices');
+        const hist = (r.body.invoices || r.body || []).filter((x) => x.source === 'history');
+        check('history payments show up on Supplier payments', hist.length === 3, hist.length);
+        r = await hj.fetch('/api/payment-history/apply', { method: 'POST', body: body({ answers, confirm: true }) });
+        check('running the same import again adds nothing (no doubling)', r.status === 409 || (r.status === 201 && r.body.added === 0), [r.status, r.body]);
+        check('still exactly 3 history rows', (await count()) === before + 3);
+        r = await hj.fetch('/api/payment-history/imports');
+        check('the import is listed', r.status === 200 && r.body.imports.some((i) => i.id === impId && i.rows_now === 3), r.body);
+        r = await hj.fetch('/api/payment-history/imports/' + impId + '/undo', { method: 'POST', body: '{}' });
+        check('undo removes only that import\'s payments', r.status === 200 && r.body.removed === 3 && (await count()) === before, [r.status, r.body]);
+        r = await hj.fetch('/api/payment-history/imports/' + impId + '/undo', { method: 'POST', body: '{}' });
+        check('undoing twice is refused', r.status === 409, r.status);
+        const anon = await fetch(BASE + '/api/payment-history/imports');
+        check('payment history needs a login', anon.status === 401, anon.status);
+        const hm = makeJar();
+        await hm.fetch('/api/auth/login', { method: 'POST', body: JSON.stringify({ email: 'mem@check.test', password: 'carapassword123' }) });
+        r = await hm.fetch('/api/payment-history/preview', { method: 'POST', body: body() });
+        check('a normal member cannot use payment history import', r.status === 403, r.status);
+        r = await hj.fetch('/api/payment-history/preview', { method: 'POST', body: JSON.stringify({ sheets: { Junk: [['a', 'b']] }, answers: {} }) });
+        check('a workbook with no payment sheets is refused with a clear message', r.status === 400 && /supplier-payments/.test(r.body.error), r.body);
+      }
     } finally {
       await dbConn.end();
     }
