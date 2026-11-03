@@ -235,7 +235,7 @@
         (S.legacyCode ? '<p class="ob-muted" style="margin:10px 0 0">The older company-wide code <code>' + esc(S.legacyCode) + '</code> still works and gives <b>Team member (full access)</b>. Share role-specific codes instead.</p>' : '') + '</div>';
       h += '<div class="ob-addperson"><b style="font-size:12.5px">Add a person</b><div class="ob-grid" style="margin-top:8px">' +
         '<input type="text" id="np-name" placeholder="Full name"><input type="email" id="np-email" placeholder="Email (their login)">' +
-        '<input type="text" id="np-pass" placeholder="Temporary password (8+ characters)" autocomplete="off">' +
+        '<input type="text" id="np-pass" placeholder="Temporary password (12+ characters)" autocomplete="off">' +
         '<select id="np-role"><option value="recruiter">Recruiter (Onboarding only)</option><option value="hr">HR admin</option><option value="member">Team member (full access)</option></select></div>' +
         '<div style="margin-top:8px"><button class="ob-btn primary" data-act="add-person">Add person</button></div></div>';
       }

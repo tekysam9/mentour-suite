@@ -33,7 +33,7 @@
   var appEl = document.getElementById('app');
   var S = { entries: [], next: null, event: '', q: '', busy: false, msg: '', schemaMissing: false };
   function esc(s) { return s === null || s === undefined ? '' : String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
-  var EVENTS = { change: 'Change', login: 'Signed in', login_failed: 'Failed sign-in', signup: 'New company', join: 'Joined', '2fa_enabled': 'Two-step on', '2fa_disabled': 'Two-step off', '2fa_failed': 'Failed two-step code', '2fa_recovery_used': 'Recovery code used', '2fa_reset': 'Two-step reset', login_blocked: 'Sign-in blocked (locked)', logout_all: 'Signed out everywhere' };
+  var EVENTS = { change: 'Change', login: 'Signed in', login_failed: 'Failed sign-in', signup: 'New company', join: 'Joined', '2fa_enabled': 'Two-step on', '2fa_disabled': 'Two-step off', '2fa_failed': 'Failed two-step code', '2fa_recovery_used': 'Recovery code used', '2fa_reset': 'Two-step reset', login_blocked: 'Sign-in blocked (locked)', logout_all: 'Signed out everywhere', password_changed: 'Password changed' };
   function describe(e) {
     var d = e.detail || {}, bits = [];
     if (d.note) bits.push(esc(d.note));

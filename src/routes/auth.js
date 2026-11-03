@@ -2,6 +2,8 @@ const express = require('express');
 const rateLimit = require('express-rate-limit');
 const audit = require('../audit');
 const totp = require('../totp');
+const alerts = require('../securityAlerts');
+const passwordPolicy = require('../credentialRules');
 const pool = require('../db');
 const {
   REQUIRE_2FA,
@@ -157,14 +159,17 @@ router.post('/join', authLimiter, async (req, res, next) => {
 // whatever IP they come from. Counted from the activity log (so it survives restarts); a successful sign-in resets it.
 const LOCK_AFTER = Math.max(3, Number(process.env.LOGIN_MAX_FAILS) || 10);
 const LOCK_MINUTES = Math.max(1, Number(process.env.LOGIN_LOCK_MINUTES) || 15);
-async function isLocked(email) {
+async function failureCount(email) {
   try {
     const [[r]] = await pool.query(
       "SELECT COUNT(*) n FROM audit_log WHERE event IN ('login_failed','2fa_failed') AND user_email = ? AND created_at > (NOW() - INTERVAL ? MINUTE) " +
       "AND id > COALESCE((SELECT MAX(x.id) FROM audit_log x WHERE x.event IN ('login','2fa_recovery_used') AND x.user_email = ?), 0)", [email, LOCK_MINUTES, email]);
-    return r.n >= LOCK_AFTER;
-  } catch (e) { return false; } // no log table yet: only the per-IP limit applies
+    return r.n;
+  } catch (e) { return 0; } // no log table yet: only the per-IP limit applies
 }
+async function isLocked(email) { return (await failureCount(email)) >= LOCK_AFTER; }
+// A failure was just logged: if it is the one that locks the account, tell the person (and the owner).
+async function alertIfJustLocked(row, ip) { if ((await failureCount(String(row.email).toLowerCase())) === LOCK_AFTER) alerts.notify('lockout', row, ip, true); }
 const LOCK_MSG = 'Too many failed attempts for this account. Try again in ' + LOCK_MINUTES + ' minutes, or ask the account owner for help.';
 
 router.post('/login', authLimiter, async (req, res, next) => {
@@ -184,7 +189,7 @@ router.post('/login', authLimiter, async (req, res, next) => {
     if (!rows.length) { audit.record({ event: 'login_failed', ip: req.ip, userEmail: String(email).slice(0, 200), detail: { why: 'no such account' } }); return res.status(401).json({ error: 'Incorrect email or password.' }); }
 
     const match = await comparePassword(password, rows[0].password_hash);
-    if (!match) { audit.record({ event: 'login_failed', organizationId: rows[0].organization_id, userId: rows[0].id, userName: rows[0].name, userEmail: rows[0].email, ip: req.ip, detail: { why: 'wrong password' } }); return res.status(401).json({ error: 'Incorrect email or password.' }); }
+    if (!match) { await audit.record({ event: 'login_failed', organizationId: rows[0].organization_id, userId: rows[0].id, userName: rows[0].name, userEmail: rows[0].email, ip: req.ip, detail: { why: 'wrong password' } }); await alertIfJustLocked(rows[0], req.ip); return res.status(401).json({ error: 'Incorrect email or password.' }); }
 
     if (rows[0].totp_enabled) {
       // Password was right but this person uses an authenticator app: no sign-in yet, only a short-lived "second step pending" mark.
@@ -193,12 +198,31 @@ router.post('/login', authLimiter, async (req, res, next) => {
       await new Promise((ok, bad) => req.session.save((e) => (e ? bad(e) : ok())));
       return res.json({ needsTwoFactor: true });
     }
+    const failsBefore = await failureCount(String(rows[0].email).toLowerCase());
     await startSession(req, rows[0].id);
+    if (failsBefore >= 3) alerts.notify('login_after_failures', rows[0], req.ip);
     audit.record({ event: 'login', organizationId: rows[0].organization_id, userId: rows[0].id, userName: rows[0].name, userEmail: rows[0].email, ip: req.ip });
     res.json({ user: publicUser(rows[0]) });
   } catch (err) {
     next(err);
   }
+});
+
+// Change your own password: needs the current one; the new one must pass the strength rule; every OTHER device is signed out.
+router.post('/change-password', requireAuth, authLimiter, async (req, res, next) => {
+  try {
+    const { current, next: nextPw } = req.body || {};
+    const [[row]] = await pool.query('SELECT password_hash FROM users WHERE id = ?', [req.user.id]);
+    if (!current || !(await comparePassword(String(current), row.password_hash))) return res.status(400).json({ error: 'Your current password is not right.' });
+    if (String(nextPw) === String(current)) return res.status(400).json({ error: 'Choose a password you have not used just now.' });
+    const bad = passwordPolicy.check(nextPw, { email: req.user.email, name: req.user.name });
+    if (bad) return res.status(400).json({ error: bad });
+    await pool.query('UPDATE users SET password_hash = ? WHERE id = ?', [await hashPassword(String(nextPw)), req.user.id]);
+    const [r] = await pool.query('DELETE FROM sessions WHERE session_id <> ? AND data REGEXP ?', [req.sessionID, '"userId":' + Number(req.user.id) + '([^0-9]|$)']);
+    audit.record(audit.fromReq(req, 'password_changed', { detail: { otherSessionsEnded: r.affectedRows } }));
+    alerts.notify('password_changed', req.user, req.ip);
+    res.json({ ok: true, otherSessionsEnded: r.affectedRows });
+  } catch (err) { next(err); }
 });
 
 // Sign this person out everywhere (every phone and browser), e.g. after a lost phone or a shared computer.
@@ -246,12 +270,14 @@ router.post('/2fa/verify', authLimiter, async (req, res, next) => {
     }
     if (!ok) {
       pend.tries += 1;
-      audit.record({ event: '2fa_failed', organizationId: u.organization_id, userId: u.id, userName: u.name, userEmail: u.email, ip: req.ip });
+      await audit.record({ event: '2fa_failed', organizationId: u.organization_id, userId: u.id, userName: u.name, userEmail: u.email, ip: req.ip });
+      await alertIfJustLocked(u, req.ip);
       if (pend.tries >= 5) { delete req.session.pending2fa; return res.status(401).json({ error: 'Too many wrong codes. Enter your email and password again.', expired: true }); }
       return res.status(401).json({ error: 'That code is not right. Check the code in your authenticator app and try again.' });
     }
     await startSession(req, u.id, true);
     audit.record({ event: recovery ? '2fa_recovery_used' : 'login', organizationId: u.organization_id, userId: u.id, userName: u.name, userEmail: u.email, ip: req.ip });
+    if (recovery) alerts.notify('recovery_used', u, req.ip);
     res.json({ user: publicUser(u), recoveryUsed: recovery });
   } catch (err) { next(err); }
 });
@@ -290,6 +316,7 @@ router.post('/2fa/enable', requireAuth, authLimiter, async (req, res, next) => {
     delete req.session.totpSetup;
     req.session.twoFactorOk = true;
     audit.record(audit.fromReq(req, '2fa_enabled'));
+    alerts.notify('twofactor_on', req.user, req.ip);
     res.json({ enabled: true, recoveryCodes: codes });
   } catch (err) {
     if (err && err.code === 'NO_KEY') return res.status(503).json({ error: 'The server needs FIELD_ENCRYPTION_KEY set before it can store this securely.' });
@@ -313,6 +340,7 @@ router.post('/2fa/disable', requireAuth, authLimiter, async (req, res, next) => 
     await pool.query('UPDATE users SET totp_enabled = 0, totp_secret = NULL, totp_recovery = NULL, totp_last_step = NULL WHERE id = ?', [req.user.id]);
     req.session.twoFactorOk = false;
     audit.record(audit.fromReq(req, '2fa_disabled'));
+    alerts.notify('twofactor_off', req.user, req.ip);
     res.json({ enabled: false });
   } catch (err) { next(err); }
 });

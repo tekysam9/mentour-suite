@@ -65,6 +65,8 @@
     } else {
       h += '<div class="sc-card"><h2>Two-step sign-in <span class="sc-off">Off</span></h2><p>Recommended for everyone, and especially owner and HR logins, who can see payments and personal data.</p><p><button class="sc-btn primary" id="sc-start" type="button"' + (S.busy ? ' disabled' : '') + '>Set up two-step sign-in</button></p></div>';
     }
+    if (st && !S.codes) h += '<div class="sc-card"><h2>Change password</h2><p class="sc-muted">At least 12 characters, not a common word and not your name or email. A few unrelated words (like plum-harbor-clock-seven) work well, or let your password manager make one. Other devices are signed out when you change it.</p>' +
+      '<p><input class="sc-in sc-pw" id="pw-cur" type="password" placeholder="Current password" autocomplete="current-password"></p><p><input class="sc-in sc-pw" id="pw-new" type="password" placeholder="New password" autocomplete="new-password"></p><p><input class="sc-in sc-pw" id="pw-new2" type="password" placeholder="New password again" autocomplete="new-password"></p><p><button class="sc-btn primary" id="sc-chpw" type="button"' + (S.busy ? ' disabled' : '') + '>Change password</button></p></div>';
     if (st && !S.codes) h += '<div class="sc-card"><h2>Sign out everywhere</h2><p class="sc-muted">Ends your login on every phone and browser, including this one. Use it if you lost a device or used a shared computer. You are also signed out automatically after 2 hours without activity.</p><p><button class="sc-btn danger" id="sc-logout-all" type="button">Sign out of all devices</button></p></div>';
     appEl.innerHTML = h + '</div>';
   }
@@ -83,6 +85,16 @@
     }
     if (b.id === 'sc-copy') { try { navigator.clipboard.writeText(S.codes.join('\n')); say('Copied.', 'ok'); render(); } catch (err) { /* ignore */ } }
     if (b.id === 'sc-done') { S.codes = null; say('', ''); render(); if (/[?&]required=1/.test(location.search)) location.href = '/'; }
+    if (b.id === 'sc-chpw') {
+      var cur = document.getElementById('pw-cur').value, nw = document.getElementById('pw-new').value, nw2 = document.getElementById('pw-new2').value;
+      if (nw !== nw2) { say('The two new passwords are not the same.', 'err'); render(); return; }
+      S.busy = true; render();
+      api('POST', '/api/auth/change-password', { current: cur, next: nw }).then(function (r) {
+        S.busy = false;
+        say(r.ok ? 'Password changed.' + (r.body.otherSessionsEnded ? ' ' + r.body.otherSessionsEnded + ' other device(s) were signed out.' : '') : (r.body.error || 'Could not change it.'), r.ok ? 'ok' : 'err');
+        render();
+      });
+    }
     if (b.id === 'sc-logout-all') { api('POST', '/api/auth/logout-all', {}).then(function () { location.href = '/login.html'; }); }
     if (b.id === 'sc-disable') {
       var pw = document.getElementById('sc-pw').value, dc = document.getElementById('sc-dcode').value.trim(); S.busy = true; render();

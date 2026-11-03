@@ -86,9 +86,8 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 function validateSignupInput({ email, password, name }) {
   if (!email || !EMAIL_RE.test(String(email))) return 'Enter a valid email address.';
-  if (!password || String(password).length < 8) return 'Password must be at least 8 characters.';
   if (!name || !String(name).trim()) return 'Enter your name.';
-  return null;
+  return require('./credentialRules').check(password, { email, name });
 }
 
 module.exports = {

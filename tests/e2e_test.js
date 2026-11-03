@@ -110,13 +110,13 @@ async function main() {
     check('wrong password returns 401', r.status === 401, r);
 
     // 8. Teammate joins via invite
-    r = await teammate.fetch('/api/auth/join', { method: 'POST', body: JSON.stringify({ inviteCode, name: 'Sam Teammate', email: 'sam@mentourcorp.com', password: 'anotherlongpassword' }) });
+    r = await teammate.fetch('/api/auth/join', { method: 'POST', body: JSON.stringify({ inviteCode, name: 'Sam Teammate', email: 'sam@mentourcorp.com', password: 'Zq4ba45e3e0-Lm7!' }) });
     check('teammate join returns 201', r.status === 201, r);
     check('teammate is a member (not owner)', r.body.user.role === 'member', r.body);
     check('teammate lands in same org', r.body.user.organization.name === 'Mentour Corp', r.body);
 
     // 9. Bad invite code
-    r = await makeJar().fetch('/api/auth/join', { method: 'POST', body: JSON.stringify({ inviteCode: 'doesnotexist', name: 'Bad', email: 'bad@test.com', password: 'anotherlongpassword' }) });
+    r = await makeJar().fetch('/api/auth/join', { method: 'POST', body: JSON.stringify({ inviteCode: 'doesnotexist', name: 'Bad', email: 'bad@test.com', password: 'Zq4ba45e3e0-Lm7!' }) });
     check('bad invite code returns 404', r.status === 404, r);
 
     // 10. Unauthenticated access to protected route
@@ -138,7 +138,7 @@ async function main() {
     check('teammate sees same org data', r.body.import && r.body.import.data.kpis.totalConsultants === 55, r.body);
 
     // 14. A second, unrelated organization signs up
-    r = await otherOrgUser.fetch('/api/auth/signup', { method: 'POST', body: JSON.stringify({ orgName: 'Second Company LLC', name: 'Jordan', email: 'jordan@secondco.com', password: 'differentpassword1' }) });
+    r = await otherOrgUser.fetch('/api/auth/signup', { method: 'POST', body: JSON.stringify({ orgName: 'Second Company LLC', name: 'Jordan', email: 'jordan@secondco.com', password: 'Zqf6beeb5b5-Lm7!' }) });
     check('second org signup returns 201', r.status === 201, r);
 
     // 15. ISOLATION: second org must NOT see first org's data
@@ -746,7 +746,7 @@ async function main() {
       // before margin.html sent the post-slash text as `client` (legacy
       // row), one after, a stale upload-sourced billing assignment on the
       // old reversed pairing, and a manual assignment that must survive.
-      r = await makeJar().fetch('/api/auth/signup', { method: 'POST', body: JSON.stringify({ orgName: 'Backfill Co', name: 'Bea Fill', email: 'bea@backfill.test', password: 'backfillpassword1' }) });
+      r = await makeJar().fetch('/api/auth/signup', { method: 'POST', body: JSON.stringify({ orgName: 'Backfill Co', name: 'Bea Fill', email: 'bea@backfill.test', password: 'Zqef8bff921-Lm7!' }) });
       check('backfill test org signup returns 201', r.status === 201, r);
       const [[bfUser]] = await dbConn.query('SELECT id, organization_id FROM users WHERE email = ?', ['bea@backfill.test']);
       const bfOrg = bfUser.organization_id;
@@ -835,7 +835,7 @@ async function main() {
       // that have no client/program or no billing rate skipped. Uses its own
       // org so it's independent of every other test's evolving fixtures.
       const finOwner = makeJar();
-      r = await finOwner.fetch('/api/auth/signup', { method: 'POST', body: JSON.stringify({ orgName: 'Fin Test Co', name: 'Fin Owner', email: 'fin@fintest.test', password: 'finmodulepassword1' }) });
+      r = await finOwner.fetch('/api/auth/signup', { method: 'POST', body: JSON.stringify({ orgName: 'Fin Test Co', name: 'Fin Owner', email: 'fin@fintest.test', password: 'Zq3052d7331-Lm7!' }) });
       check('fin-module test org signup returns 201', r.status === 201, r);
 
       r = await finOwner.fetch('/api/margin', { method: 'POST', body: JSON.stringify({
@@ -985,7 +985,7 @@ async function main() {
       // used to fail (programs are unique per client) and the page showed
       // nothing. The duplicate program folds into the kept one.
       const dupOwner = makeJar();
-      r = await dupOwner.fetch('/api/auth/signup', { method: 'POST', body: JSON.stringify({ orgName: 'Dup Client Co', name: 'Dup Owner', email: 'dup@dupclient.test', password: 'dupclientpass1' }) });
+      r = await dupOwner.fetch('/api/auth/signup', { method: 'POST', body: JSON.stringify({ orgName: 'Dup Client Co', name: 'Dup Owner', email: 'dup@dupclient.test', password: 'Zqf51d65587-Lm7!' }) });
       check('client-merge test org signup returns 201', r.status === 201, r);
       const dupRec = (name, client, program) => ({ name, client, program, clientDetail: client, cost: 50, billing: 90, margin: 40, status: 'Active', employmentType: 'Subvendor', subvendorText: 'V' });
       await dupOwner.fetch('/api/margin', { method: 'POST', body: JSON.stringify({ fileName: 'd1.xlsx', data: { kpis: {}, records: [dupRec('Ann One', 'Tyler Technologies', 'Prog A')] } }) });
@@ -1003,7 +1003,7 @@ async function main() {
       // file) keeps that pairing as history but it is marked left and no
       // longer invoiced; the project they are still Active on is billed.
       const leftOwner = makeJar();
-      r = await leftOwner.fetch('/api/auth/signup', { method: 'POST', body: JSON.stringify({ orgName: 'Left Pairing Co', name: 'Left Owner', email: 'lo@leftpair.test', password: 'leftpairpass1' }) });
+      r = await leftOwner.fetch('/api/auth/signup', { method: 'POST', body: JSON.stringify({ orgName: 'Left Pairing Co', name: 'Left Owner', email: 'lo@leftpair.test', password: 'Zq41575a34e-Lm7!' }) });
       check('left-pairing test org signup returns 201', r.status === 201, r);
       r = await leftOwner.fetch('/api/margin', { method: 'POST', body: JSON.stringify({ fileName: 'mohan.xlsx', data: { kpis: {}, records: [
         { name: 'Mohan Test', client: 'State of RI', program: 'IRG', clientDetail: 'State of RI', cost: 60, billing: 100, margin: 40, status: 'Active', employmentType: 'W2 (direct)', subvendorText: 'W2' },
@@ -1032,7 +1032,7 @@ async function main() {
 
       // 33d. Import hours: past invoices from an uploaded hours sheet.
       const hrsOwner = makeJar();
-      r = await hrsOwner.fetch('/api/auth/signup', { method: 'POST', body: JSON.stringify({ orgName: 'Hours Import Co', name: 'Hrs Owner', email: 'hrs@hoursimport.test', password: 'hoursimportpass1' }) });
+      r = await hrsOwner.fetch('/api/auth/signup', { method: 'POST', body: JSON.stringify({ orgName: 'Hours Import Co', name: 'Hrs Owner', email: 'hrs@hoursimport.test', password: 'Zq74cc7941e-Lm7!' }) });
       check('hours-import test org signup returns 201', r.status === 201, r);
       const hrsRec = (name, client, program, billing) => ({ name, client, program, clientDetail: client, cost: 50, billing, margin: 10, status: 'Active', employmentType: 'W2 (direct)', subvendorText: 'W2' });
       await hrsOwner.fetch('/api/margin', { method: 'POST', body: JSON.stringify({ fileName: 'h.xlsx', data: { kpis: {}, records: [
@@ -1175,7 +1175,7 @@ async function main() {
       // "Hours/December 2025"), read sheet by sheet and combined per consultant + client
       // (synthetic fixture with the same structure). Expect Jan 2026.. invoices, no Dec 2026.
       const w2Owner = makeJar();
-      r = await w2Owner.fetch('/api/auth/signup', { method: 'POST', body: JSON.stringify({ orgName: 'W2 Sheets Co', name: 'W2 Owner', email: 'w2@w2sheets.test', password: 'w2sheetspass1' }) });
+      r = await w2Owner.fetch('/api/auth/signup', { method: 'POST', body: JSON.stringify({ orgName: 'W2 Sheets Co', name: 'W2 Owner', email: 'w2@w2sheets.test', password: 'Zqe5e5b0df1-Lm7!' }) });
       check('w2 multi-sheet test org signup returns 201', r.status === 201, r);
       await w2Owner.fetch('/api/margin', { method: 'POST', body: JSON.stringify({ fileName: 'w2m.xlsx', data: { kpis: {}, records: [
         hrsRec('Asha Test', 'Acme Health', 'HCL', 66.5), hrsRec('Dev Sample', 'University of Test', 'ROSE', 40), hrsRec('Mo Example', 'State of Test', 'IRG', 74),
@@ -1234,7 +1234,7 @@ async function main() {
       // merged into an existing pairing (saved as another name, so later imports
       // match too) or added as a new pairing. Nothing is invoiced until Apply.
       const fixOwner = makeJar();
-      r = await fixOwner.fetch('/api/auth/signup', { method: 'POST', body: JSON.stringify({ orgName: 'Fix Pairing Co', name: 'Fix Owner', email: 'fix@fixpairing.test', password: 'fixpairingpass1' }) });
+      r = await fixOwner.fetch('/api/auth/signup', { method: 'POST', body: JSON.stringify({ orgName: 'Fix Pairing Co', name: 'Fix Owner', email: 'fix@fixpairing.test', password: 'Zqe754ee0e5-Lm7!' }) });
       check('fix-pairing test org signup returns 201', r.status === 201, r);
       await fixOwner.fetch('/api/margin', { method: 'POST', body: JSON.stringify({ fileName: 'fx.xlsx', data: { kpis: {}, records: [
         hrsRec('Mo Example', 'State of Test', 'IRG', 74), hrsRec('Asha Test', 'Acme Health', 'HCL', 66.5),
@@ -1311,7 +1311,7 @@ async function main() {
 
       // 33e. Import history: the multi-year hours workbook (one flat row per consultant / client / month); billed one month in arrears.
       const hxOwner = makeJar();
-      r = await hxOwner.fetch('/api/auth/signup', { method: 'POST', body: JSON.stringify({ orgName: 'History Import Co', name: 'Hrs Owner', email: 'hx@historyimport.test', password: 'historyimportpass1' }) });
+      r = await hxOwner.fetch('/api/auth/signup', { method: 'POST', body: JSON.stringify({ orgName: 'History Import Co', name: 'Hrs Owner', email: 'hx@historyimport.test', password: 'Zq97923c319-Lm7!' }) });
       check('hours-import test org signup returns 201', r.status === 201, r);
       const hxRec = (name, client, program, billing) => ({ name, client, program, clientDetail: client, cost: 50, billing, margin: 10, status: 'Active', employmentType: 'W2 (direct)', subvendorText: 'W2' });
       await hxOwner.fetch('/api/margin', { method: 'POST', body: JSON.stringify({ fileName: 'h.xlsx', data: { kpis: {}, records: [
@@ -1452,7 +1452,7 @@ async function main() {
       // read-only from the latest Ledger upload; December 2026 onwards can be
       // generated from the Ledger rate (else the Margin cost rate). Own org.
       const svOwner = makeJar();
-      r = await svOwner.fetch('/api/auth/signup', { method: 'POST', body: JSON.stringify({ orgName: 'Subvendor Test Co', name: 'Sv Owner', email: 'sv@svtest.test', password: 'subvendorpassword1' }) });
+      r = await svOwner.fetch('/api/auth/signup', { method: 'POST', body: JSON.stringify({ orgName: 'Subvendor Test Co', name: 'Sv Owner', email: 'sv@svtest.test', password: 'Zqfa4069233-Lm7!' }) });
       check('subvendor-payments test org signup returns 201', r.status === 201, r);
 
       // month = the SHEET (when it was paid); period + year = the hours month.
@@ -1661,17 +1661,17 @@ async function main() {
       check('a payment needs a rate', r.status === 400, r);
       r = await svOwner.fetch('/api/subvendor-invoices/' + manId, { method: 'PATCH', body: JSON.stringify({ periodMonth: '2031-07', subvendorId: dirSubs[dirSubs.length - 1].id }) });
       check('month and supplier of a payment can be changed', r.status === 200 && String(r.body.invoice.period_month).startsWith('2031-07') || (r.status === 200 && /2031-07/.test(JSON.stringify(r.body.invoice.period_month))), r.body);
-      const svOther = makeJar(); await svOther.fetch('/api/auth/signup', { method: 'POST', body: JSON.stringify({ orgName: 'Sv Other Co', name: 'Sv Other', email: 'svo@svtest.test', password: 'svotherpassword1' }) });
+      const svOther = makeJar(); await svOther.fetch('/api/auth/signup', { method: 'POST', body: JSON.stringify({ orgName: 'Sv Other Co', name: 'Sv Other', email: 'svo@svtest.test', password: 'Zqcbacf363a-Lm7!' }) });
       r = await svOther.fetch('/api/subvendor-invoices/' + manId, { method: 'PATCH', body: JSON.stringify({ rate: 1 }) });
       check('another organisation cannot edit it (404)', r.status === 404, r);
 
       // 35. Record profiles (Consultant / Client / Vendor forms): CRM fields,
       // encrypted SSN / tax ID / bank numbers shown as last 4 only, org isolation.
       const pfOwner = makeJar();
-      r = await pfOwner.fetch('/api/auth/signup', { method: 'POST', body: JSON.stringify({ orgName: 'Profile Co', name: 'Pf Owner', email: 'pf@pftest.test', password: 'profilepassword1' }) });
+      r = await pfOwner.fetch('/api/auth/signup', { method: 'POST', body: JSON.stringify({ orgName: 'Profile Co', name: 'Pf Owner', email: 'pf@pftest.test', password: 'Zq83e63f55f-Lm7!' }) });
       check('profile test org signup returns 201', r.status === 201, r);
       const pfOther = makeJar();
-      r = await pfOther.fetch('/api/auth/signup', { method: 'POST', body: JSON.stringify({ orgName: 'Profile Other Co', name: 'Pf Other', email: 'pfo@pftest.test', password: 'profilepassword2' }) });
+      r = await pfOther.fetch('/api/auth/signup', { method: 'POST', body: JSON.stringify({ orgName: 'Profile Other Co', name: 'Pf Other', email: 'pfo@pftest.test', password: 'Zq93b5d429a-Lm7!' }) });
 
       r = await pfOwner.fetch('/api/profiles/schema');
       check('schema lists the three forms and says encryption is configured', r.status === 200 && r.body.spec.consultants && r.body.spec.clients && r.body.spec.programs && r.body.spec.programs.singular === 'Vendor' && r.body.encryptionConfigured === true && r.body.canEditSecrets === true, r.body);
@@ -1911,9 +1911,9 @@ async function main() {
       r = await pfOwner.fetch('/api/auth/me');
       const obInvite = r.body.user.organization.inviteCode;
       const obRec = makeJar(); const obRec2 = makeJar();
-      r = await obRec.fetch('/api/auth/join', { method: 'POST', body: JSON.stringify({ inviteCode: obInvite, name: 'Rita Recruiter', email: 'rita@onb.test', password: 'recruiterpass123' }) });
+      r = await obRec.fetch('/api/auth/join', { method: 'POST', body: JSON.stringify({ inviteCode: obInvite, name: 'Rita Recruiter', email: 'rita@onb.test', password: 'Zqbe01db525-Lm7!' }) });
       check('recruiter joins the organisation', r.status === 201, r);
-      r = await obRec2.fetch('/api/auth/join', { method: 'POST', body: JSON.stringify({ inviteCode: obInvite, name: 'Ron Recruiter', email: 'ron@onb.test', password: 'recruiterpass123' }) });
+      r = await obRec2.fetch('/api/auth/join', { method: 'POST', body: JSON.stringify({ inviteCode: obInvite, name: 'Ron Recruiter', email: 'ron@onb.test', password: 'Zqbe01db525-Lm7!' }) });
       const obEmail = [
         'PLACEMENT INFORMATION', '', 'Consultant Name:', '', 'Avinash Agnihotri', '', 'Consultant Contact Number:', '', '347 267 1449', '',
         'Consultant Email:', '', 'avinash.agnihotri04@gamil.com', '', 'Technical Skill', '', 'DB2 LUW DBA', '', 'Status (W2/C2C/1099):', '', 'C2C', '',
@@ -2347,8 +2347,8 @@ async function main() {
         check('W2 direct deposit is now done by the form (no longer tagged)', g.done === true && g.autoDone === true && g.legacyDone === false, g);
         // recruiters never see the banking form or its details
         const ronR = makeJar();
-        await pfOwner.fetch('/api/onboarding/people', { method: 'POST', body: JSON.stringify({ name: 'Bea Recruiter', email: 'bea@pftest.test', password: 'beapassword123', role: 'recruiter' }) });
-        await ronR.fetch('/api/auth/login', { method: 'POST', body: JSON.stringify({ email: 'bea@pftest.test', password: 'beapassword123' }) });
+        await pfOwner.fetch('/api/onboarding/people', { method: 'POST', body: JSON.stringify({ name: 'Bea Recruiter', email: 'bea@pftest.test', password: 'Zq6f51af988-Lm7!', role: 'recruiter' }) });
+        await ronR.fetch('/api/auth/login', { method: 'POST', body: JSON.stringify({ email: 'bea@pftest.test', password: 'Zq6f51af988-Lm7!' }) });
         r = await ronR.fetch(bu);
         check('a recruiter is refused the banking form (403)', r.status === 403 && !JSON.stringify(r.body).includes('3210') && !JSON.stringify(r.body).includes('2233'), r);
         r = await ronR.fetch('/api/forms/consultants/' + consId);
@@ -2403,13 +2403,13 @@ async function main() {
         const hi = r.body.personal.find((x) => x.email === 'hannah@inv.test');
         check('the invite is listed as pending with its link', hi && hi.status === 'pending' && hi.role === 'hr' && hi.name === 'Hannah HR' && !!hi.link, r.body.personal);
         const wrong = makeJar();
-        r = await wrong.fetch('/api/auth/join', { method: 'POST', body: JSON.stringify({ inviteCode: hCode, name: 'Mallory', email: 'mallory@inv.test', password: 'password1234' }) });
+        r = await wrong.fetch('/api/auth/join', { method: 'POST', body: JSON.stringify({ inviteCode: hCode, name: 'Mallory', email: 'mallory@inv.test', password: 'Zqe6b6afbd6-Lm7!' }) });
         check('the invite does not work for a different email', r.status === 403, r.body);
         const hannah = makeJar();
-        r = await hannah.fetch('/api/auth/join', { method: 'POST', body: JSON.stringify({ inviteCode: hCode, name: 'Hannah HR', email: 'HANNAH@inv.test', password: 'password1234' }) });
+        r = await hannah.fetch('/api/auth/join', { method: 'POST', body: JSON.stringify({ inviteCode: hCode, name: 'Hannah HR', email: 'HANNAH@inv.test', password: 'Zqe6b6afbd6-Lm7!' }) });
         check('Hannah signs up and gets the HR admin role', r.status === 201 && r.body.user.role === 'hr', r.body);
         const again = makeJar();
-        r = await again.fetch('/api/auth/join', { method: 'POST', body: JSON.stringify({ inviteCode: hCode, name: 'Hannah Two', email: 'hannah@inv.test', password: 'password1234' }) });
+        r = await again.fetch('/api/auth/join', { method: 'POST', body: JSON.stringify({ inviteCode: hCode, name: 'Hannah Two', email: 'hannah@inv.test', password: 'Zqe6b6afbd6-Lm7!' }) });
         check('the invite works only once', r.status === 410 || r.status === 409, r.body);
         r = await pfOwner.fetch('/api/onboarding/invites');
         check('the invite now shows as used, by Hannah', r.body.personal.find((x) => x.email === 'hannah@inv.test').status === 'used' && r.body.personal.find((x) => x.email === 'hannah@inv.test').usedBy === 'Hannah HR' && !r.body.personal.find((x) => x.email === 'hannah@inv.test').link, r.body.personal);
@@ -2424,25 +2424,25 @@ async function main() {
         r = await hannah.fetch('/api/onboarding/invites/' + rexId, { method: 'DELETE' });
         check('the invite is revoked', r.status === 200, r.body);
         const rex = makeJar();
-        r = await rex.fetch('/api/auth/join', { method: 'POST', body: JSON.stringify({ inviteCode: rexCode, name: 'Rex', email: 'rex@inv.test', password: 'password1234' }) });
+        r = await rex.fetch('/api/auth/join', { method: 'POST', body: JSON.stringify({ inviteCode: rexCode, name: 'Rex', email: 'rex@inv.test', password: 'Zqe6b6afbd6-Lm7!' }) });
         check('a revoked invite cannot be used', r.status === 404, r.body);
         r = await pfOwner.fetch('/api/onboarding/invites');
         check('the revoked invite is listed as revoked', r.body.personal.find((x) => x.id === rexId).status === 'revoked', r.body.personal);
         r = await pfOwner.fetch('/api/onboarding/invites', { method: 'POST', body: JSON.stringify({ email: 'tm@inv.test', role: 'member' }) });
         const tm = makeJar();
-        r = await tm.fetch('/api/auth/join', { method: 'POST', body: JSON.stringify({ inviteCode: r.body.code, name: 'Tina Team', email: 'tm@inv.test', password: 'password1234' }) });
+        r = await tm.fetch('/api/auth/join', { method: 'POST', body: JSON.stringify({ inviteCode: r.body.code, name: 'Tina Team', email: 'tm@inv.test', password: 'Zqe6b6afbd6-Lm7!' }) });
         check('a Team member invite gives the member role', r.status === 201 && r.body.user.role === 'member', r.body);
       }
 
       // 39. A recruiter-only login: Onboarding module and nothing else.
-      r = await pfOwner.fetch('/api/onboarding/people', { method: 'POST', body: JSON.stringify({ name: 'Ron Recruiter', email: 'ron@pftest.test', password: 'ronpassword123', role: 'recruiter' }) });
+      r = await pfOwner.fetch('/api/onboarding/people', { method: 'POST', body: JSON.stringify({ name: 'Ron Recruiter', email: 'ron@pftest.test', password: 'Zq1f2ea5934-Lm7!', role: 'recruiter' }) });
       check('the owner adds a recruiter login', r.status === 201, r);
-      r = await pfOwner.fetch('/api/onboarding/people', { method: 'POST', body: JSON.stringify({ name: 'Ron Again', email: 'RON@pftest.test', password: 'ronpassword123', role: 'recruiter' }) });
+      r = await pfOwner.fetch('/api/onboarding/people', { method: 'POST', body: JSON.stringify({ name: 'Ron Again', email: 'RON@pftest.test', password: 'Zq1f2ea5934-Lm7!', role: 'recruiter' }) });
       check('a duplicate email is refused', r.status === 409, r);
       r = await pfOwner.fetch('/api/onboarding/people', { method: 'POST', body: JSON.stringify({ name: 'Bad', email: 'bad@pftest.test', password: 'short', role: 'recruiter' }) });
       check('a short password is refused', r.status === 400, r);
       const ron = makeJar();
-      r = await ron.fetch('/api/auth/login', { method: 'POST', body: JSON.stringify({ email: 'ron@pftest.test', password: 'ronpassword123' }) });
+      r = await ron.fetch('/api/auth/login', { method: 'POST', body: JSON.stringify({ email: 'ron@pftest.test', password: 'Zq1f2ea5934-Lm7!' }) });
       check('the recruiter can sign in', r.status === 200 && r.body.user.role === 'recruiter', r.body);
       r = await ron.fetch('/api/auth/me');
       check('the recruiter session endpoint works', r.status === 200 && r.body.user.role === 'recruiter', r.body);
@@ -2468,16 +2468,16 @@ async function main() {
       check('the owner creates a Recruiter invite code', r.status === 201 && /^[0-9a-f]{12}$/.test(r.body.code), r);
       const recCode = r.body.code;
       const viaCode = makeJar();
-      r = await viaCode.fetch('/api/auth/join', { method: 'POST', body: JSON.stringify({ inviteCode: recCode, name: 'Via Code', email: 'viacode@pftest.test', password: 'viacodepassword1' }) });
+      r = await viaCode.fetch('/api/auth/join', { method: 'POST', body: JSON.stringify({ inviteCode: recCode, name: 'Via Code', email: 'viacode@pftest.test', password: 'Zqa351f440f-Lm7!' }) });
       check('joining with a Recruiter code makes a recruiter', r.status === 201 && r.body.user.role === 'recruiter', r.body);
       r = await viaCode.fetch('/api/directory/consultants');
       check('that recruiter is blocked from the Directory', r.status === 403, r.status);
       r = await pfOwner.fetch('/api/onboarding/invites');
       const invId = r.body.invites.find((i) => i.code === recCode).id;
       r = await pfOwner.fetch('/api/onboarding/invites/' + invId, { method: 'DELETE' });
-      r = await makeJar().fetch('/api/auth/join', { method: 'POST', body: JSON.stringify({ inviteCode: recCode, name: 'Late One', email: 'late@pftest.test', password: 'latepassword123' }) });
+      r = await makeJar().fetch('/api/auth/join', { method: 'POST', body: JSON.stringify({ inviteCode: recCode, name: 'Late One', email: 'late@pftest.test', password: 'Zq5b564f06f-Lm7!' }) });
       check('a revoked invite code stops working', r.status === 404, r);
-      r = await makeJar().fetch('/api/auth/join', { method: 'POST', body: JSON.stringify({ inviteCode: (await pfOwner.fetch('/api/auth/me')).body.user.organization.inviteCode, name: 'Old Code', email: 'oldcode@pftest.test', password: 'oldcodepassword1' }) });
+      r = await makeJar().fetch('/api/auth/join', { method: 'POST', body: JSON.stringify({ inviteCode: (await pfOwner.fetch('/api/auth/me')).body.user.organization.inviteCode, name: 'Old Code', email: 'oldcode@pftest.test', password: 'Zq54679bee4-Lm7!' }) });
       check('the original company code still gives a Team member', r.status === 201 && r.body.user.role === 'member', r.body);
       // money is for HR only: a recruiter can enter it but never reads it back
       r = await ron.fetch('/api/onboarding', { method: 'POST', body: JSON.stringify({ workerType: 'C2C', data: { consultant_name: 'Money Test', bill_rate: 123, pay_rate: 77, final_cost: 80, end_client: 'Acme / Rocket', recruiter: 'Ron', start_date: '2026-11-01', h1b_filing_required: 'No', invoicing_method: 'QuickBooks', employer_name: 'Money Co' } }) });
@@ -2511,7 +2511,7 @@ async function main() {
 
       // 45. Independent of files: placements entered in the app drive supplier payments, one line per project.
       const indJar = makeJar();
-      r = await indJar.fetch('/api/auth/signup', { method: 'POST', body: JSON.stringify({ orgName: 'No Files Co', name: 'Ind Owner', email: 'ind@indtest.test', password: 'independentpass1' }) });
+      r = await indJar.fetch('/api/auth/signup', { method: 'POST', body: JSON.stringify({ orgName: 'No Files Co', name: 'Ind Owner', email: 'ind@indtest.test', password: 'Zqd924f5067-Lm7!' }) });
       check('no-files org signup returns 201', r.status === 201, r);
       for (const [client, bill, pay] of [['RCA', 240, 210], ['IBM', 210, 200], ['Cisco', 260, 250]]) {
         r = await indJar.fetch('/api/roster', { method: 'POST', body: JSON.stringify({ name: 'Rob Rosales', client, vendor: 'CDW', employmentType: 'Subvendor', supplier: 'Rosales Consulting LLC', billing: bill, cost: pay }) });
@@ -2537,7 +2537,7 @@ async function main() {
 
       // 46. Same consultant, different vendor on each project (and one client reached through two vendors).
       const mvJar = makeJar();
-      r = await mvJar.fetch('/api/auth/signup', { method: 'POST', body: JSON.stringify({ orgName: 'Many Vendors Co', name: 'Mv Owner', email: 'mv@mvtest.test', password: 'manyvendorspass1' }) });
+      r = await mvJar.fetch('/api/auth/signup', { method: 'POST', body: JSON.stringify({ orgName: 'Many Vendors Co', name: 'Mv Owner', email: 'mv@mvtest.test', password: 'Zqbaef15233-Lm7!' }) });
       check('many-vendors org signup returns 201', r.status === 201, r);
       for (const [client, vendor, bill] of [['Delta', 'Insight', 100], ['Epsilon', 'Softchoice', 110], ['Delta', 'SHI', 120], ['Zeta', '', 130]]) {
         r = await mvJar.fetch('/api/roster', { method: 'POST', body: JSON.stringify({ name: 'Rob Rosales', client, vendor, billing: bill, cost: 80 }) });
@@ -2554,7 +2554,7 @@ async function main() {
       // ---- "Alef Data" / "Alef Data Integration Ltd": found, flagged and merged without losing anything
       {
         const adJar = makeJar();
-        await adJar.fetch('/api/auth/signup', { method: 'POST', body: JSON.stringify({ orgName: 'Alef Co', name: 'Al Owner', email: 'al@alef.test', password: 'alefpassword123' }) });
+        await adJar.fetch('/api/auth/signup', { method: 'POST', body: JSON.stringify({ orgName: 'Alef Co', name: 'Al Owner', email: 'al@alef.test', password: 'Zqa37cee4c7-Lm7!' }) });
         const mk = async (values, secrets) => (await adJar.fetch('/api/profiles/subvendors', { method: 'POST', body: JSON.stringify({ values, secrets }) })).body;
         const aShort = await mk({ name: 'Alef Data', contact_name: 'Dana Short', payment_terms: 'Net 30' }, { tax_id: '11-2223333' });
         const aLong = await mk({ name: 'Alef Data Integration Ltd', email: 'ap@alef.test', phone: '555-0199', city: 'Leeds' });
@@ -2606,7 +2606,7 @@ async function main() {
       // ---- Vendors directory: Name and Client the wrong way round -> Swap
       {
         const swJar = makeJar();
-        await swJar.fetch('/api/auth/signup', { method: 'POST', body: JSON.stringify({ orgName: 'Swap Co', name: 'Sw Owner', email: 'sw@swap.test', password: 'swappassword123' }) });
+        await swJar.fetch('/api/auth/signup', { method: 'POST', body: JSON.stringify({ orgName: 'Swap Co', name: 'Sw Owner', email: 'sw@swap.test', password: 'Zq08391e2ba-Lm7!' }) });
         const [[org]] = await dbConn.query(`SELECT organization_id o FROM users WHERE email = 'sw@swap.test'`);
         const oid = org.o;
         const [c1] = await dbConn.query(`INSERT INTO clients (organization_id, name, status) VALUES (?, 'CDW Swap', 'active')`, [oid]);
@@ -2627,7 +2627,7 @@ async function main() {
       // ---- Vendor record: rename "Menya/Orbit Inc/State of OH" to "Menya" and move to the right client
       {
         const rnJar = makeJar();
-        await rnJar.fetch('/api/auth/signup', { method: 'POST', body: JSON.stringify({ orgName: 'Rename Co', name: 'Rn Owner', email: 'rn@rename.test', password: 'renamepassword123' }) });
+        await rnJar.fetch('/api/auth/signup', { method: 'POST', body: JSON.stringify({ orgName: 'Rename Co', name: 'Rn Owner', email: 'rn@rename.test', password: 'Zq23b17ba3b-Lm7!' }) });
         const [[orw]] = await dbConn.query(`SELECT organization_id o FROM users WHERE email = 'rn@rename.test'`);
         const oid = orw.o;
         const [ca] = await dbConn.query(`INSERT INTO clients (organization_id, name, status) VALUES (?, 'Wrong Client', 'active')`, [oid]);
@@ -2651,7 +2651,7 @@ async function main() {
       // ---- secure links emailed straight to the consultant and the supplier
       {
         const emJar = makeJar();
-        await emJar.fetch('/api/auth/signup', { method: 'POST', body: JSON.stringify({ orgName: 'Mail Co', name: 'Em Owner', email: 'em@mailco.test', password: 'emailpassword123' }) });
+        await emJar.fetch('/api/auth/signup', { method: 'POST', body: JSON.stringify({ orgName: 'Mail Co', name: 'Em Owner', email: 'em@mailco.test', password: 'Zq88b4e3805-Lm7!' }) });
         const [[mo]] = await dbConn.query(`SELECT organization_id o FROM users WHERE email = 'em@mailco.test'`);
         const mkOb = async (type, data) => (await dbConn.query(`INSERT INTO onboardings (organization_id, worker_type, status, consultant_name, data, checklist, log) VALUES (?, ?, 'in_progress', ?, ?, '{}', '[]')`,
           [mo.o, type, data.consultant_name, JSON.stringify(data)]))[0].insertId;
@@ -2708,7 +2708,7 @@ async function main() {
       // ---- each HR user connects their own mailbox ("My email")
       {
         const myJar = makeJar();
-        await myJar.fetch('/api/auth/signup', { method: 'POST', body: JSON.stringify({ orgName: 'Own Mail Co', name: 'Olive Owner', email: 'olive@ownmail.test', password: 'olivepassword123' }) });
+        await myJar.fetch('/api/auth/signup', { method: 'POST', body: JSON.stringify({ orgName: 'Own Mail Co', name: 'Olive Owner', email: 'olive@ownmail.test', password: 'Zqba5c6146e-Lm7!' }) });
         const anon3 = await fetch(BASE + '/api/mail-settings');
         check('mail settings need a sign-in', anon3.status === 401, anon3.status);
         r = await myJar.fetch('/api/mail-settings');
@@ -2748,7 +2748,7 @@ async function main() {
       // ---- Directory import: fills details for people already in the Directory
       {
         const di = makeJar();
-        await di.fetch('/api/auth/signup', { method: 'POST', body: JSON.stringify({ orgName: 'Import Co', name: 'Ida Import', email: 'ida@import.test', password: 'idapassword123' }) });
+        await di.fetch('/api/auth/signup', { method: 'POST', body: JSON.stringify({ orgName: 'Import Co', name: 'Ida Import', email: 'ida@import.test', password: 'Zqc0957d0cd-Lm7!' }) });
         const [[iu]] = await dbConn.query('SELECT organization_id o FROM users WHERE email = ?', ['ida@import.test']);
         const org = iu.o;
         const ins = async (t, n, extra) => (await dbConn.query(`INSERT INTO ${t} (organization_id, name${extra ? ', ' + Object.keys(extra).join(', ') : ''}) VALUES (?, ?${extra ? ', ' + Object.keys(extra).map(() => '?').join(', ') : ''})`, [org, n].concat(extra ? Object.values(extra) : '')))[0].insertId;
@@ -2830,14 +2830,14 @@ async function main() {
         check('after applying, the preview shows nothing left to fill for that person', again.changes.filter((c) => c.key === 'email' || c.key === 'phone').every((c) => c.kind === 'same'), again);
         // another organisation cannot see or change this one's people
         const other = makeJar();
-        await other.fetch('/api/auth/signup', { method: 'POST', body: JSON.stringify({ orgName: 'Other Imp Co', name: 'Oli Other', email: 'oli@otherimp.test', password: 'olipassword123' }) });
+        await other.fetch('/api/auth/signup', { method: 'POST', body: JSON.stringify({ orgName: 'Other Imp Co', name: 'Oli Other', email: 'oli@otherimp.test', password: 'Zq7bb397cea-Lm7!' }) });
         r = await other.fetch('/api/directory-import/preview', { method: 'POST', body: JSON.stringify({ rows: cards, apply: false }) });
         check('another company sees no matches in this Directory', r.body.plans.every((p) => p.status === 'unmatched' || p.status === 'skipped'), r.body.plans.map((p) => p.status));
         // a member (not HR) is refused
         const memJ = makeJar();
         const [[mo]] = await dbConn.query("SELECT id FROM users WHERE email = 'ida@import.test'");
         await dbConn.query("INSERT INTO users (organization_id, name, email, password_hash, role) SELECT ?, 'Mia Member', 'mia@import.test', password_hash, 'member' FROM users WHERE id = ?", [org, mo.id]);
-        await memJ.fetch('/api/auth/login', { method: 'POST', body: JSON.stringify({ email: 'mia@import.test', password: 'idapassword123' }) });
+        await memJ.fetch('/api/auth/login', { method: 'POST', body: JSON.stringify({ email: 'mia@import.test', password: 'Zqc0957d0cd-Lm7!' }) });
         r = await memJ.fetch('/api/directory-import/preview', { method: 'POST', body: JSON.stringify({ rows: cards, apply: false }) });
         check('only HR or an administrator can import Directory details', r.status === 403, r.status);
       }
@@ -2845,7 +2845,7 @@ async function main() {
       // ---- Placement rules: client mandatory; supplier none for W2, required for C2C, optional for 1099
       {
         const pj = makeJar();
-        await pj.fetch('/api/auth/signup', { method: 'POST', body: JSON.stringify({ orgName: 'Rules Co', name: 'Rhea Rules', email: 'rhea@rules.test', password: 'rheapassword123' }) });
+        await pj.fetch('/api/auth/signup', { method: 'POST', body: JSON.stringify({ orgName: 'Rules Co', name: 'Rhea Rules', email: 'rhea@rules.test', password: 'Zq74e1f9dd4-Lm7!' }) });
         const [[ru]] = await dbConn.query("SELECT id, organization_id o, password_hash h FROM users WHERE email = 'rhea@rules.test'");
         const org = ru.o;
         const ins = async (t, n, extra) => (await dbConn.query(`INSERT INTO ${t} (organization_id, name${extra ? ', ' + Object.keys(extra).join(', ') : ''}) VALUES (?, ?${extra ? ', ' + Object.keys(extra).map(() => '?').join(', ') : ''})`, [org, n].concat(extra ? Object.values(extra) : '')))[0].insertId;
@@ -2893,7 +2893,7 @@ async function main() {
         // a member cannot change structure
         await dbConn.query("INSERT INTO users (organization_id, name, email, password_hash, role) VALUES (?, 'Mo Member', 'mo@rules.test', ?, 'member')", [org, ru.h]);
         const mj = makeJar();
-        await mj.fetch('/api/auth/login', { method: 'POST', body: JSON.stringify({ email: 'mo@rules.test', password: 'rheapassword123' }) });
+        await mj.fetch('/api/auth/login', { method: 'POST', body: JSON.stringify({ email: 'mo@rules.test', password: 'Zq74e1f9dd4-Lm7!' }) });
         r = await mj.fetch('/api/directory/assignments/' + aC, { method: 'PATCH', body: JSON.stringify({ client_id: clA, program_id: null }) });
         check('a non-HR user cannot change client, vendor, supplier or worker type', r.status === 403, r);
         r = await mj.fetch('/api/directory/assignments/' + aC, { method: 'PATCH', body: JSON.stringify({ billing: 123 }) });
@@ -2938,7 +2938,7 @@ async function main() {
       // ---- Swap client/vendor, placement end date, consultant status
       {
         const pj = makeJar();
-        await pj.fetch('/api/auth/signup', { method: 'POST', body: JSON.stringify({ orgName: 'Swap Co', name: 'Sam Swap', email: 'sam@swap.test', password: 'samspassword123' }) });
+        await pj.fetch('/api/auth/signup', { method: 'POST', body: JSON.stringify({ orgName: 'Swap Co', name: 'Sam Swap', email: 'sam@swap.test', password: 'Zqa64ea52b2-Lm7!' }) });
         const [[su]] = await dbConn.query("SELECT id, organization_id o FROM users WHERE email = 'sam@swap.test'");
         const org = su.o;
         const clH = (await dbConn.query('INSERT INTO clients (organization_id, name) VALUES (?, ?)', [org, 'HCL']))[0].insertId;
@@ -2969,7 +2969,7 @@ async function main() {
       // ---- Data check: finds payments that an earlier upload had and the newest one lacks; "use again" restores them
       {
         const pj = makeJar();
-        await pj.fetch('/api/auth/signup', { method: 'POST', body: JSON.stringify({ orgName: 'Check Co', name: 'Cara Check', email: 'cara@check.test', password: 'carapassword123' }) });
+        await pj.fetch('/api/auth/signup', { method: 'POST', body: JSON.stringify({ orgName: 'Check Co', name: 'Cara Check', email: 'cara@check.test', password: 'Zq6d5e4cb7a-Lm7!' }) });
         const pl = (name, sv, period, amount) => ({ subvendor: sv, period, name, amount, rate: 50, hours: amount / 50, verify: null, notes: null, paidDate: null, month: 'March', clientTag: 'Unspecified', year: '2026', unpaid: false });
         const full = { consultants: [
           { name: 'Dana Data', placements: [pl('Dana Data', 'Acme LLC', 'Jan', 1000), pl('Dana Data', 'Acme LLC', 'Feb', 1100)] },
@@ -2994,14 +2994,14 @@ async function main() {
         const [[cu]] = await dbConn.query("SELECT organization_id o FROM users WHERE email = 'cara@check.test'");
         await dbConn.query("INSERT INTO users (organization_id, email, password_hash, name, role) SELECT ?, 'mem@check.test', password_hash, 'Mem', 'member' FROM users WHERE email = 'cara@check.test'", [cu.o]);
         const mj = makeJar();
-        await mj.fetch('/api/auth/login', { method: 'POST', body: JSON.stringify({ email: 'mem@check.test', password: 'carapassword123' }) });
+        await mj.fetch('/api/auth/login', { method: 'POST', body: JSON.stringify({ email: 'mem@check.test', password: 'Zq6d5e4cb7a-Lm7!' }) });
         r = await mj.fetch('/api/data-check');
         check('a normal member cannot open the data check', r.status === 403, r.status);
       }
       // ---- Payment history import: review first, nothing saved until confirmed, kept apart from uploads, undoable
       {
         const hj = makeJar();
-        await hj.fetch('/api/auth/signup', { method: 'POST', body: JSON.stringify({ orgName: 'History Co', name: 'Hana History', email: 'hana@hist.test', password: 'hanapassword123' }) });
+        await hj.fetch('/api/auth/signup', { method: 'POST', body: JSON.stringify({ orgName: 'History Co', name: 'Hana History', email: 'hana@hist.test', password: 'Zq88fbcd0d9-Lm7!' }) });
         const hdr = [null, 'Vendor', 'Consultant', "Jan'25", "Feb'25", "Mar'25", "Apr'25", "May'25", "Jun'25"];
         const sheets = { 'Accounts Payable Past Due': [hdr,
           ['Zeta', 'Acme Hist LLC', 'Dana Hist', 'Apr 10-1000', 'May 12-1100', null, null, null, null],
@@ -3060,7 +3060,7 @@ async function main() {
         const anon = await fetch(BASE + '/api/payment-history/imports');
         check('payment history needs a login', anon.status === 401, anon.status);
         const hm = makeJar();
-        await hm.fetch('/api/auth/login', { method: 'POST', body: JSON.stringify({ email: 'mem@check.test', password: 'carapassword123' }) });
+        await hm.fetch('/api/auth/login', { method: 'POST', body: JSON.stringify({ email: 'mem@check.test', password: 'Zq6d5e4cb7a-Lm7!' }) });
         r = await hm.fetch('/api/payment-history/preview', { method: 'POST', body: body() });
         check('a normal member cannot use payment history import', r.status === 403, r.status);
         r = await hj.fetch('/api/payment-history/preview', { method: 'POST', body: JSON.stringify({ sheets: { Junk: [['a', 'b']] }, answers: {} }) });
@@ -3075,7 +3075,7 @@ async function main() {
         r = await fetch(BASE + '/api/ledger', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: big });
         check('a stranger cannot send a big body even to an upload route', r.status === 413, r.status);
         const sj0 = makeJar();
-        await sj0.fetch('/api/auth/signup', { method: 'POST', body: JSON.stringify({ orgName: 'Sec Co', name: 'Sam Secure', email: 'sam@sec.test', password: 'sampassword123' }) });
+        await sj0.fetch('/api/auth/signup', { method: 'POST', body: JSON.stringify({ orgName: 'Sec Co', name: 'Sam Secure', email: 'sam@sec.test', password: 'Zq1e804dbf6-Lm7!' }) });
         r = await sj0.fetch('/api/ledger', { method: 'POST', body: JSON.stringify({ fileName: 'big.xlsx', data: { consultants: [], pad: 'a'.repeat(2 * 1024 * 1024) } }) });
         check('a signed-in person can still upload a big file to an upload route', r.status !== 413, r.status);
         r = await sj0.fetch('/api/directory/consultants', { method: 'POST', body: big });
@@ -3087,20 +3087,20 @@ async function main() {
         const aj = makeJar();
         r = await aj.fetch('/api/auth/login', { method: 'POST', body: JSON.stringify({ email: 'hana@hist.test', password: 'wrongwrongwrong' }) });
         check('wrong password is refused', r.status === 401);
-        await aj.fetch('/api/auth/login', { method: 'POST', body: JSON.stringify({ email: 'hana@hist.test', password: 'hanapassword123' }) });
+        await aj.fetch('/api/auth/login', { method: 'POST', body: JSON.stringify({ email: 'hana@hist.test', password: 'Zq88fbcd0d9-Lm7!' }) });
         await sleep(400);
         r = await aj.fetch('/api/audit');
         const ev = (r.body && r.body.entries) || [];
         check('owner can read the activity log', r.status === 200 && ev.length > 0, r.status);
         check('the payment history import is in the log with who and what', ev.some((e) => e.event === 'change' && /payment-history\/apply/.test(e.path) && e.user_email === 'hana@hist.test' && e.detail && /Payment history import #\d+/.test(e.detail.note || '')), ev.slice(0, 3));
         check('the failed and the successful sign-in are both logged', ev.some((e) => e.event === 'login_failed' && e.user_email === 'hana@hist.test') && ev.some((e) => e.event === 'login' && e.user_email === 'hana@hist.test'));
-        check('log never stores request bodies or passwords', !JSON.stringify(ev).includes('hanapassword123') && !JSON.stringify(ev).includes('wrongwrongwrong'));
+        check('log never stores request bodies or passwords', !JSON.stringify(ev).includes('Zq88fbcd0d9-Lm7!') && !JSON.stringify(ev).includes('wrongwrongwrong'));
         r = await aj.fetch('/api/audit?event=login_failed');
         check('the log can be filtered', r.status === 200 && r.body.entries.length > 0 && r.body.entries.every((e) => e.event === 'login_failed'));
         r = await sj0.fetch('/api/audit');
         check('another company never sees this company\u2019s log', r.status === 200 && !(r.body.entries || []).some((e) => e.user_email === 'hana@hist.test'));
         const am = makeJar();
-        await am.fetch('/api/auth/login', { method: 'POST', body: JSON.stringify({ email: 'mem@check.test', password: 'carapassword123' }) });
+        await am.fetch('/api/auth/login', { method: 'POST', body: JSON.stringify({ email: 'mem@check.test', password: 'Zq6d5e4cb7a-Lm7!' }) });
         r = await am.fetch('/api/audit');
         check('a normal member cannot read the activity log', r.status === 403, r.status);
         r = await fetch(BASE + '/api/audit');
@@ -3108,7 +3108,7 @@ async function main() {
 
         // two-step sign-in
         const tj = makeJar();
-        await tj.fetch('/api/auth/signup', { method: 'POST', body: JSON.stringify({ orgName: 'Two Step Co', name: 'Tess Twostep', email: 'tess@two.test', password: 'tesspassword123' }) });
+        await tj.fetch('/api/auth/signup', { method: 'POST', body: JSON.stringify({ orgName: 'Two Step Co', name: 'Tess Twostep', email: 'tess@two.test', password: 'Zqe6fa450c4-Lm7!' }) });
         r = await tj.fetch('/api/auth/2fa/status');
         check('two-step is available and off by default', r.status === 200 && r.body.available === true && r.body.enabled === false, r.body);
         r = await tj.fetch('/api/auth/2fa/setup', { method: 'POST', body: '{}' });
@@ -3123,7 +3123,7 @@ async function main() {
         const [[urow]] = await dbConn.query("SELECT totp_secret, totp_recovery FROM users WHERE email = 'tess@two.test'");
         check('the secret is stored encrypted and recovery codes only as hashes', !String(urow.totp_secret).includes(secret) && !rec.some((c) => String(urow.totp_recovery).includes(c)), urow);
         await tj.fetch('/api/auth/logout', { method: 'POST', body: '{}' });
-        r = await tj.fetch('/api/auth/login', { method: 'POST', body: JSON.stringify({ email: 'tess@two.test', password: 'tesspassword123' }) });
+        r = await tj.fetch('/api/auth/login', { method: 'POST', body: JSON.stringify({ email: 'tess@two.test', password: 'Zqe6fa450c4-Lm7!' }) });
         check('password alone no longer signs in: a code is asked for', r.status === 200 && r.body.needsTwoFactor === true && !r.body.user, r.body);
         r = await tj.fetch('/api/auth/me');
         check('and nothing is open before the second step', r.status === 401, r.status);
@@ -3138,11 +3138,11 @@ async function main() {
         check('now the session is open and says two-step is on', r.status === 200 && r.body.twoFactor === true, r.body);
         // recovery code: works once
         await tj.fetch('/api/auth/logout', { method: 'POST', body: '{}' });
-        await tj.fetch('/api/auth/login', { method: 'POST', body: JSON.stringify({ email: 'tess@two.test', password: 'tesspassword123' }) });
+        await tj.fetch('/api/auth/login', { method: 'POST', body: JSON.stringify({ email: 'tess@two.test', password: 'Zqe6fa450c4-Lm7!' }) });
         r = await tj.fetch('/api/auth/2fa/verify', { method: 'POST', body: JSON.stringify({ code: rec[0] }) });
         check('a recovery code signs in', r.status === 200 && r.body.recoveryUsed === true, r.body);
         await tj.fetch('/api/auth/logout', { method: 'POST', body: '{}' });
-        await tj.fetch('/api/auth/login', { method: 'POST', body: JSON.stringify({ email: 'tess@two.test', password: 'tesspassword123' }) });
+        await tj.fetch('/api/auth/login', { method: 'POST', body: JSON.stringify({ email: 'tess@two.test', password: 'Zqe6fa450c4-Lm7!' }) });
         r = await tj.fetch('/api/auth/2fa/verify', { method: 'POST', body: JSON.stringify({ code: rec[0] }) });
         check('the same recovery code cannot be used twice', r.status === 401, r.status);
         // 5 wrong codes end the attempt
@@ -3152,43 +3152,86 @@ async function main() {
         r = await tj.fetch('/api/auth/2fa/verify', { method: 'POST', body: JSON.stringify({ code: rec[1] }) });
         check('even a good recovery code is refused once the attempt is cancelled', r.status === 401, r.status);
         // turning it off needs password + code
-        await tj.fetch('/api/auth/login', { method: 'POST', body: JSON.stringify({ email: 'tess@two.test', password: 'tesspassword123' }) });
+        await tj.fetch('/api/auth/login', { method: 'POST', body: JSON.stringify({ email: 'tess@two.test', password: 'Zqe6fa450c4-Lm7!' }) });
         await tj.fetch('/api/auth/2fa/verify', { method: 'POST', body: JSON.stringify({ code: rec[1] }) });
         r = await tj.fetch('/api/auth/2fa/disable', { method: 'POST', body: JSON.stringify({ password: 'wrong', code: rec[2] }) });
         check('turning it off needs the right password', r.status === 400, r.status);
-        r = await tj.fetch('/api/auth/2fa/disable', { method: 'POST', body: JSON.stringify({ password: 'tesspassword123', code: '111111' }) });
+        r = await tj.fetch('/api/auth/2fa/disable', { method: 'POST', body: JSON.stringify({ password: 'Zqe6fa450c4-Lm7!', code: '111111' }) });
         check('turning it off needs a right code', r.status === 400, r.status);
-        r = await tj.fetch('/api/auth/2fa/disable', { method: 'POST', body: JSON.stringify({ password: 'tesspassword123', code: rec[2] }) });
+        r = await tj.fetch('/api/auth/2fa/disable', { method: 'POST', body: JSON.stringify({ password: 'Zqe6fa450c4-Lm7!', code: rec[2] }) });
         check('password + a recovery code turns it off', r.status === 200 && r.body.enabled === false, r.body);
         await tj.fetch('/api/auth/logout', { method: 'POST', body: '{}' });
-        r = await tj.fetch('/api/auth/login', { method: 'POST', body: JSON.stringify({ email: 'tess@two.test', password: 'tesspassword123' }) });
+        r = await tj.fetch('/api/auth/login', { method: 'POST', body: JSON.stringify({ email: 'tess@two.test', password: 'Zqe6fa450c4-Lm7!' }) });
         check('after turning it off, a password signs in again', r.status === 200 && r.body.user, r.body);
         await sleep(300);
         r = await tj.fetch('/api/audit');
         check('two-step events are in the log', (r.body.entries || []).some((e) => e.event === '2fa_enabled') && (r.body.entries || []).some((e) => e.event === '2fa_failed') && (r.body.entries || []).some((e) => e.event === '2fa_recovery_used') && (r.body.entries || []).some((e) => e.event === '2fa_disabled'), (r.body.entries || []).map((e) => e.event));
       }
+      // ---- Password rule, change password, security emails
+      {
+        const sigWith = (pw, extra) => makeJar().fetch('/api/auth/signup', { method: 'POST', body: JSON.stringify(Object.assign({ orgName: 'Pw Co', name: 'Pia Wordsmith', email: 'pia' + Math.random().toString(36).slice(2, 7) + '@pw.test', password: pw }, extra || {})) });
+        let r = await sigWith('short1!');
+        check('a short password is refused with the reason', r.status === 400 && /12 characters/.test(r.body.error), r.body);
+        r = await sigWith('Password123456789');
+        check('a password with a very common word is refused', r.status === 400 && /common word/.test(r.body.error), r.body);
+        r = await sigWith('aaaaaaaaaaaaaaaa');
+        check('a repetitive password is refused', r.status === 400 && /predictable|repetitive/.test(r.body.error), r.body);
+        r = await sigWith('Wordsmith-Blue-Harbor-9');
+        check('a password containing your own name is refused', r.status === 400 && /name/.test(r.body.error), r.body);
+        r = await sigWith('plum-harbor-clock-seven');
+        check('a few unrelated words are accepted', r.status === 201, r.body);
+
+        const cj = makeJar(); const em = 'chg' + Math.random().toString(36).slice(2, 7) + '@pw.test';
+        await cj.fetch('/api/auth/signup', { method: 'POST', body: JSON.stringify({ orgName: 'Chg Co', name: 'Chip Change', email: em, password: 'plum-harbor-clock-seven' }) });
+        const other = makeJar();
+        await other.fetch('/api/auth/login', { method: 'POST', body: JSON.stringify({ email: em, password: 'plum-harbor-clock-seven' }) });
+        check('a second device is signed in', (await other.fetch('/api/auth/me')).status === 200);
+        r = await cj.fetch('/api/auth/change-password', { method: 'POST', body: JSON.stringify({ current: 'wrong-wrong-wrong', next: 'tulip-anvil-river-nine' }) });
+        check('changing the password needs the current one', r.status === 400, r.body);
+        r = await cj.fetch('/api/auth/change-password', { method: 'POST', body: JSON.stringify({ current: 'plum-harbor-clock-seven', next: 'short' }) });
+        check('the new password must pass the same rule', r.status === 400 && /12 characters/.test(r.body.error), r.body);
+        r = await cj.fetch('/api/auth/change-password', { method: 'POST', body: JSON.stringify({ current: 'plum-harbor-clock-seven', next: 'tulip-anvil-river-nine' }) });
+        check('a good new password is accepted', r.status === 200 && r.body.otherSessionsEnded >= 1, r.body);
+        check('this device stays signed in, the other is signed out', (await cj.fetch('/api/auth/me')).status === 200 && (await other.fetch('/api/auth/me')).status === 401);
+        r = await makeJar().fetch('/api/auth/login', { method: 'POST', body: JSON.stringify({ email: em, password: 'plum-harbor-clock-seven' }) });
+        check('the old password no longer works', r.status === 401, r.status);
+        r = await makeJar().fetch('/api/auth/login', { method: 'POST', body: JSON.stringify({ email: em, password: 'tulip-anvil-river-nine' }) });
+        check('the new one does', r.status === 200, r.status);
+        await sleep(500);
+        check('a "password changed" email was sent', mailbox.some((m) => m.to.includes(em) && /password was changed/i.test(m.subject)), mailbox.map((m) => m.subject).slice(-3));
+        // three wrong tries then a right one: "sign-in after failed attempts" alert
+        const fj = makeJar(); const em2 = 'alert' + Math.random().toString(36).slice(2, 7) + '@pw.test';
+        await fj.fetch('/api/auth/signup', { method: 'POST', body: JSON.stringify({ orgName: 'Alert Co', name: 'Abe Alert', email: em2, password: 'plum-harbor-clock-seven' }) });
+        await fj.fetch('/api/auth/logout', { method: 'POST', body: '{}' });
+        for (let i = 0; i < 3; i++) await fj.fetch('/api/auth/login', { method: 'POST', body: JSON.stringify({ email: em2, password: 'wrong-guess-' + i }) });
+        await fj.fetch('/api/auth/login', { method: 'POST', body: JSON.stringify({ email: em2, password: 'plum-harbor-clock-seven' }) });
+        await sleep(500);
+        check('signing in after several failures sends a heads-up email', mailbox.some((m) => m.to.includes(em2) && /after several failed/i.test(m.subject)), mailbox.map((m) => m.subject).slice(-3));
+        check('a normal sign-in sends no alert', !mailbox.some((m) => m.to.includes('hana@hist.test') && /\[Mentour Suite security\]/.test(m.subject)));
+      }
       // ---- Account lockout, session limits, sign out everywhere, enforced two-step
       {
         const tot = require('../src/totp');
         const lj = makeJar();
-        await lj.fetch('/api/auth/signup', { method: 'POST', body: JSON.stringify({ orgName: 'Lock Co', name: 'Lena Lock', email: 'lena@lock.test', password: 'lenapassword123' }) });
+        await lj.fetch('/api/auth/signup', { method: 'POST', body: JSON.stringify({ orgName: 'Lock Co', name: 'Lena Lock', email: 'lena@lock.test', password: 'Zqfa65e90da-Lm7!' }) });
         await lj.fetch('/api/auth/logout', { method: 'POST', body: '{}' });
         let r;
         for (let i = 0; i < 10; i++) r = await lj.fetch('/api/auth/login', { method: 'POST', body: JSON.stringify({ email: 'lena@lock.test', password: 'wrong-' + i }) });
         check('10 wrong passwords are all just refused', r.status === 401, r.status);
-        r = await lj.fetch('/api/auth/login', { method: 'POST', body: JSON.stringify({ email: 'lena@lock.test', password: 'lenapassword123' }) });
+        r = await lj.fetch('/api/auth/login', { method: 'POST', body: JSON.stringify({ email: 'lena@lock.test', password: 'Zqfa65e90da-Lm7!' }) });
         check('then the account is locked, even for the right password', r.status === 429 && r.body.locked === true, [r.status, r.body]);
         r = await lj.fetch('/api/auth/login', { method: 'POST', body: JSON.stringify({ email: 'nobody-here@lock.test', password: 'x' }) });
         check('an unknown email gets the same plain refusal (no hint whether it exists)', r.status === 401, r.status);
         await sleep(300);
         await dbConn.query("UPDATE audit_log SET created_at = created_at - INTERVAL 30 MINUTE WHERE user_email = 'lena@lock.test'");
-        r = await lj.fetch('/api/auth/login', { method: 'POST', body: JSON.stringify({ email: 'lena@lock.test', password: 'lenapassword123' }) });
+        r = await lj.fetch('/api/auth/login', { method: 'POST', body: JSON.stringify({ email: 'lena@lock.test', password: 'Zqfa65e90da-Lm7!' }) });
         check('after the wait the right password works again', r.status === 200 && r.body.user, [r.status, r.body]);
         const [[lrow]] = await dbConn.query("SELECT event FROM audit_log WHERE user_email = 'lena@lock.test' AND event = 'login_blocked' LIMIT 1");
         check('blocked attempts are logged', !!lrow);
+        check('the owner/person is emailed when their account gets locked', mailbox.some((m) => m.to.includes('lena@lock.test') && /temporarily locked/i.test(m.subject)), mailbox.map((m) => m.subject).slice(-4));
 
         // session cookie lifetime and the absolute cap
-        const raw = await fetch(BASE + '/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: 'lena@lock.test', password: 'lenapassword123' }) });
+        const raw = await fetch(BASE + '/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: 'lena@lock.test', password: 'Zqfa65e90da-Lm7!' }) });
         const sc = raw.headers.get('set-cookie') || '';
         const exp = /Expires=([^;]+)/i.exec(sc);
         const hrs = exp ? (new Date(exp[1]).getTime() - Date.now()) / 3600000 : 999;
@@ -3202,8 +3245,8 @@ async function main() {
 
         // sign out everywhere
         const d1 = makeJar(), d2 = makeJar();
-        await d1.fetch('/api/auth/login', { method: 'POST', body: JSON.stringify({ email: 'lena@lock.test', password: 'lenapassword123' }) });
-        await d2.fetch('/api/auth/login', { method: 'POST', body: JSON.stringify({ email: 'lena@lock.test', password: 'lenapassword123' }) });
+        await d1.fetch('/api/auth/login', { method: 'POST', body: JSON.stringify({ email: 'lena@lock.test', password: 'Zqfa65e90da-Lm7!' }) });
+        await d2.fetch('/api/auth/login', { method: 'POST', body: JSON.stringify({ email: 'lena@lock.test', password: 'Zqfa65e90da-Lm7!' }) });
         check('two devices are signed in', (await d1.fetch('/api/auth/me')).status === 200 && (await d2.fetch('/api/auth/me')).status === 200);
         r = await d1.fetch('/api/auth/logout-all', { method: 'POST', body: '{}' });
         check('sign out everywhere ends both', r.status === 200 && (await d1.fetch('/api/auth/me')).status === 401 && (await d2.fetch('/api/auth/me')).status === 401);
@@ -3216,7 +3259,7 @@ async function main() {
           check('the second test server (two-step required) started', up);
           let ck = null;
           const f2 = async (u, o = {}) => { const h = Object.assign({ 'Content-Type': 'application/json' }, ck ? { Cookie: ck } : {}); const x = await fetch(B2 + u, Object.assign({}, o, { headers: h })); const sck = x.headers.get('set-cookie'); if (sck) ck = sck.split(';')[0]; let b = null; try { b = await x.json(); } catch (e) { /* none */ } return { status: x.status, body: b }; };
-          await f2('/api/auth/signup', { method: 'POST', body: JSON.stringify({ orgName: 'Strict Co', name: 'Sol Strict', email: 'sol@strict.test', password: 'solpassword1234' }) });
+          await f2('/api/auth/signup', { method: 'POST', body: JSON.stringify({ orgName: 'Strict Co', name: 'Sol Strict', email: 'sol@strict.test', password: 'Zqb97d866a7-Lm7!' }) });
           r = await f2('/api/auth/me');
           check('an owner without two-step is told it is required', r.status === 200 && r.body.twoFactorRequired === true, r.body);
           r = await f2('/api/subvendor-invoices');
