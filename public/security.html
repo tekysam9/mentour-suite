@@ -49,6 +49,7 @@
   function say(m, k) { S.msg = m; S.kind = k || ''; }
   function render() {
     var st = S.status; var h = '<div class="sc-wrap"><h1>Security</h1><p class="sc-muted">Protect your login with a second step: a 6-digit code from an authenticator app on your phone. Even if someone learns your password, they cannot sign in without your phone.</p>';
+    if (/[?&]change=1/.test(location.search)) h += '<div class="sc-warn"><b>Please set a new password.</b> The one you just used is shorter or weaker than our current rule (12+ characters, no common words, not your name or email). Choose a new one below, then you can continue.</div>';
     if (/[?&]required=1/.test(location.search) && st && !st.enabled) h += '<div class="sc-warn"><b>Two-step sign-in is required.</b> Your organization requires it for owner and HR logins. Turn it on below to continue using the app.</div>';
     if (S.msg) h += '<div class="sc-msg ' + S.kind + '" role="status">' + esc(S.msg) + '</div>';
     if (!st) { appEl.innerHTML = h + '<p>Loading…</p></div>'; return; }
@@ -91,6 +92,7 @@
       S.busy = true; render();
       api('POST', '/api/auth/change-password', { current: cur, next: nw }).then(function (r) {
         S.busy = false;
+        if (r.ok && /[?&]change=1/.test(location.search)) { location.href = '/'; return; }
         say(r.ok ? 'Password changed.' + (r.body.otherSessionsEnded ? ' ' + r.body.otherSessionsEnded + ' other device(s) were signed out.' : '') : (r.body.error || 'Could not change it.'), r.ok ? 'ok' : 'err');
         render();
       });

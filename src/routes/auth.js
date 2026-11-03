@@ -4,6 +4,7 @@ const audit = require('../audit');
 const totp = require('../totp');
 const alerts = require('../securityAlerts');
 const passwordPolicy = require('../credentialRules');
+const passwordRules = passwordPolicy;
 const pool = require('../db');
 const {
   REQUIRE_2FA,
@@ -36,13 +37,14 @@ function publicUser(row) {
 
 // Create a brand-new organization + its first (owner) user.
 // A fresh session id at every sign-in, so an id set before login can never be reused afterwards (session fixation).
-function startSession(req, userId, twoFactorDone) {
+function startSession(req, userId, twoFactorDone, mustChangePassword) {
   return new Promise((resolve, reject) => {
     req.session.regenerate((err) => {
       if (err) return reject(err);
       req.session.userId = userId;
       req.session.startedAt = Date.now();
       if (twoFactorDone) req.session.twoFactorOk = true;
+      if (mustChangePassword) req.session.mustChangePassword = true;
       req.session.save((err2) => (err2 ? reject(err2) : resolve()));
     });
   });
@@ -157,6 +159,9 @@ router.post('/join', authLimiter, async (req, res, next) => {
 
 // Account lockout: too many wrong passwords or codes for one account in a short time blocks further tries for a while,
 // whatever IP they come from. Counted from the activity log (so it survives restarts); a successful sign-in resets it.
+// Sign-in with a password that doesn't meet today's rule (too short, common word...): allowed in, but only to the Security page until it is changed.
+// FORCE_PASSWORD_UPGRADE=off turns this off. The check can only happen here, because only the typed password reveals its strength.
+const FORCE_UPGRADE = !/^(0|false|off|no)$/i.test(String(process.env.FORCE_PASSWORD_UPGRADE || ''));
 const LOCK_AFTER = Math.max(3, Number(process.env.LOGIN_MAX_FAILS) || 10);
 const LOCK_MINUTES = Math.max(1, Number(process.env.LOGIN_LOCK_MINUTES) || 15);
 async function failureCount(email) {
@@ -194,15 +199,16 @@ router.post('/login', authLimiter, async (req, res, next) => {
     if (rows[0].totp_enabled) {
       // Password was right but this person uses an authenticator app: no sign-in yet, only a short-lived "second step pending" mark.
       await new Promise((ok, bad) => req.session.regenerate((e) => (e ? bad(e) : ok())));
-      req.session.pending2fa = { userId: rows[0].id, at: Date.now(), tries: 0 };
+      req.session.pending2fa = { userId: rows[0].id, at: Date.now(), tries: 0, weak: FORCE_UPGRADE && passwordRules.check(password, { email: rows[0].email, name: rows[0].name }) !== null };
       await new Promise((ok, bad) => req.session.save((e) => (e ? bad(e) : ok())));
       return res.json({ needsTwoFactor: true });
     }
     const failsBefore = await failureCount(String(rows[0].email).toLowerCase());
-    await startSession(req, rows[0].id);
+    const weak = FORCE_UPGRADE && passwordRules.check(password, { email: rows[0].email, name: rows[0].name }) !== null;
+    await startSession(req, rows[0].id, false, weak);
     if (failsBefore >= 3) alerts.notify('login_after_failures', rows[0], req.ip);
-    audit.record({ event: 'login', organizationId: rows[0].organization_id, userId: rows[0].id, userName: rows[0].name, userEmail: rows[0].email, ip: req.ip });
-    res.json({ user: publicUser(rows[0]) });
+    audit.record({ event: 'login', organizationId: rows[0].organization_id, userId: rows[0].id, userName: rows[0].name, userEmail: rows[0].email, ip: req.ip, detail: weak ? { passwordChangeRequired: true } : null });
+    res.json({ user: publicUser(rows[0]), passwordChangeRequired: weak });
   } catch (err) {
     next(err);
   }
@@ -219,6 +225,7 @@ router.post('/change-password', requireAuth, authLimiter, async (req, res, next)
     if (bad) return res.status(400).json({ error: bad });
     await pool.query('UPDATE users SET password_hash = ? WHERE id = ?', [await hashPassword(String(nextPw)), req.user.id]);
     const [r] = await pool.query('DELETE FROM sessions WHERE session_id <> ? AND data REGEXP ?', [req.sessionID, '"userId":' + Number(req.user.id) + '([^0-9]|$)']);
+    delete req.session.mustChangePassword;
     audit.record(audit.fromReq(req, 'password_changed', { detail: { otherSessionsEnded: r.affectedRows } }));
     alerts.notify('password_changed', req.user, req.ip);
     res.json({ ok: true, otherSessionsEnded: r.affectedRows });
@@ -275,10 +282,10 @@ router.post('/2fa/verify', authLimiter, async (req, res, next) => {
       if (pend.tries >= 5) { delete req.session.pending2fa; return res.status(401).json({ error: 'Too many wrong codes. Enter your email and password again.', expired: true }); }
       return res.status(401).json({ error: 'That code is not right. Check the code in your authenticator app and try again.' });
     }
-    await startSession(req, u.id, true);
+    await startSession(req, u.id, true, !!pend.weak);
     audit.record({ event: recovery ? '2fa_recovery_used' : 'login', organizationId: u.organization_id, userId: u.id, userName: u.name, userEmail: u.email, ip: req.ip });
     if (recovery) alerts.notify('recovery_used', u, req.ip);
-    res.json({ user: publicUser(u), recoveryUsed: recovery });
+    res.json({ user: publicUser(u), recoveryUsed: recovery, passwordChangeRequired: !!pend.weak });
   } catch (err) { next(err); }
 });
 
@@ -365,6 +372,7 @@ router.get('/me', requireAuth, async (req, res, next) => {
   try { const row = await twoFactorRow(req.user.id); twoFactor = !!(row && row.totp_enabled); } catch (e) { /* ignore */ }
   res.json({
     twoFactor,
+    passwordChangeRequired: !!req.session.mustChangePassword,
     twoFactorRequired: !!(REQUIRE_2FA && !twoFactor && (req.user.role === 'owner' || req.user.role === 'hr')),
     user: {
       id: req.user.id,

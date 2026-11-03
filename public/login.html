@@ -67,7 +67,7 @@
         btn.disabled = false; btn.textContent = 'Verify';
         return;
       }
-      window.location.href = (data.user && data.user.role === 'recruiter') ? '/onboarding.html' : '/';
+      window.location.href = data.passwordChangeRequired ? '/security.html?change=1' : ((data.user && data.user.role === 'recruiter') ? '/onboarding.html' : '/');
     } catch (err) {
       errorEl.textContent = err.message;
       errorEl.hidden = false;

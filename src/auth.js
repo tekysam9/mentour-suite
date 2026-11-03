@@ -63,6 +63,10 @@ async function requireAuth(req, res, next) {
       req.session.destroy(() => {});
       return res.status(401).json({ error: 'Your session ended. Please sign in again.', expired: true });
     }
+    // Signed in with a password that is too weak for today's rule: only the Security page (and sign-out) until it is changed.
+    if (req.session.mustChangePassword && !/^\/api\/auth(\/|$)/.test(req.baseUrl || '')) {
+      return res.status(403).json({ error: 'Your password is shorter or weaker than our current rule. Set a new one under Settings → Security to continue.', passwordChangeRequired: true });
+    }
     // Enforced two-step for owner/HR (only when REQUIRE_2FA is on). If the database has no two-step columns yet, nobody is locked out.
     if (REQUIRE_2FA && (req.user.role === 'owner' || req.user.role === 'hr') && !req.session.twoFactorOk) {
       let on = null;

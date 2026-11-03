@@ -3209,6 +3209,45 @@ async function main() {
         check('signing in after several failures sends a heads-up email', mailbox.some((m) => m.to.includes(em2) && /after several failed/i.test(m.subject)), mailbox.map((m) => m.subject).slice(-3));
         check('a normal sign-in sends no alert', !mailbox.some((m) => m.to.includes('hana@hist.test') && /\[Mentour Suite security\]/.test(m.subject)));
       }
+      // ---- Must-change step: an existing weak password still signs in, but only to the Security page until changed
+      {
+        const bcrypt = require('bcryptjs'); const tot = require('../src/totp');
+        const [org] = await dbConn.query("INSERT INTO organizations (name, invite_code) VALUES ('Legacy Co', 'legacytest01')");
+        const mk = async (email, name, pw) => { await dbConn.query('INSERT INTO users (organization_id, email, password_hash, name, role) VALUES (?, ?, ?, ?, ?)', [org.insertId, email, await bcrypt.hash(pw, 10), name, 'owner']); };
+        await mk('old@legacy.test', 'Old Timer', 'abc123');
+        await mk('good@legacy.test', 'Gus Good', 'long-enough-legacy-pw-1');
+        const oj = makeJar();
+        let r = await oj.fetch('/api/auth/login', { method: 'POST', body: JSON.stringify({ email: 'old@legacy.test', password: 'abc123' }) });
+        check('a 6-character legacy password still signs in, and is told to change it', r.status === 200 && r.body.user && r.body.passwordChangeRequired === true, r.body);
+        r = await oj.fetch('/api/subvendor-invoices');
+        check('but company data is closed until the password is changed', r.status === 403 && r.body.passwordChangeRequired === true, [r.status, r.body]);
+        r = await oj.fetch('/api/auth/me');
+        check('the Security page can still tell who is signed in and why', r.status === 200 && r.body.passwordChangeRequired === true, r.body);
+        r = await oj.fetch('/api/auth/change-password', { method: 'POST', body: JSON.stringify({ current: 'abc123', next: 'abc12345' }) });
+        check('another weak password does not clear the requirement', r.status === 400, r.body);
+        r = await oj.fetch('/api/auth/change-password', { method: 'POST', body: JSON.stringify({ current: 'abc123', next: 'tulip-anvil-river-nine' }) });
+        check('a strong new password is accepted', r.status === 200, r.body);
+        r = await oj.fetch('/api/subvendor-invoices');
+        check('and the app opens straight away', r.status === 200, [r.status, r.body]);
+        r = await makeJar().fetch('/api/auth/login', { method: 'POST', body: JSON.stringify({ email: 'old@legacy.test', password: 'tulip-anvil-river-nine' }) });
+        check('next sign-in is normal', r.status === 200 && r.body.passwordChangeRequired === false, r.body);
+        r = await makeJar().fetch('/api/auth/login', { method: 'POST', body: JSON.stringify({ email: 'good@legacy.test', password: 'long-enough-legacy-pw-1' }) });
+        check('an existing password that already meets the rule is not interrupted', r.status === 200 && r.body.passwordChangeRequired === false, r.body);
+        // with two-step: the flag survives the code step
+        const tj2 = makeJar();
+        await tj2.fetch('/api/auth/signup', { method: 'POST', body: JSON.stringify({ orgName: 'Both Co', name: 'Bo Both', email: 'bo@both.test', password: 'plum-harbor-clock-seven' }) });
+        r = await tj2.fetch('/api/auth/2fa/setup', { method: 'POST', body: '{}' });
+        const sec = r.body.secret;
+        await tj2.fetch('/api/auth/2fa/enable', { method: 'POST', body: JSON.stringify({ code: tot.hotp(sec, Math.floor(Date.now() / 30000)) }) });
+        await tj2.fetch('/api/auth/logout', { method: 'POST', body: '{}' });
+        await dbConn.query("UPDATE users SET password_hash = ? WHERE email = 'bo@both.test'", [await bcrypt.hash('weak99', 10)]);
+        r = await tj2.fetch('/api/auth/login', { method: 'POST', body: JSON.stringify({ email: 'bo@both.test', password: 'weak99' }) });
+        check('with two-step on, the password step still asks for the code', r.body.needsTwoFactor === true, r.body);
+        r = await tj2.fetch('/api/auth/2fa/verify', { method: 'POST', body: JSON.stringify({ code: tot.hotp(sec, Math.floor(Date.now() / 30000) + 1) }) });
+        check('and after the code the weak-password requirement still applies', r.status === 200 && r.body.passwordChangeRequired === true, r.body);
+        r = await tj2.fetch('/api/subvendor-invoices');
+        check('so company data stays closed until it is changed', r.status === 403, r.status);
+      }
       // ---- Account lockout, session limits, sign out everywhere, enforced two-step
       {
         const tot = require('../src/totp');
