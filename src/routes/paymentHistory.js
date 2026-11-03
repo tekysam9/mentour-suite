@@ -64,7 +64,7 @@ function cleanAnswers(raw, ctx) {
   const cName = new Map(ctx.directory.consultants.map((c) => [c.id, c.name])); const sName = new Map(ctx.directory.suppliers.map((s) => [s.id, s.name]));
   const out = { years: a.years === 'ok' ? 'ok' : a.years === 'no' ? 'no' : null, deduction: ['net', 'gross'].includes(a.deduction) ? a.deduction : null, dates: ['blank', 'keep'].includes(a.dates) ? a.dates : undefined,
     aliases: {}, groups: {}, dupes: {}, clients: {}, fixes: {}, entities: {} };
-  for (const [k, v] of Object.entries(a.aliases || {})) if (['smart', 'first', 'second', 'one'].includes(v)) out.aliases[String(k).slice(0, 255)] = v;
+  for (const [k, v] of Object.entries(a.aliases || {})) if (['smart', 'first', 'second', 'one', 'distinct'].includes(v)) out.aliases[String(k).slice(0, 255)] = v;
   for (const [k, v] of Object.entries(a.groups || {})) if (['skip', 'import'].includes(v)) out.groups[String(k).slice(0, 255)] = v;
   for (const [k, v] of Object.entries(a.dupes || {})) if (['once', 'both', 'first', 'second'].includes(v)) out.dupes[String(k).slice(0, 255)] = v;
   for (const [k, v] of Object.entries(a.clients || {})) if (typeof v === 'string') out.clients[String(k).slice(0, 255)] = v.slice(0, 255);

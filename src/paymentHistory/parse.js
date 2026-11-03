@@ -144,13 +144,15 @@ function parseCell(value, hoursYM) {
 }
 
 // ---- supplier / client / consultant cell text ---------------------------------
-const FROM_RE = /^(.*?)\s+from\s+([A-Za-z]{3,5}\.?\s*\d{1,2}|\d{1,2}\/\d{1,2}\/\d{2,4})\s*\/\s*(.+)$/i;
+const FROM_RE = /^(.*?)\s+from\s+([A-Za-z]{3,9}\.?\s*\d{1,2}|[A-Za-z]{3,9}\.?|\d{1,2}\/\d{1,2}\/\d{2,4})\s*\/\s*(.+)$/i;
 const DATE_NAME_RE = /^(.*?)\s+(\d{1,2}\/\d{1,2}\/\d{2,4})\s*\/\s*(.+)$/;
 function parseFromDate(t, fallbackYear) {
   const a = /^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/.exec(t);
   if (a) { const y = a[3].length === 2 ? 2000 + Number(a[3]) : Number(a[3]); return { year: y, month: Number(a[1]), day: Number(a[2]) }; }
-  const b = /^([A-Za-z]{3,5})\.?\s*(\d{1,2})$/.exec(t);
+  const b = /^([A-Za-z]{3,9})\.?\s*(\d{1,2})$/.exec(t);
   if (b && monthOf(b[1])) return { year: fallbackYear || null, month: monthOf(b[1]), day: Number(b[2]) };
+  const c = /^([A-Za-z]{3,9})\.?$/.exec(t); // "from Jan": month only, the 1st
+  if (c && monthOf(c[1])) return { year: fallbackYear || null, month: monthOf(c[1]), day: 1 };
   return null;
 }
 // "Creta Logic from 9/1/24/Magicforce"  -> { names: ['Creta Logic','Magicforce'], from: {2024,9,1}, kind: 'switch' }
@@ -159,7 +161,13 @@ function parseSupplierCell(raw) {
   const text = clean(raw);
   const out = { raw: text, names: [], kind: 'single', from: null, flags: [] };
   if (!text) return out;
+  // "Cyber Trex(from 8/28/22)": one supplier that started on a date, not two suppliers
+  const paren = /^(.*?)\s*\(\s*from\s+[^)]*\)\s*$/i.exec(text);
+  if (paren && clean(paren[1])) { out.names = [clean(paren[1])]; out.flags.push('started_date'); return out; }
   let m = FROM_RE.exec(text);
+  // "Agile Vision from 4/1/2023/ 1099": one supplier; the last bit is only a tax tag
+  if (m && /^(1099|w-?2)$/i.test(clean(m[3]))) { out.names = [clean(m[1])]; out.flags.push(clean(m[3]).toLowerCase()); return out; }
+  if (m && !parseFromDate(clean(m[2]))) m = null; // "X from Y/Z" where Y is not a date: not a switch
   if (m) { out.names = [clean(m[1]), clean(m[3])]; out.from = parseFromDate(clean(m[2])); out.kind = 'switch'; out.fromIsOpenYear = !!(out.from && !out.from.year); return out; }
   m = DATE_NAME_RE.exec(text);
   if (m) { out.names = [clean(m[1]), clean(m[3])]; out.from = parseFromDate(clean(m[2])); out.kind = 'switch_date_first'; return out; }

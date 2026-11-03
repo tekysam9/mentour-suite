@@ -34,7 +34,12 @@ function personMatches(name, list) {
     let why = null; let score = 0;
     if (t.length > 1 && dt.length > 1 && common.length === Math.min(t.length, dt.length) && common.length >= 2) { why = 'same words, one has an extra name'; score = 0.9; }
     else if (t.length > 1 && dt.length > 1 && t[0] === dt[0] && t[t.length - 1] === dt[dt.length - 1]) { why = 'first and last name match'; score = 0.88; }
-    else if (k.length >= 8 && lev(k, dk, 2) <= 2) { why = 'spelled almost the same'; score = 0.85; }
+    else if (k.length >= 8 && (() => {
+      // A typo, not a different person: compare word by word. (Comparing whole names lets "Rani Hist" pass for "Dana Hist".)
+      const lim = (x) => (x.length >= 7 ? 2 : 1);
+      if (t.length === dt.length) return t.some((x, i) => x === dt[i]) && t.every((x, i) => x === dt[i] || lev(x, dt[i], lim(x)) <= lim(x));
+      return t[t.length - 1] === dt[dt.length - 1] && lev(k, dk, 2) <= 2; // "Srinivasa Rao Anagani" / "Srinivasarao Anagani"
+    })()) { why = 'spelled almost the same'; score = 0.85; }
     else if ((t.length === 1 || dt.length === 1) && t[0] === dt[0]) { why = 'first name matches'; score = 0.7; }
     else if (t.length > 1 && dt.length > 1 && common.length >= 1 && lev(t[0], dt[0], 1) <= 1 && t[t.length - 1] === dt[dt.length - 1]) { why = 'last name matches, first name spelled differently'; score = 0.8; }
     if (why) near.push({ id: d.id, name: d.name, why, score });
@@ -62,9 +67,12 @@ function supplierMatches(name, list) {
 const money = (n) => Math.round(Number(n) * 100) / 100;
 const ymCompare = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
 
-function resolveSupplierName(payment, cell, mode, rowRange) {
+function resolveSupplierName(payment, cell, mode, rowRange, lookup) {
   const names = cell.names.filter(Boolean);
   if (cell.kind === 'single' || names.length < 2) return names[0] || '';
+  // "two different suppliers": the app maps each payment itself. If the app already holds this consultant's payment for
+  // that month under one of the two names, that one is used; otherwise the first name, with the cell kept in the note.
+  if (mode === 'distinct' && cell.kind === 'slash') { const i = lookup ? lookup(payment, names) : -1; return names[i === 1 ? 1 : 0]; }
   if (cell.kind === 'slash') return mode === 'second' ? names[1] : mode === 'one' ? names.join(' / ') : names[0];
   // switch: names[0] is the supplier from the date on, names[1] the one before it
   if (mode === 'first') return names[0];
@@ -104,6 +112,22 @@ function buildPlan({ parsed, directory, existing, answers }) {
   const { parseSupplierCell } = require('./parse');
   const cellInfo = new Map();
   for (const p of flat) { if (!cellInfo.has(p.supplierRaw)) cellInfo.set(p.supplierRaw, parseSupplierCell(p.supplierRaw)); }
+  const exSup = new Map(); // consultant|YYYY-MM -> [core supplier keys already in the app]
+  for (const e of existing || []) { const k = nameKey(e.consultant) + '|' + String(e.period_month).slice(0, 7); const l = exSup.get(k) || []; l.push(coreKey(e.supplier)); exSup.set(k, l); }
+  // The same consultant's other payments in this file (rows with one clear supplier), for placing "A/B" cells by their neighbours
+  const fileSup = new Map();
+  for (const p of flat) { const c = cellInfo.get(p.supplierRaw); if (c && c.kind === 'single' && c.names[0]) { const k = nameKey(p.consultant); const l = fileSup.get(k) || []; l.push({ ym: p.hoursMonth, core: coreKey(c.names[0]) }); fileSup.set(k, l); } }
+  const monthIdx = (ym) => Number(ym.slice(0, 4)) * 12 + Number(ym.slice(5, 7));
+  const sameCo = (a, b) => a && b && (a === b || a.startsWith(b + ' ') || b.startsWith(a + ' '));
+  // Which of the two names fits this payment? 1) the app already holds that consultant + month under one of them;
+  // 2) otherwise the consultant's nearest payment (within 4 months) in this file under one of them. -1 = cannot tell.
+  const distinctLookup = (payment, names) => {
+    const cores = names.map((n) => coreKey(n));
+    const have = exSup.get(nameKey(payment.consultant || '') + '|' + (payment.hoursMonth || ''));
+    if (have) for (let i = 0; i < names.length; i++) if (have.some((h) => sameCo(h, cores[i]))) return i;
+    const near = (fileSup.get(nameKey(payment.consultant || '')) || []).map((x) => ({ d: Math.abs(monthIdx(x.ym) - monthIdx(payment.hoursMonth)), i: cores.findIndex((c) => sameCo(x.core, c)) })).filter((x) => x.i >= 0 && x.d <= 4).sort((a, b) => a.d - b.d);
+    return near.length ? near[0].i : -1;
+  };
   const aliasQs = [];
   for (const [raw, ci] of cellInfo) {
     if (ci.kind === 'single') continue;
@@ -115,6 +139,7 @@ function buildPlan({ parsed, directory, existing, answers }) {
     const options = ci.kind === 'slash'
       ? [{ value: 'first', label: 'The supplier is “' + names[0] + '” (the other name is just how it was also written)' }, { value: 'second', label: 'The supplier is “' + names[1] + '”' }, { value: 'one', label: 'It is one company called “' + names.join(' / ') + '”' }]
       : [{ value: 'smart', label: '“' + names[0] + '” from ' + (ci.from ? (ci.from.year ? ci.from.month + '/' + ci.from.day + '/' + ci.from.year : 'month ' + ci.from.month + ' day ' + ci.from.day) : 'that date') + ' on, and “' + names[1] + '” before it (recommended)' }, { value: 'first', label: 'Always “' + names[0] + '”' }, { value: 'second', label: 'Always “' + names[1] + '”' }, { value: 'one', label: 'One company called “' + names.join(' / ') + '”' }];
+    if (ci.kind === 'slash') options.push({ value: 'distinct', label: 'They are two different suppliers (the consultant worked for both at different times). Keep them as separate suppliers; the app places each payment where it can.' });
     aliasQs.push({ key: raw, label: raw, consultants: [...new Set(users.map((u) => u.consultant))].slice(0, 3), payments: users.length, kind: ci.kind, options, value: mode, default: def });
   }
   if (aliasQs.length) questions.push({ id: 'aliases', type: 'aliases', title: aliasQs.length + ' supplier cell(s) name more than one company', detail: 'For example “Creta Logic from 9/1/24/Magicforce”. Say which company each payment belongs to. The recommended choice splits the payments at the date written in the cell.', items: aliasQs });
@@ -137,13 +162,14 @@ function buildPlan({ parsed, directory, existing, answers }) {
   for (const p of flat) {
     const ci = cellInfo.get(p.supplierRaw);
     const mode = (A.aliases && A.aliases[p.supplierRaw]) || (ci.kind === 'slash' ? 'first' : 'smart');
-    const supplier = titleSupplier(resolveSupplierName(p, ci, mode, rowRange.get(p.rowId) || {}));
+    const supplier = titleSupplier(resolveSupplierName(p, ci, mode, rowRange.get(p.rowId) || {}, distinctLookup));
     let amount = p.part.amount;
     if (p.part.deduction != null && dedMode === 'net') amount = money(p.part.amount - p.part.deduction);
     const doubtful = (p.part.flags || []).some((f) => ['paid_before_hours', 'long_lag', 'bad_date', 'year_run_on'].includes(f));
     const keepDate = !doubtful || dateMode === 'keep';
     const noteBits = [];
     if (p.part.deduction != null) noteBits.push('deduction ' + p.part.deduction + (dedMode === 'net' ? ' taken off ' + p.part.amount : ' not taken off'));
+    if (mode === 'distinct' && ci.kind === 'slash') noteBits.push('supplier written as “' + p.supplierRaw + '” in the file');
     if (p.part.note) noteBits.push(p.part.note);
     if (doubtful && !keepDate) noteBits.push('date in file: ' + p.raw);
     if (p.part.second != null) noteBits.push('second number in cell: ' + p.part.second);
@@ -161,7 +187,7 @@ function buildPlan({ parsed, directory, existing, answers }) {
       const ref = row || { supplierRaw: u.supplier, client: '', layout: 'matrix', left: /left/i.test(u.sheet), sheet: u.sheet, row: u.row, rowId: u.sheet + '!' + u.row, id: u.id };
       const sraw = (parsed.sheets.find((s) => s.sheet === u.sheet).rows.find((r) => r.row === u.row) || {}).supplierRaw || ref.supplierRaw || '';
       const ci = parseSupplierCell(sraw); const mode = (A.aliases && A.aliases[sraw]) || (ci.kind === 'slash' ? 'first' : 'smart');
-      rowsAll.push({ ...ref, id: u.id, consultant: titleCase(u.consultant), consultantRaw: u.consultant, supplierRaw: sraw, supplier: titleSupplier(resolveSupplierName({ hoursMonth: u.hoursMonth }, ci, mode, rowRange.get(u.sheet + '!' + u.row) || {})), hoursMonth: u.hoursMonth, raw: u.text, amount: money(f.amount), deduction: null, paidDate: /^\d{4}-\d{2}-\d{2}$/.test(f.paidDate || '') ? f.paidDate : null, method: null, note: 'typed in by hand from the cell “' + u.text + '”', flags: ['typed'], part: {} });
+      rowsAll.push({ ...ref, id: u.id, consultant: titleCase(u.consultant), consultantRaw: u.consultant, supplierRaw: sraw, supplier: titleSupplier(resolveSupplierName({ hoursMonth: u.hoursMonth, consultant: titleCase(u.consultant).replace(/[.,]+$/, '') }, ci, mode, rowRange.get(u.sheet + '!' + u.row) || {}, distinctLookup)), hoursMonth: u.hoursMonth, raw: u.text, amount: money(f.amount), deduction: null, paidDate: /^\d{4}-\d{2}-\d{2}$/.test(f.paidDate || '') ? f.paidDate : null, method: null, note: 'typed in by hand from the cell “' + u.text + '”', flags: ['typed'], part: {} });
     }
   }
 

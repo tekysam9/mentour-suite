@@ -3037,6 +3037,26 @@ async function main() {
         check('undo removes only that import\'s payments', r.status === 200 && r.body.removed === 3 && (await count()) === before, [r.status, r.body]);
         r = await hj.fetch('/api/payment-history/imports/' + impId + '/undo', { method: 'POST', body: '{}' });
         check('undoing twice is refused', r.status === 409, r.status);
+        {
+          const sh2 = { 'Accounts Payable Past Due': [hdr, ['Zeta', 'Alpha Hist/Gamma Hist', 'Rani Hist', 'Apr 10-500', 'May 12-600', 'Jun 9-700', null, null, null]] };
+          const b2 = (a) => JSON.stringify({ fileName: 'two.xlsx', sheets: sh2, apply: false, answers: Object.assign({ years: 'ok' }, a) });
+          r = await hj.fetch('/api/payment-history/preview', { method: 'POST', body: b2({}) });
+          const al = (r.body.questions.find((q) => q.id === 'aliases') || { items: [] }).items[0];
+          check('a cell with two suppliers offers "two different suppliers"', al && al.options.some((o) => o.value === 'distinct'), al);
+          const key = 'Alpha Hist/Gamma Hist';
+          r = await hj.fetch('/api/payment-history/preview', { method: 'POST', body: b2({ aliases: { [key]: 'distinct' } }) });
+          check('choosing two different suppliers still reads every payment and notes the original cell', r.status === 200 && r.body.stats.willSave === 3 && /Alpha Hist\/Gamma Hist/.test(r.body.sample[0].note) && r.body.sample[0].supplier === 'Alpha Hist', [r.body.stats, r.body.questions.map((q) => q.id), r.body.sample && r.body.sample[0]]);
+          r = await hj.fetch('/api/payment-history/preview', { method: 'POST', body: b2({ aliases: { [key]: 'bogus' } }) });
+          check('an unknown alias answer is ignored safely', r.status === 200 && r.body.stats.willSave === 3, r.status);
+        }
+        {
+          const { parseSupplierCell: psc } = require('../src/paymentHistory/parse');
+          const a1 = psc('Capital Info from Jan/Standav'), a2 = psc('Cyber Trex(from 8/28/22)'), a3 = psc('Agile Vision from 4/1/2023/ 1099'), a4 = psc('Infoshare/Techquency'), a5 = psc('Creta Logic from 9/1/24/Magicforce');
+          check('supplier cells: "from <month>" is a switch', a1.kind === 'switch' && a1.names[1] === 'Standav' && a1.from.month === 1, a1);
+          check('supplier cells: "(from date)" is one supplier', a2.kind === 'single' && a2.names[0] === 'Cyber Trex', a2);
+          check('supplier cells: "/ 1099" is a tax tag, not a second supplier', a3.kind === 'single' && a3.names[0] === 'Agile Vision', a3);
+          check('supplier cells: plain A/B and dated switches still read', a4.kind === 'slash' && a5.kind === 'switch' && a5.from.year === 2024, [a4, a5]);
+        }
         const anon = await fetch(BASE + '/api/payment-history/imports');
         check('payment history needs a login', anon.status === 401, anon.status);
         const hm = makeJar();
