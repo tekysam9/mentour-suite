@@ -714,3 +714,27 @@ CREATE TABLE IF NOT EXISTS supplier_payment_history (
   INDEX idx_payment_history_pair (organization_id, subvendor_id, consultant_id, period_month),
   INDEX idx_payment_history_import (import_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Activity log: who did what and when (changes, sign-ins, failed sign-ins). Never edited by the app; only owner/HR can read it.
+CREATE TABLE IF NOT EXISTS audit_log (
+  id BIGINT AUTO_INCREMENT PRIMARY KEY,
+  organization_id INT NULL,
+  user_id INT NULL,
+  user_name VARCHAR(255) NULL,
+  user_email VARCHAR(255) NULL,
+  event VARCHAR(40) NOT NULL,
+  method VARCHAR(8) NULL,
+  path VARCHAR(255) NULL,
+  status SMALLINT NULL,
+  detail TEXT NULL,
+  ip VARCHAR(64) NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  KEY idx_audit_org_time (organization_id, id),
+  KEY idx_audit_user (organization_id, user_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Two-step sign-in (authenticator app). The secret is stored encrypted; recovery codes only as hashes.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS totp_secret TEXT NULL;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS totp_enabled TINYINT(1) NOT NULL DEFAULT 0;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS totp_recovery TEXT NULL;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS totp_last_step BIGINT NULL;

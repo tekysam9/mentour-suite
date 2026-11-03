@@ -178,6 +178,12 @@ async function main() {
       check('the offline worker never stores account data (API untouched)', api.status === 401 && !/max-age=\d{3,}/.test(api.headers.get('cache-control') || ''));
     }
     {
+      const rd = (f) => require('fs').readFileSync(require('path').join(__dirname, '..', 'public', f), 'utf8');
+      check('login page has the two-step code step', /id="step2"/.test(rd('login.html')) && /2fa\/verify/.test(rd('login.html')));
+      check('Security and Activity log pages exist and are linked in the menu', /Security \(two-step\)/.test(rd('shell.js')) && /audit-log\.html/.test(rd('shell.js')) && /2fa\/setup/.test(rd('security.html')) && /api\/audit/.test(rd('audit-log.html')));
+      check('the QR library is served from this site, not a third party', /lib\/qrcode\.js/.test(rd('security.html')) && require('fs').existsSync(require('path').join(__dirname, '..', 'public', 'lib', 'qrcode.js')));
+    }
+    {
       const inv = require('fs').readFileSync(require('path').join(__dirname, '..', 'public', 'invoices.html'), 'utf8');
       check('Supplier payments draws one page of rows at a time (paging + search)', /data-svpage="next"/.test(inv) && /pageSize: 50/.test(inv) && /id="svfilter-search"/.test(inv));
       check('Supplier payments rows do not each carry the full supplier list', /data-lazy="1"/.test(inv) && /function fillSupplierSelect/.test(inv));

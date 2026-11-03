@@ -50,9 +50,20 @@ if (PROD && (!process.env.SESSION_SECRET || process.env.SESSION_SECRET.length < 
   console.error('SECURITY WARNING: SESSION_SECRET is missing, short or a placeholder. Set it to a long random value (at least 32 characters) in the hosting environment variables, then restart. Everyone will have to sign in again.');
 }
 app.use(require('compression')()); // smaller pages/JSON on slow connections
-app.use(express.json({ limit: '15mb' }));
 app.use(sessionMiddleware);
+// Request size: 1 MB everywhere. Only the spreadsheet/document upload routes take up to 15 MB, and (apart from the
+// vendor portal's token-checked document upload) only for a signed-in person, so strangers cannot make the server read big bodies.
+const BIG_SIGNED_IN = /^\/api\/(ledger|margin|directory-import|payment-history|invoices\/import-hours|onboarding\/[^/]+\/documents)(\/|$)/;
+const BIG_VENDOR_UPLOAD = /^\/api\/vendor-portal\/[^/]+\/documents$/;
+const jsonSmall = express.json({ limit: '1mb' });
+const jsonBig = express.json({ limit: '15mb' });
+app.use((req, res, next) => {
+  const signedIn = !!(req.session && req.session.userId);
+  const big = (signedIn && BIG_SIGNED_IN.test(req.path)) || BIG_VENDOR_UPLOAD.test(req.path);
+  return (big ? jsonBig : jsonSmall)(req, res, next);
+});
 
+app.use('/api', require('./src/audit').auditWrites);
 app.use('/api/version', versionRoutes);
 app.use('/api/auth', authRoutes);
 app.use('/api/ledger', createImportRouter('ledger_imports', { onSave: saveLedgerRoster }));
@@ -60,6 +71,7 @@ app.use('/api/roster', rosterRoutes);
 app.use('/api/margin', createImportRouter('margin_imports', { onSave: saveMarginRoster }));
 app.use('/api/directory-import', directoryImportRoutes);
 app.use('/api/data-check', require('./src/routes/dataCheck'));
+app.use('/api/audit', require('./src/routes/auditLog'));
 app.use('/api/payment-history', require('./src/routes/paymentHistory'));
 app.use('/api/directory', directoryRoutes);
 app.use('/api/profiles', profileRoutes);
@@ -85,6 +97,8 @@ app.use('/api', (req, res) => res.status(404).json({ error: 'Not found.' }));
 
 // Central error handler
 app.use((err, req, res, next) => { // eslint-disable-line no-unused-vars
+  if (err && err.type === 'entity.too.large') return res.status(413).json({ error: 'That request is too large.' });
+  if (err && err.type === 'entity.parse.failed') return res.status(400).json({ error: 'The request could not be read.' });
   console.error(err);
   res.status(500).json({ error: 'Something went wrong on our end. Please try again.' });
 });

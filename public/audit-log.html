@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Activity log — Mentour Suite</title>
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<meta name="theme-color" content="#0875E1">
+<link rel="stylesheet" href="/shared.css">
+<link rel="stylesheet" href="/shell.css">
+<link rel="stylesheet" href="/theme.css">
+<style>
+  .al-wrap { max-width: 1100px; padding: 8px 4px 48px; }
+  .al-wrap h1 { margin: 0 0 4px; }
+  .al-muted { color: #5b6673; font-size: 13px; }
+  .al-card { background: #fff; border: 1px solid #E3E6EA; border-radius: 10px; padding: 14px 18px; margin: 12px 0; overflow-x: auto; }
+  .al-bar { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin: 12px 0; }
+  .al-in, .al-sel { border: 1px solid #cfd5db; border-radius: 5px; padding: 7px 9px; font-size: 13.5px; font-family: inherit; }
+  .al-btn { border: 1px solid #cfd5db; background: #fff; border-radius: 5px; padding: 7px 13px; font-size: 13px; font-weight: 600; cursor: pointer; font-family: inherit; }
+  .al-t { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .al-t th { text-align: left; font-size: 11.5px; color: #5b6673; padding: 5px 8px; border-bottom: 1px solid #E3E6EA; }
+  .al-t td { padding: 6px 8px; border-bottom: 1px solid #F0F2F4; vertical-align: top; word-break: break-word; }
+  .al-tag { display: inline-block; font-size: 11px; font-weight: 700; padding: 1px 8px; border-radius: 99px; background: #EEF1F4; color: #44505c; }
+  .al-tag.login { background: #E4F6E9; color: #1B7A3A; } .al-tag.login_failed { background: #FDE8E6; color: #B3261E; } .al-tag.change { background: #E3F1FD; color: #0B5CAD; }
+</style>
+</head>
+<body>
+<div id="app"><p style="padding:24px">Loading…</p></div>
+<script src="/shell.js"></script>
+<script>
+(function () {
+  var appEl = document.getElementById('app');
+  var S = { entries: [], next: null, event: '', q: '', busy: false, msg: '', schemaMissing: false };
+  function esc(s) { return s === null || s === undefined ? '' : String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
+  var EVENTS = { change: 'Change', login: 'Signed in', login_failed: 'Failed sign-in', signup: 'New company', join: 'Joined', '2fa_enabled': 'Two-step on', '2fa_disabled': 'Two-step off', '2fa_failed': 'Failed two-step code', '2fa_recovery_used': 'Recovery code used' };
+  function describe(e) {
+    var d = e.detail || {}, bits = [];
+    if (d.note) bits.push(esc(d.note));
+    if (d.fields) bits.push(Object.keys(d.fields).map(function (k) { return esc(k) + ': ' + esc(d.fields[k]); }).join(', '));
+    else if (d.keys && d.keys.length) bits.push('fields: ' + d.keys.map(esc).join(', '));
+    if (d.why) bits.push(esc(d.why));
+    if (d.createdCompany) bits.push('company: ' + esc(d.createdCompany));
+    return bits.join(' · ');
+  }
+  function api(append) {
+    S.busy = true; render();
+    var url = '/api/audit?limit=100' + (S.event ? '&event=' + encodeURIComponent(S.event) : '') + (S.q ? '&q=' + encodeURIComponent(S.q) : '') + (append && S.next ? '&before=' + S.next : '');
+    fetch(url).then(function (r) { if (r.status === 401) { location.href = '/login.html'; return null; } return r.json().then(function (b) { return { ok: r.ok, b: b }; }); }).then(function (r) {
+      if (!r) return;
+      S.busy = false;
+      if (!r.ok) { S.msg = r.b.error || 'Could not load the log.'; render(); return; }
+      S.msg = ''; S.schemaMissing = !!r.b.schemaMissing; S.entries = append ? S.entries.concat(r.b.entries) : r.b.entries; S.next = r.b.next; render();
+    }).catch(function () { S.busy = false; S.msg = 'The connection dropped.'; render(); });
+  }
+  function render() {
+    var h = '<div class="al-wrap"><h1>Activity log</h1><p class="al-muted">Who signed in, who changed what and when. Only the owner and HR admins can see this. Entries cannot be edited or deleted from the app. Personal IDs, passwords and bank details are never recorded.</p>';
+    if (S.msg) h += '<p style="color:#B3261E;font-weight:600">' + esc(S.msg) + '</p>';
+    if (S.schemaMissing) h += '<p style="background:#FFF7E6;padding:8px 12px;border-left:3px solid #E0A100">The activity log is not set up yet. Run <code>db/schema.sql</code> on the database once.</p>';
+    h += '<div class="al-bar"><select class="al-sel" id="al-event"><option value="">All activity</option>' + Object.keys(EVENTS).map(function (k) { return '<option value="' + k + '"' + (S.event === k ? ' selected' : '') + '>' + EVENTS[k] + '</option>'; }).join('') + '</select>' +
+      '<input class="al-in" id="al-q" type="search" placeholder="Search name, email, page…" value="' + esc(S.q) + '" style="min-width:240px"> <button class="al-btn" id="al-go" type="button">Search</button></div>';
+    h += '<div class="al-card"><table class="al-t"><thead><tr><th>When</th><th>Who</th><th>What</th><th>Details</th><th>From (IP)</th></tr></thead><tbody>' +
+      (S.entries.length ? S.entries.map(function (e) {
+        return '<tr><td style="white-space:nowrap">' + esc(new Date(e.created_at).toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit', second: '2-digit' })) + '</td>' +
+          '<td>' + esc(e.user_name || '') + '<div class="al-muted">' + esc(e.user_email || '') + '</div></td>' +
+          '<td><span class="al-tag ' + esc(e.event) + '">' + esc(EVENTS[e.event] || e.event) + '</span>' + (e.method ? '<div class="al-muted">' + esc(e.method) + ' ' + esc(e.path) + (e.status ? ' → ' + e.status : '') + '</div>' : '') + '</td>' +
+          '<td>' + describe(e) + '</td><td class="al-muted">' + esc(e.ip || '') + '</td></tr>';
+      }).join('') : '<tr><td colspan="5" class="al-muted">' + (S.busy ? 'Loading…' : 'Nothing recorded yet.') + '</td></tr>') + '</tbody></table>' +
+      (S.next ? '<p><button class="al-btn" id="al-more" type="button"' + (S.busy ? ' disabled' : '') + '>Show older</button></p>' : '') + '</div></div>';
+    appEl.innerHTML = h;
+  }
+  appEl.addEventListener('change', function (e) { if (e.target.id === 'al-event') { S.event = e.target.value; api(false); } });
+  appEl.addEventListener('click', function (e) {
+    var b = e.target.closest('button'); if (!b) return;
+    if (b.id === 'al-go') { S.q = document.getElementById('al-q').value.trim(); api(false); }
+    if (b.id === 'al-more') api(true);
+  });
+  appEl.addEventListener('keydown', function (e) { if (e.target.id === 'al-q' && e.key === 'Enter') { S.q = e.target.value.trim(); api(false); } });
+  api(false);
+})();
+</script>
+</body>
+</html>

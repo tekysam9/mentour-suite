@@ -503,3 +503,14 @@ Do these in Hostinger (they cannot be done from the code):
 5. Use a database user that only has access to this one database, with a strong password; never reuse your Hostinger account password.
 6. Keep dependencies current: run `npm audit` now and then and act on Hostinger's security notices (as with the `qs` fix).
 7. Only owner/HR logins should see payments; check Settings for who has which role.
+
+## Activity log, two-step sign-in and request limits
+**After deploying, run `db/schema.sql` once** (safe to re-run). It adds the `audit_log` table and four `users` columns for two-step sign-in. Until you do, the app works as before: the log just stays empty and the Security page says it needs the database update.
+
+- **Settings → Activity log** (owner/HR only): every sign-in, failed sign-in and change (who, what, when, from which IP). Entries can't be edited or deleted from the app. Request bodies, passwords and personal IDs are never stored; only a short list of non-secret fields (amounts, dates, status). Payment-history imports and undos are logged with a summary line.
+- **Settings → Security (two-step)** (every login): turn on a 6-digit authenticator-app code (Google/Microsoft Authenticator, 1Password, Authy). Eight one-time recovery codes are shown once; save them in a password manager. Turning it off needs the password and a code. The secret is stored encrypted (with `FIELD_ENCRYPTION_KEY` when set, otherwise a key derived from `SESSION_SECRET`: if you later change `SESSION_SECRET` without `FIELD_ENCRYPTION_KEY`, two-step codes stop working, so set `FIELD_ENCRYPTION_KEY` and keep it).
+- **Everyone with access to payments should turn two-step on** (owner and HR first).
+- **If someone loses their phone and recovery codes** (run in phpMyAdmin, replacing the email):
+  `UPDATE users SET totp_enabled = 0, totp_secret = NULL, totp_recovery = NULL, totp_last_step = NULL WHERE email = 'person@example.com';`
+  They can then sign in with just the password and set it up again. (The owner can also use `POST /api/auth/2fa/reset` with `{"userId": …}`.)
+- **Request size:** requests are limited to 1 MB. Only the spreadsheet/document upload routes accept up to 15 MB, and only for signed-in people (plus the vendor portal's token-checked document upload).

@@ -28,6 +28,12 @@
       <label>Password
         <input type="password" name="password" required autocomplete="current-password">
       </label>
+      <div id="step2" hidden>
+        <p style="margin:0 0 10px;font-size:14px">Enter the 6-digit code from your authenticator app. Lost your phone? Enter one of your saved recovery codes instead.</p>
+        <label>Code
+          <input type="text" name="code" id="code" inputmode="text" autocomplete="one-time-code" maxlength="20" placeholder="123456">
+        </label>
+      </div>
       <div id="error" class="auth-error" hidden></div>
       <button type="submit" class="auth-btn">Sign in</button>
     </form>
@@ -43,18 +49,29 @@
     var errorEl = document.getElementById('error');
     errorEl.hidden = true;
     var form = e.target;
-    var body = { email: form.email.value, password: form.password.value };
+    var step2 = document.getElementById('step2');
+    var second = !step2.hidden;
+    var body = second ? { code: form.code.value } : { email: form.email.value, password: form.password.value };
     var btn = form.querySelector('button');
-    btn.disabled = true; btn.textContent = 'Signing in\u2026';
+    btn.disabled = true; btn.textContent = second ? 'Checking\u2026' : 'Signing in\u2026';
     try {
-      var res = await fetch('/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      var res = await fetch(second ? '/api/auth/2fa/verify' : '/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       var data = await res.json();
-      if (!res.ok) { throw new Error(data.error || 'Something went wrong.'); }
+      if (!res.ok) {
+        if (data.expired) { step2.hidden = true; form.password.value = ''; form.email.closest('label').hidden = false; form.password.closest('label').hidden = false; }
+        throw new Error(data.error || 'Something went wrong.');
+      }
+      if (data.needsTwoFactor) {
+        form.email.closest('label').hidden = true; form.password.closest('label').hidden = true;
+        step2.hidden = false; document.getElementById('code').focus();
+        btn.disabled = false; btn.textContent = 'Verify';
+        return;
+      }
       window.location.href = (data.user && data.user.role === 'recruiter') ? '/onboarding.html' : '/';
     } catch (err) {
       errorEl.textContent = err.message;
       errorEl.hidden = false;
-      btn.disabled = false; btn.textContent = 'Sign in';
+      btn.disabled = false; btn.textContent = step2.hidden ? 'Sign in' : 'Verify';
     }
   });
 </script>

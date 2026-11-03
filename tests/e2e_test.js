@@ -3066,6 +3066,107 @@ async function main() {
         r = await hj.fetch('/api/payment-history/preview', { method: 'POST', body: JSON.stringify({ sheets: { Junk: [['a', 'b']] }, answers: {} }) });
         check('a workbook with no payment sheets is refused with a clear message', r.status === 400 && /supplier-payments/.test(r.body.error), r.body);
       }
+      // ---- Request size cap, activity log, two-step sign-in
+      {
+        const tot = require('../src/totp');
+        const big = JSON.stringify({ email: 'x@y.test', password: 'p', pad: 'a'.repeat(2 * 1024 * 1024) });
+        let r = await fetch(BASE + '/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: big });
+        check('a 2 MB request to a normal route is refused (413)', r.status === 413, r.status);
+        r = await fetch(BASE + '/api/ledger', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: big });
+        check('a stranger cannot send a big body even to an upload route', r.status === 413, r.status);
+        const sj0 = makeJar();
+        await sj0.fetch('/api/auth/signup', { method: 'POST', body: JSON.stringify({ orgName: 'Sec Co', name: 'Sam Secure', email: 'sam@sec.test', password: 'sampassword123' }) });
+        r = await sj0.fetch('/api/ledger', { method: 'POST', body: JSON.stringify({ fileName: 'big.xlsx', data: { consultants: [], pad: 'a'.repeat(2 * 1024 * 1024) } }) });
+        check('a signed-in person can still upload a big file to an upload route', r.status !== 413, r.status);
+        r = await sj0.fetch('/api/directory/consultants', { method: 'POST', body: big });
+        check('but not a big body to a normal route', r.status === 413, r.status);
+        r = await fetch(BASE + '/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{not json' });
+        check('broken JSON is a 400, not a server error', r.status === 400, r.status);
+
+        // activity log
+        const aj = makeJar();
+        r = await aj.fetch('/api/auth/login', { method: 'POST', body: JSON.stringify({ email: 'hana@hist.test', password: 'wrongwrongwrong' }) });
+        check('wrong password is refused', r.status === 401);
+        await aj.fetch('/api/auth/login', { method: 'POST', body: JSON.stringify({ email: 'hana@hist.test', password: 'hanapassword123' }) });
+        await sleep(400);
+        r = await aj.fetch('/api/audit');
+        const ev = (r.body && r.body.entries) || [];
+        check('owner can read the activity log', r.status === 200 && ev.length > 0, r.status);
+        check('the payment history import is in the log with who and what', ev.some((e) => e.event === 'change' && /payment-history\/apply/.test(e.path) && e.user_email === 'hana@hist.test' && e.detail && /Payment history import #\d+/.test(e.detail.note || '')), ev.slice(0, 3));
+        check('the failed and the successful sign-in are both logged', ev.some((e) => e.event === 'login_failed' && e.user_email === 'hana@hist.test') && ev.some((e) => e.event === 'login' && e.user_email === 'hana@hist.test'));
+        check('log never stores request bodies or passwords', !JSON.stringify(ev).includes('hanapassword123') && !JSON.stringify(ev).includes('wrongwrongwrong'));
+        r = await aj.fetch('/api/audit?event=login_failed');
+        check('the log can be filtered', r.status === 200 && r.body.entries.length > 0 && r.body.entries.every((e) => e.event === 'login_failed'));
+        r = await sj0.fetch('/api/audit');
+        check('another company never sees this company\u2019s log', r.status === 200 && !(r.body.entries || []).some((e) => e.user_email === 'hana@hist.test'));
+        const am = makeJar();
+        await am.fetch('/api/auth/login', { method: 'POST', body: JSON.stringify({ email: 'mem@check.test', password: 'carapassword123' }) });
+        r = await am.fetch('/api/audit');
+        check('a normal member cannot read the activity log', r.status === 403, r.status);
+        r = await fetch(BASE + '/api/audit');
+        check('the activity log needs a login', r.status === 401, r.status);
+
+        // two-step sign-in
+        const tj = makeJar();
+        await tj.fetch('/api/auth/signup', { method: 'POST', body: JSON.stringify({ orgName: 'Two Step Co', name: 'Tess Twostep', email: 'tess@two.test', password: 'tesspassword123' }) });
+        r = await tj.fetch('/api/auth/2fa/status');
+        check('two-step is available and off by default', r.status === 200 && r.body.available === true && r.body.enabled === false, r.body);
+        r = await tj.fetch('/api/auth/2fa/setup', { method: 'POST', body: '{}' });
+        const secret = r.body.secret;
+        check('setup returns a secret and an otpauth link', r.status === 200 && /^[A-Z2-7]{32}$/.test(secret) && /^otpauth:\/\/totp\//.test(r.body.otpauth), r.body);
+        r = await tj.fetch('/api/auth/2fa/enable', { method: 'POST', body: JSON.stringify({ code: '000000' }) });
+        check('a wrong code does not turn it on', r.status === 400, r.status);
+        let step = Math.floor(Date.now() / 30000);
+        r = await tj.fetch('/api/auth/2fa/enable', { method: 'POST', body: JSON.stringify({ code: tot.hotp(secret, step) }) });
+        const rec = r.body.recoveryCodes || [];
+        check('the right code turns it on and gives 8 recovery codes', r.status === 200 && rec.length === 8, r.body);
+        const [[urow]] = await dbConn.query("SELECT totp_secret, totp_recovery FROM users WHERE email = 'tess@two.test'");
+        check('the secret is stored encrypted and recovery codes only as hashes', !String(urow.totp_secret).includes(secret) && !rec.some((c) => String(urow.totp_recovery).includes(c)), urow);
+        await tj.fetch('/api/auth/logout', { method: 'POST', body: '{}' });
+        r = await tj.fetch('/api/auth/login', { method: 'POST', body: JSON.stringify({ email: 'tess@two.test', password: 'tesspassword123' }) });
+        check('password alone no longer signs in: a code is asked for', r.status === 200 && r.body.needsTwoFactor === true && !r.body.user, r.body);
+        r = await tj.fetch('/api/auth/me');
+        check('and nothing is open before the second step', r.status === 401, r.status);
+        r = await tj.fetch('/api/auth/2fa/verify', { method: 'POST', body: JSON.stringify({ code: '123456' }) });
+        check('a wrong code is refused', r.status === 401, r.status);
+        r = await tj.fetch('/api/auth/2fa/verify', { method: 'POST', body: JSON.stringify({ code: tot.hotp(secret, step) }) });
+        check('the code already used to turn it on cannot be replayed', r.status === 401, r.status);
+        step = Math.floor(Date.now() / 30000);
+        r = await tj.fetch('/api/auth/2fa/verify', { method: 'POST', body: JSON.stringify({ code: tot.hotp(secret, step + 1) }) });
+        check('a fresh code signs in', r.status === 200 && r.body.user && r.body.user.email === 'tess@two.test', r.body);
+        r = await tj.fetch('/api/auth/me');
+        check('now the session is open and says two-step is on', r.status === 200 && r.body.twoFactor === true, r.body);
+        // recovery code: works once
+        await tj.fetch('/api/auth/logout', { method: 'POST', body: '{}' });
+        await tj.fetch('/api/auth/login', { method: 'POST', body: JSON.stringify({ email: 'tess@two.test', password: 'tesspassword123' }) });
+        r = await tj.fetch('/api/auth/2fa/verify', { method: 'POST', body: JSON.stringify({ code: rec[0] }) });
+        check('a recovery code signs in', r.status === 200 && r.body.recoveryUsed === true, r.body);
+        await tj.fetch('/api/auth/logout', { method: 'POST', body: '{}' });
+        await tj.fetch('/api/auth/login', { method: 'POST', body: JSON.stringify({ email: 'tess@two.test', password: 'tesspassword123' }) });
+        r = await tj.fetch('/api/auth/2fa/verify', { method: 'POST', body: JSON.stringify({ code: rec[0] }) });
+        check('the same recovery code cannot be used twice', r.status === 401, r.status);
+        // 5 wrong codes end the attempt
+        let last = null;
+        for (let i = 0; i < 5; i++) last = await tj.fetch('/api/auth/2fa/verify', { method: 'POST', body: JSON.stringify({ code: '999999' }) });
+        check('after 5 wrong codes the attempt is cancelled', last.status === 401 && last.body.expired === true, last.body);
+        r = await tj.fetch('/api/auth/2fa/verify', { method: 'POST', body: JSON.stringify({ code: rec[1] }) });
+        check('even a good recovery code is refused once the attempt is cancelled', r.status === 401, r.status);
+        // turning it off needs password + code
+        await tj.fetch('/api/auth/login', { method: 'POST', body: JSON.stringify({ email: 'tess@two.test', password: 'tesspassword123' }) });
+        await tj.fetch('/api/auth/2fa/verify', { method: 'POST', body: JSON.stringify({ code: rec[1] }) });
+        r = await tj.fetch('/api/auth/2fa/disable', { method: 'POST', body: JSON.stringify({ password: 'wrong', code: rec[2] }) });
+        check('turning it off needs the right password', r.status === 400, r.status);
+        r = await tj.fetch('/api/auth/2fa/disable', { method: 'POST', body: JSON.stringify({ password: 'tesspassword123', code: '111111' }) });
+        check('turning it off needs a right code', r.status === 400, r.status);
+        r = await tj.fetch('/api/auth/2fa/disable', { method: 'POST', body: JSON.stringify({ password: 'tesspassword123', code: rec[2] }) });
+        check('password + a recovery code turns it off', r.status === 200 && r.body.enabled === false, r.body);
+        await tj.fetch('/api/auth/logout', { method: 'POST', body: '{}' });
+        r = await tj.fetch('/api/auth/login', { method: 'POST', body: JSON.stringify({ email: 'tess@two.test', password: 'tesspassword123' }) });
+        check('after turning it off, a password signs in again', r.status === 200 && r.body.user, r.body);
+        await sleep(300);
+        r = await tj.fetch('/api/audit');
+        check('two-step events are in the log', (r.body.entries || []).some((e) => e.event === '2fa_enabled') && (r.body.entries || []).some((e) => e.event === '2fa_failed') && (r.body.entries || []).some((e) => e.event === '2fa_recovery_used') && (r.body.entries || []).some((e) => e.event === '2fa_disabled'), (r.body.entries || []).map((e) => e.event));
+      }
     } finally {
       await dbConn.end();
     }

@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Security — Mentour Suite</title>
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<meta name="theme-color" content="#0875E1">
+<link rel="stylesheet" href="/shared.css">
+<link rel="stylesheet" href="/shell.css">
+<link rel="stylesheet" href="/theme.css">
+<style>
+  .sc-wrap { max-width: 760px; padding: 8px 4px 48px; }
+  .sc-wrap h1 { margin: 0 0 4px; }
+  .sc-card { background: #fff; border: 1px solid #E3E6EA; border-radius: 10px; padding: 16px 20px; margin: 14px 0; line-height: 1.55; }
+  .sc-card h2 { margin: 0 0 6px; font-size: 17px; }
+  .sc-muted { color: #5b6673; font-size: 13px; }
+  .sc-in { border: 1px solid #cfd5db; border-radius: 5px; padding: 9px 11px; font-size: 16px; font-family: inherit; width: 220px; max-width: 100%; letter-spacing: 2px; }
+  .sc-pw { letter-spacing: 0; width: 260px; }
+  .sc-btn { border: 1px solid #cfd5db; background: #fff; border-radius: 5px; padding: 9px 16px; font-size: 14px; font-weight: 600; cursor: pointer; font-family: inherit; }
+  .sc-btn.primary { background: #0B5CAD; border-color: #0B5CAD; color: #fff; }
+  .sc-btn.danger { border-color: #B3261E; color: #B3261E; }
+  .sc-msg { font-size: 13.5px; font-weight: 600; margin: 8px 0; } .sc-msg.err { color: #B3261E; } .sc-msg.ok { color: #1B7A3A; }
+  .sc-on { display: inline-block; background: #E4F6E9; color: #1B7A3A; font-weight: 700; font-size: 12px; padding: 2px 10px; border-radius: 99px; }
+  .sc-off { display: inline-block; background: #FFF5E5; color: #8A5A00; font-weight: 700; font-size: 12px; padding: 2px 10px; border-radius: 99px; }
+  .sc-qr { padding: 10px; background: #fff; border: 1px solid #E3E6EA; display: inline-block; border-radius: 8px; }
+  .sc-qr svg { width: 200px; height: 200px; display: block; }
+  .sc-secret { font-family: ui-monospace, Menlo, Consolas, monospace; background: #F3F5F7; padding: 6px 10px; border-radius: 5px; display: inline-block; word-break: break-all; }
+  .sc-codes { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 16px; columns: 2; background: #F3F5F7; padding: 12px 18px; border-radius: 8px; line-height: 1.9; }
+  .sc-warn { background: #FFF7E6; border-left: 3px solid #E0A100; padding: 8px 12px; border-radius: 4px; font-size: 13.5px; margin: 10px 0; }
+</style>
+</head>
+<body>
+<div id="app"><p style="padding:24px">Loading…</p></div>
+<script src="/lib/qrcode.js"></script>
+<script src="/shell.js"></script>
+<script>
+(function () {
+  var appEl = document.getElementById('app');
+  var S = { status: null, setup: null, codes: null, msg: '', kind: '', busy: false };
+  function esc(s) { return s === null || s === undefined ? '' : String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
+  function api(method, url, body) {
+    return fetch(url, { method: method, confirm: false, headers: { 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined })
+      .then(function (r) { if (r.status === 401 && url.indexOf('/2fa/') === -1) { location.href = '/login.html'; } return r.json().catch(function () { return {}; }).then(function (b) { return { ok: r.ok, status: r.status, body: b }; }); });
+  }
+  function load() { return api('GET', '/api/auth/2fa/status').then(function (r) { S.status = r.ok ? r.body : { available: false, enabled: false }; render(); }); }
+  function qrSvg(text) { var q = qrcode(0, 'M'); q.addData(text); q.make(); return q.createSvgTag({ scalable: true, margin: 0 }); }
+  function say(m, k) { S.msg = m; S.kind = k || ''; }
+  function render() {
+    var st = S.status; var h = '<div class="sc-wrap"><h1>Security</h1><p class="sc-muted">Protect your login with a second step: a 6-digit code from an authenticator app on your phone. Even if someone learns your password, they cannot sign in without your phone.</p>';
+    if (S.msg) h += '<div class="sc-msg ' + S.kind + '" role="status">' + esc(S.msg) + '</div>';
+    if (!st) { appEl.innerHTML = h + '<p>Loading…</p></div>'; return; }
+    if (S.codes) {
+      h += '<div class="sc-card"><h2>Save your recovery codes</h2><div class="sc-warn"><b>Shown only once.</b> Each code works one time if you lose your phone. Store them somewhere safe, like a password manager. Not in this app and not in an email.</div><div class="sc-codes">' + S.codes.map(esc).join('<br>') + '</div><p style="margin-top:12px"><button class="sc-btn" id="sc-copy" type="button">Copy codes</button> <button class="sc-btn primary" id="sc-done" type="button">I have saved them</button></p></div>';
+    } else if (!st.available) {
+      h += '<div class="sc-card"><h2>Two-step sign-in <span class="sc-off">not available yet</span></h2><p>The database needs a one-time update first. Run <code>db/schema.sql</code> on it and reload this page.</p></div>';
+    } else if (st.enabled) {
+      h += '<div class="sc-card"><h2>Two-step sign-in <span class="sc-on">On</span></h2><p class="sc-muted">' + st.recoveryCodesLeft + ' recovery code(s) left.</p><h2 style="margin-top:18px;font-size:15px">Turn it off</h2><p class="sc-muted">You need your password and a current code (or a recovery code).</p>' +
+        '<p><input class="sc-in sc-pw" id="sc-pw" type="password" placeholder="Password" autocomplete="current-password"></p><p><input class="sc-in" id="sc-dcode" type="text" placeholder="Code" autocomplete="one-time-code" maxlength="20"></p><p><button class="sc-btn danger" id="sc-disable" type="button"' + (S.busy ? ' disabled' : '') + '>Turn off two-step sign-in</button></p></div>';
+    } else if (S.setup) {
+      h += '<div class="sc-card"><h2>1. Scan this with your authenticator app</h2><p class="sc-muted">Use Google Authenticator, Microsoft Authenticator, 1Password, Authy or similar.</p><div class="sc-qr">' + qrSvg(S.setup.otpauth) + '</div><p class="sc-muted">Can’t scan? Enter this key by hand: <span class="sc-secret">' + esc(S.setup.secret) + '</span></p>' +
+        '<h2 style="margin-top:18px">2. Enter the 6-digit code the app shows</h2><p><input class="sc-in" id="sc-code" type="text" inputmode="numeric" placeholder="123456" autocomplete="one-time-code" maxlength="7"> <button class="sc-btn primary" id="sc-enable" type="button"' + (S.busy ? ' disabled' : '') + '>Turn on</button> <button class="sc-btn" id="sc-cancel" type="button">Cancel</button></p></div>';
+    } else {
+      h += '<div class="sc-card"><h2>Two-step sign-in <span class="sc-off">Off</span></h2><p>Recommended for everyone, and especially owner and HR logins, who can see payments and personal data.</p><p><button class="sc-btn primary" id="sc-start" type="button"' + (S.busy ? ' disabled' : '') + '>Set up two-step sign-in</button></p></div>';
+    }
+    appEl.innerHTML = h + '</div>';
+  }
+  appEl.addEventListener('click', function (e) {
+    var b = e.target.closest('button'); if (!b) return;
+    if (b.id === 'sc-start') { S.busy = true; say(''); render(); api('POST', '/api/auth/2fa/setup', {}).then(function (r) { S.busy = false; if (r.ok) S.setup = r.body; else say(r.body.error || 'Could not start.', 'err'); render(); }); }
+    if (b.id === 'sc-cancel') { S.setup = null; say(''); render(); }
+    if (b.id === 'sc-enable') {
+      var code = document.getElementById('sc-code').value.trim(); S.busy = true; render();
+      api('POST', '/api/auth/2fa/enable', { code: code }).then(function (r) {
+        S.busy = false;
+        if (r.ok) { S.codes = r.body.recoveryCodes; S.setup = null; S.status.enabled = true; S.status.recoveryCodesLeft = S.codes.length; say('Two-step sign-in is on.', 'ok'); }
+        else { say(r.body.error || 'Could not turn it on.', 'err'); if (r.body.expired) S.setup = null; }
+        render();
+      });
+    }
+    if (b.id === 'sc-copy') { try { navigator.clipboard.writeText(S.codes.join('\n')); say('Copied.', 'ok'); render(); } catch (err) { /* ignore */ } }
+    if (b.id === 'sc-done') { S.codes = null; say('', ''); render(); }
+    if (b.id === 'sc-disable') {
+      var pw = document.getElementById('sc-pw').value, dc = document.getElementById('sc-dcode').value.trim(); S.busy = true; render();
+      api('POST', '/api/auth/2fa/disable', { password: pw, code: dc }).then(function (r) {
+        S.busy = false;
+        if (r.ok) { S.status.enabled = false; say('Two-step sign-in is off.', 'ok'); } else say(r.body.error || 'Could not turn it off.', 'err');
+        render();
+      });
+    }
+  });
+  appEl.addEventListener('keydown', function (e) { if (e.key === 'Enter' && e.target.id === 'sc-code') { var b = document.getElementById('sc-enable'); if (b) b.click(); } });
+  load();
+})();
+</script>
+</body>
+</html>

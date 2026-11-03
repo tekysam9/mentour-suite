@@ -146,6 +146,7 @@ router.post('/apply', async (req, res, next) => {
     const [[tot]] = await conn.query('SELECT COALESCE(SUM(amount), 0) AS t FROM supplier_payment_history WHERE import_id = ?', [importId]); total = Number(tot.t);
     await conn.query('UPDATE payment_history_imports SET rows_added = ?, total_amount = ?, summary = ? WHERE id = ?', [added, total, JSON.stringify({ created, stats: plan.stats, answers: { years: answers.years, deduction: answers.deduction, dates: answers.dates || 'blank', groups: answers.groups, dupes: answers.dupes, aliases: answers.aliases } }), importId]);
     await conn.commit();
+    res.locals.auditNote = 'Payment history import #' + importId + ' (' + (req.body.fileName ? String(req.body.fileName).slice(0, 80) : 'file') + '): ' + added + ' payments, $' + Number(total).toFixed(2) + '; new consultants ' + created.consultants.length + ', new suppliers ' + created.suppliers.length;
     res.status(201).json({ importId, added, alreadyThere: batch.length - added, total, created });
   } catch (err) {
     if (conn) { try { await conn.rollback(); } catch (e) { /* ignore */ } }
@@ -174,6 +175,7 @@ router.post('/imports/:id/undo', async (req, res, next) => {
     if (imp.undone_at) return res.status(409).json({ error: 'That import was already undone.' });
     const [del] = await pool.query('DELETE FROM supplier_payment_history WHERE import_id = ? AND organization_id = ?', [imp.id, orgId]);
     await pool.query('UPDATE payment_history_imports SET undone_at = NOW() WHERE id = ?', [imp.id]);
+    res.locals.auditNote = 'Undid payment history import #' + req.params.id + ': removed ' + del.affectedRows + ' payments';
     res.json({ removed: del.affectedRows });
   } catch (err) { next(err); }
 });
