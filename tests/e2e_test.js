@@ -3167,6 +3167,71 @@ async function main() {
         r = await tj.fetch('/api/audit');
         check('two-step events are in the log', (r.body.entries || []).some((e) => e.event === '2fa_enabled') && (r.body.entries || []).some((e) => e.event === '2fa_failed') && (r.body.entries || []).some((e) => e.event === '2fa_recovery_used') && (r.body.entries || []).some((e) => e.event === '2fa_disabled'), (r.body.entries || []).map((e) => e.event));
       }
+      // ---- Account lockout, session limits, sign out everywhere, enforced two-step
+      {
+        const tot = require('../src/totp');
+        const lj = makeJar();
+        await lj.fetch('/api/auth/signup', { method: 'POST', body: JSON.stringify({ orgName: 'Lock Co', name: 'Lena Lock', email: 'lena@lock.test', password: 'lenapassword123' }) });
+        await lj.fetch('/api/auth/logout', { method: 'POST', body: '{}' });
+        let r;
+        for (let i = 0; i < 10; i++) r = await lj.fetch('/api/auth/login', { method: 'POST', body: JSON.stringify({ email: 'lena@lock.test', password: 'wrong-' + i }) });
+        check('10 wrong passwords are all just refused', r.status === 401, r.status);
+        r = await lj.fetch('/api/auth/login', { method: 'POST', body: JSON.stringify({ email: 'lena@lock.test', password: 'lenapassword123' }) });
+        check('then the account is locked, even for the right password', r.status === 429 && r.body.locked === true, [r.status, r.body]);
+        r = await lj.fetch('/api/auth/login', { method: 'POST', body: JSON.stringify({ email: 'nobody-here@lock.test', password: 'x' }) });
+        check('an unknown email gets the same plain refusal (no hint whether it exists)', r.status === 401, r.status);
+        await sleep(300);
+        await dbConn.query("UPDATE audit_log SET created_at = created_at - INTERVAL 30 MINUTE WHERE user_email = 'lena@lock.test'");
+        r = await lj.fetch('/api/auth/login', { method: 'POST', body: JSON.stringify({ email: 'lena@lock.test', password: 'lenapassword123' }) });
+        check('after the wait the right password works again', r.status === 200 && r.body.user, [r.status, r.body]);
+        const [[lrow]] = await dbConn.query("SELECT event FROM audit_log WHERE user_email = 'lena@lock.test' AND event = 'login_blocked' LIMIT 1");
+        check('blocked attempts are logged', !!lrow);
+
+        // session cookie lifetime and the absolute cap
+        const raw = await fetch(BASE + '/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: 'lena@lock.test', password: 'lenapassword123' }) });
+        const sc = raw.headers.get('set-cookie') || '';
+        const exp = /Expires=([^;]+)/i.exec(sc);
+        const hrs = exp ? (new Date(exp[1]).getTime() - Date.now()) / 3600000 : 999;
+        check('the session cookie lasts hours, not weeks (idle timeout)', hrs > 0.5 && hrs < 3, hrs);
+        const [[uid]] = await dbConn.query("SELECT id FROM users WHERE email = 'lena@lock.test'");
+        r = await lj.fetch('/api/auth/me');
+        check('signed in before the cap', r.status === 200);
+        await dbConn.query("UPDATE sessions SET data = JSON_SET(data, '$.startedAt', 1) WHERE data REGEXP ?", ['"userId":' + uid.id + '([^0-9]|$)']);
+        r = await lj.fetch('/api/auth/me');
+        check('a session older than the absolute limit is ended', r.status === 401 && r.body && r.body.expired === true, [r.status, r.body]);
+
+        // sign out everywhere
+        const d1 = makeJar(), d2 = makeJar();
+        await d1.fetch('/api/auth/login', { method: 'POST', body: JSON.stringify({ email: 'lena@lock.test', password: 'lenapassword123' }) });
+        await d2.fetch('/api/auth/login', { method: 'POST', body: JSON.stringify({ email: 'lena@lock.test', password: 'lenapassword123' }) });
+        check('two devices are signed in', (await d1.fetch('/api/auth/me')).status === 200 && (await d2.fetch('/api/auth/me')).status === 200);
+        r = await d1.fetch('/api/auth/logout-all', { method: 'POST', body: '{}' });
+        check('sign out everywhere ends both', r.status === 200 && (await d1.fetch('/api/auth/me')).status === 401 && (await d2.fetch('/api/auth/me')).status === 401);
+
+        // enforced two-step for owner/HR: a second server with REQUIRE_2FA on, same database
+        const srv2 = spawn('node', ['server.js'], { cwd: path.join(__dirname, '..'), env: Object.assign({}, process.env, { PORT: '3002', REQUIRE_2FA: 'true' }), stdio: 'pipe' });
+        try {
+          const B2 = 'http://localhost:3002'; let up = false;
+          for (let i = 0; i < 40 && !up; i++) { await sleep(250); try { up = (await fetch(B2 + '/api/auth/me')).status === 401; } catch (e) { /* not yet */ } }
+          check('the second test server (two-step required) started', up);
+          let ck = null;
+          const f2 = async (u, o = {}) => { const h = Object.assign({ 'Content-Type': 'application/json' }, ck ? { Cookie: ck } : {}); const x = await fetch(B2 + u, Object.assign({}, o, { headers: h })); const sck = x.headers.get('set-cookie'); if (sck) ck = sck.split(';')[0]; let b = null; try { b = await x.json(); } catch (e) { /* none */ } return { status: x.status, body: b }; };
+          await f2('/api/auth/signup', { method: 'POST', body: JSON.stringify({ orgName: 'Strict Co', name: 'Sol Strict', email: 'sol@strict.test', password: 'solpassword1234' }) });
+          r = await f2('/api/auth/me');
+          check('an owner without two-step is told it is required', r.status === 200 && r.body.twoFactorRequired === true, r.body);
+          r = await f2('/api/subvendor-invoices');
+          check('and cannot reach company data until it is on', r.status === 403 && r.body.twoFactorRequired === true, [r.status, r.body]);
+          r = await f2('/api/auth/2fa/setup', { method: 'POST', body: '{}' });
+          const sec2 = r.body.secret;
+          check('but can reach the Security setup', r.status === 200 && !!sec2, r.status);
+          r = await f2('/api/auth/2fa/enable', { method: 'POST', body: JSON.stringify({ code: tot.hotp(sec2, Math.floor(Date.now() / 30000)) }) });
+          check('turning it on works', r.status === 200, r.body);
+          r = await f2('/api/subvendor-invoices');
+          check('then the owner gets in', r.status === 200, [r.status, r.body]);
+          r = await f2('/api/auth/me');
+          check('and is no longer asked', r.body.twoFactorRequired === false && r.body.twoFactor === true, r.body);
+        } finally { srv2.kill(); await sleep(300); }
+      }
     } finally {
       await dbConn.end();
     }

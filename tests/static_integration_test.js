@@ -178,6 +178,11 @@ async function main() {
       check('the offline worker never stores account data (API untouched)', api.status === 401 && !/max-age=\d{3,}/.test(api.headers.get('cache-control') || ''));
     }
     {
+      const home = await fetch(BASE + '/login.html');
+      const csp = home.headers.get('content-security-policy') || '';
+      check('pages carry a content-security policy that allows only this site', /default-src 'self'/.test(csp) && /connect-src 'self'/.test(csp) && /frame-src 'none'/.test(csp) && !/https?:\/\//.test(csp), csp);
+    }
+    {
       const rd = (f) => require('fs').readFileSync(require('path').join(__dirname, '..', 'public', f), 'utf8');
       check('login page has the two-step code step', /id="step2"/.test(rd('login.html')) && /2fa\/verify/.test(rd('login.html')));
       check('Security and Activity log pages exist and are linked in the menu', /Security \(two-step\)/.test(rd('shell.js')) && /audit-log\.html/.test(rd('shell.js')) && /2fa\/setup/.test(rd('security.html')) && /api\/audit/.test(rd('audit-log.html')));

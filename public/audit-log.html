@@ -22,7 +22,7 @@
   .al-t th { text-align: left; font-size: 11.5px; color: #5b6673; padding: 5px 8px; border-bottom: 1px solid #E3E6EA; }
   .al-t td { padding: 6px 8px; border-bottom: 1px solid #F0F2F4; vertical-align: top; word-break: break-word; }
   .al-tag { display: inline-block; font-size: 11px; font-weight: 700; padding: 1px 8px; border-radius: 99px; background: #EEF1F4; color: #44505c; }
-  .al-tag.login { background: #E4F6E9; color: #1B7A3A; } .al-tag.login_failed { background: #FDE8E6; color: #B3261E; } .al-tag.change { background: #E3F1FD; color: #0B5CAD; }
+  .al-tag.login { background: #E4F6E9; color: #1B7A3A; } .al-tag.login_failed, .al-tag.login_blocked, .al-tag.2fa_failed { background: #FDE8E6; color: #B3261E; } .al-tag.change { background: #E3F1FD; color: #0B5CAD; }
 </style>
 </head>
 <body>
@@ -33,7 +33,7 @@
   var appEl = document.getElementById('app');
   var S = { entries: [], next: null, event: '', q: '', busy: false, msg: '', schemaMissing: false };
   function esc(s) { return s === null || s === undefined ? '' : String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
-  var EVENTS = { change: 'Change', login: 'Signed in', login_failed: 'Failed sign-in', signup: 'New company', join: 'Joined', '2fa_enabled': 'Two-step on', '2fa_disabled': 'Two-step off', '2fa_failed': 'Failed two-step code', '2fa_recovery_used': 'Recovery code used' };
+  var EVENTS = { change: 'Change', login: 'Signed in', login_failed: 'Failed sign-in', signup: 'New company', join: 'Joined', '2fa_enabled': 'Two-step on', '2fa_disabled': 'Two-step off', '2fa_failed': 'Failed two-step code', '2fa_recovery_used': 'Recovery code used', '2fa_reset': 'Two-step reset', login_blocked: 'Sign-in blocked (locked)', logout_all: 'Signed out everywhere' };
   function describe(e) {
     var d = e.detail || {}, bits = [];
     if (d.note) bits.push(esc(d.note));

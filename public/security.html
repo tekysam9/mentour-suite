@@ -49,6 +49,7 @@
   function say(m, k) { S.msg = m; S.kind = k || ''; }
   function render() {
     var st = S.status; var h = '<div class="sc-wrap"><h1>Security</h1><p class="sc-muted">Protect your login with a second step: a 6-digit code from an authenticator app on your phone. Even if someone learns your password, they cannot sign in without your phone.</p>';
+    if (/[?&]required=1/.test(location.search) && st && !st.enabled) h += '<div class="sc-warn"><b>Two-step sign-in is required.</b> Your organization requires it for owner and HR logins. Turn it on below to continue using the app.</div>';
     if (S.msg) h += '<div class="sc-msg ' + S.kind + '" role="status">' + esc(S.msg) + '</div>';
     if (!st) { appEl.innerHTML = h + '<p>Loading…</p></div>'; return; }
     if (S.codes) {
@@ -64,6 +65,7 @@
     } else {
       h += '<div class="sc-card"><h2>Two-step sign-in <span class="sc-off">Off</span></h2><p>Recommended for everyone, and especially owner and HR logins, who can see payments and personal data.</p><p><button class="sc-btn primary" id="sc-start" type="button"' + (S.busy ? ' disabled' : '') + '>Set up two-step sign-in</button></p></div>';
     }
+    if (st && !S.codes) h += '<div class="sc-card"><h2>Sign out everywhere</h2><p class="sc-muted">Ends your login on every phone and browser, including this one. Use it if you lost a device or used a shared computer. You are also signed out automatically after 2 hours without activity.</p><p><button class="sc-btn danger" id="sc-logout-all" type="button">Sign out of all devices</button></p></div>';
     appEl.innerHTML = h + '</div>';
   }
   appEl.addEventListener('click', function (e) {
@@ -80,7 +82,8 @@
       });
     }
     if (b.id === 'sc-copy') { try { navigator.clipboard.writeText(S.codes.join('\n')); say('Copied.', 'ok'); render(); } catch (err) { /* ignore */ } }
-    if (b.id === 'sc-done') { S.codes = null; say('', ''); render(); }
+    if (b.id === 'sc-done') { S.codes = null; say('', ''); render(); if (/[?&]required=1/.test(location.search)) location.href = '/'; }
+    if (b.id === 'sc-logout-all') { api('POST', '/api/auth/logout-all', {}).then(function () { location.href = '/login.html'; }); }
     if (b.id === 'sc-disable') {
       var pw = document.getElementById('sc-pw').value, dc = document.getElementById('sc-dcode').value.trim(); S.busy = true; render();
       api('POST', '/api/auth/2fa/disable', { password: pw, code: dc }).then(function (r) {

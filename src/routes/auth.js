@@ -4,6 +4,7 @@ const audit = require('../audit');
 const totp = require('../totp');
 const pool = require('../db');
 const {
+  REQUIRE_2FA,
   hashPassword,
   comparePassword,
   generateInviteCode,
@@ -33,11 +34,13 @@ function publicUser(row) {
 
 // Create a brand-new organization + its first (owner) user.
 // A fresh session id at every sign-in, so an id set before login can never be reused afterwards (session fixation).
-function startSession(req, userId) {
+function startSession(req, userId, twoFactorDone) {
   return new Promise((resolve, reject) => {
     req.session.regenerate((err) => {
       if (err) return reject(err);
       req.session.userId = userId;
+      req.session.startedAt = Date.now();
+      if (twoFactorDone) req.session.twoFactorOk = true;
       req.session.save((err2) => (err2 ? reject(err2) : resolve()));
     });
   });
@@ -150,11 +153,29 @@ router.post('/join', authLimiter, async (req, res, next) => {
   }
 });
 
+// Account lockout: too many wrong passwords or codes for one account in a short time blocks further tries for a while,
+// whatever IP they come from. Counted from the activity log (so it survives restarts); a successful sign-in resets it.
+const LOCK_AFTER = Math.max(3, Number(process.env.LOGIN_MAX_FAILS) || 10);
+const LOCK_MINUTES = Math.max(1, Number(process.env.LOGIN_LOCK_MINUTES) || 15);
+async function isLocked(email) {
+  try {
+    const [[r]] = await pool.query(
+      "SELECT COUNT(*) n FROM audit_log WHERE event IN ('login_failed','2fa_failed') AND user_email = ? AND created_at > (NOW() - INTERVAL ? MINUTE) " +
+      "AND id > COALESCE((SELECT MAX(x.id) FROM audit_log x WHERE x.event IN ('login','2fa_recovery_used') AND x.user_email = ?), 0)", [email, LOCK_MINUTES, email]);
+    return r.n >= LOCK_AFTER;
+  } catch (e) { return false; } // no log table yet: only the per-IP limit applies
+}
+const LOCK_MSG = 'Too many failed attempts for this account. Try again in ' + LOCK_MINUTES + ' minutes, or ask the account owner for help.';
+
 router.post('/login', authLimiter, async (req, res, next) => {
   const { email, password } = req.body || {};
   if (!email || !password) return res.status(400).json({ error: 'Enter your email and password.' });
 
   try {
+    if (await isLocked(String(email).toLowerCase())) {
+      audit.record({ event: 'login_blocked', ip: req.ip, userEmail: String(email).toLowerCase().slice(0, 200), detail: { why: 'account locked after repeated failures' } });
+      return res.status(429).json({ error: LOCK_MSG, locked: true });
+    }
     const [rows] = await pool.query(
       `SELECT u.*, o.name AS organization_name, o.invite_code
        FROM users u JOIN organizations o ON o.id = u.organization_id WHERE u.email = ? LIMIT 1`,
@@ -180,6 +201,15 @@ router.post('/login', authLimiter, async (req, res, next) => {
   }
 });
 
+// Sign this person out everywhere (every phone and browser), e.g. after a lost phone or a shared computer.
+router.post('/logout-all', requireAuth, async (req, res, next) => {
+  try {
+    const [r] = await pool.query('DELETE FROM sessions WHERE data REGEXP ?', ['"userId":' + Number(req.user.id) + '([^0-9]|$)']);
+    audit.record(audit.fromReq(req, 'logout_all', { detail: { sessionsEnded: r.affectedRows } }));
+    req.session.destroy(() => { res.clearCookie('mentour_sid'); res.json({ ok: true, ended: r.affectedRows }); });
+  } catch (err) { next(err); }
+});
+
 router.post('/logout', (req, res) => {
   req.session.destroy(() => {
     res.clearCookie('mentour_sid');
@@ -202,6 +232,7 @@ router.post('/2fa/verify', authLimiter, async (req, res, next) => {
     const row = await twoFactorRow(pend.userId);
     if (!row || !row.totp_enabled) return res.status(401).json({ error: 'Sign in again.', expired: true });
     const [[u]] = await pool.query('SELECT u.id, u.name, u.email, u.role, u.organization_id, o.name AS organization_name, o.invite_code FROM users u JOIN organizations o ON o.id = u.organization_id WHERE u.id = ?', [pend.userId]);
+    if (await isLocked(String(u.email).toLowerCase())) { delete req.session.pending2fa; return res.status(429).json({ error: LOCK_MSG, locked: true, expired: true }); }
     const code = String((req.body && req.body.code) || '').trim();
     let ok = false; let recovery = false;
     if (/^\d{6}$/.test(code.replace(/\s+/g, ''))) {
@@ -219,7 +250,7 @@ router.post('/2fa/verify', authLimiter, async (req, res, next) => {
       if (pend.tries >= 5) { delete req.session.pending2fa; return res.status(401).json({ error: 'Too many wrong codes. Enter your email and password again.', expired: true }); }
       return res.status(401).json({ error: 'That code is not right. Check the code in your authenticator app and try again.' });
     }
-    await startSession(req, u.id);
+    await startSession(req, u.id, true);
     audit.record({ event: recovery ? '2fa_recovery_used' : 'login', organizationId: u.organization_id, userId: u.id, userName: u.name, userEmail: u.email, ip: req.ip });
     res.json({ user: publicUser(u), recoveryUsed: recovery });
   } catch (err) { next(err); }
@@ -257,6 +288,7 @@ router.post('/2fa/enable', requireAuth, authLimiter, async (req, res, next) => {
     const codes = totp.newRecoveryCodes(8);
     await pool.query('UPDATE users SET totp_secret = ?, totp_enabled = 1, totp_recovery = ?, totp_last_step = ? WHERE id = ?', [totp.seal(setup.secret), JSON.stringify(codes.map(totp.hashCode)), step, req.user.id]);
     delete req.session.totpSetup;
+    req.session.twoFactorOk = true;
     audit.record(audit.fromReq(req, '2fa_enabled'));
     res.json({ enabled: true, recoveryCodes: codes });
   } catch (err) {
@@ -279,6 +311,7 @@ router.post('/2fa/disable', requireAuth, authLimiter, async (req, res, next) => 
     else if (c) { let list = []; try { list = JSON.parse(row.totp_recovery || '[]'); } catch (e) { list = []; } ok = list.indexOf(totp.hashCode(c)) !== -1; }
     if (!ok) return res.status(400).json({ error: 'That code is not right.' });
     await pool.query('UPDATE users SET totp_enabled = 0, totp_secret = NULL, totp_recovery = NULL, totp_last_step = NULL WHERE id = ?', [req.user.id]);
+    req.session.twoFactorOk = false;
     audit.record(audit.fromReq(req, '2fa_disabled'));
     res.json({ enabled: false });
   } catch (err) { next(err); }
@@ -304,6 +337,7 @@ router.get('/me', requireAuth, async (req, res, next) => {
   try { const row = await twoFactorRow(req.user.id); twoFactor = !!(row && row.totp_enabled); } catch (e) { /* ignore */ }
   res.json({
     twoFactor,
+    twoFactorRequired: !!(REQUIRE_2FA && !twoFactor && (req.user.role === 'owner' || req.user.role === 'hr')),
     user: {
       id: req.user.id,
       name: req.user.name,

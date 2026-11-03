@@ -514,3 +514,9 @@ Do these in Hostinger (they cannot be done from the code):
   `UPDATE users SET totp_enabled = 0, totp_secret = NULL, totp_recovery = NULL, totp_last_step = NULL WHERE email = 'person@example.com';`
   They can then sign in with just the password and set it up again. (The owner can also use `POST /api/auth/2fa/reset` with `{"userId": …}`.)
 - **Request size:** requests are limited to 1 MB. Only the spreadsheet/document upload routes accept up to 15 MB, and only for signed-in people (plus the vendor portal's token-checked document upload).
+
+## Stricter sign-in and browser protection
+- **Account lockout:** 10 wrong passwords/codes for one account within 15 minutes locks that account for 15 minutes, from any IP (counted from the Activity log, so it survives restarts; a successful sign-in resets it). Tunable with `LOGIN_MAX_FAILS` and `LOGIN_LOCK_MINUTES`. Trade-off: someone who knows an email address could keep it locked; two-step sign-in and the Activity log (look for "Sign-in blocked") are your answer to that.
+- **Sessions:** signed out after 2 hours without activity (`SESSION_IDLE_MINUTES`) and after 12 hours in any case (`SESSION_MAX_HOURS`). **Settings → Security → Sign out of all devices** ends every session for that person.
+- **Require two-step for owner and HR:** add the variable **`REQUIRE_2FA=true`** in Hostinger and restart. Owner/HR logins without two-step are then sent to Settings → Security and can't open company data until it is on. Turn on your own two-step and save your recovery codes *before* setting this. If the database update hasn't been run, nobody is locked out.
+- **Browser policy (CSP):** pages may only load scripts, styles, images, fonts and make requests to this site itself, and can't be framed or load plug-ins. Injected content can therefore neither pull in a script from, nor send data to, another website. (Inline scripts are still allowed because the pages are written that way.)

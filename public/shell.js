@@ -153,6 +153,7 @@
 
   fetch('/api/auth/me').then(function (r) { return r.ok ? r.json() : null; }).then(function (d) {
     if (!d || !d.user) return;
+    if (d.twoFactorRequired && location.pathname !== '/security.html') { location.replace('/security.html?required=1'); return; }
     var u = d.user, n = (u.name || u.email || '?').trim();
     document.getElementById('app-avatar').textContent = n.split(/\s+/).slice(0, 2).map(function (w) { return w[0]; }).join('').toUpperCase();
     document.getElementById('app-uname').textContent = n;
