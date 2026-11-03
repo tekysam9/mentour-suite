@@ -253,7 +253,7 @@
     },
     sv: {
       loading: false, loaded: false, invoices: [], subvendors: [], ledgerFile: null,
-      periodFilter: '', subvendorFilter: '', kindFilter: 'all', paymentFilter: 'all',
+      periodFilter: '', subvendorFilter: '', kindFilter: 'all', paymentFilter: 'all', search: '', page: 0, pageSize: 50,
       generateForm: { periodMonth: '', netTerms: 'NET30', issueDate: '', includeInactive: false },
       generationStart: null, savedId: null,
       generating: false, generateResult: null,
@@ -541,12 +541,12 @@
       '<td class="fin-num">' + (inv.rate !== null && inv.rate !== undefined ? '$' + money(inv.rate) + '/hr' : '<span class="fin-muted">—</span>') + '</td>';
     var isFile = inv.kind === 'paid' && !!(inv.subvendor_id && inv.consultant_id);
     if (inv.kind !== 'paid' || isFile) {
-      var suppliers = state.sv.allSuppliers && state.sv.allSuppliers.length ? state.sv.allSuppliers : state.sv.subvendors;
       head =
         '<td class="fin-sno">' + (idx + 1) + '</td>' +
         '<td><input class="fin-notes-input" style="width:140px" type="text" data-svfield="invoiceNumber" value="' + escapeHtml(inv.invoice_number) + '" aria-label="Invoice number"></td>' +
-        '<td><select class="fin-select-input" data-svfield="subvendorId" aria-label="Supplier company">' +
-          suppliers.map(function (x) { return '<option value="' + x.id + '"' + (x.id === inv.subvendor_id ? ' selected' : '') + '>' + escapeHtml(x.name) + '</option>'; }).join('') +
+        '<td><select class="fin-select-input" data-svfield="subvendorId" data-lazy="1" aria-label="Supplier company">' +
+          // Only this row's supplier is drawn; the full list is filled in when the dropdown is opened (see fillSupplierSelect).
+          '<option value="' + inv.subvendor_id + '" selected>' + escapeHtml(inv.subvendor_name || '') + '</option>' +
         '</select></td>' +
         '<td>' + escapeHtml(inv.consultant_name) + (inv.project ? '<div style="font-size:11.5px;color:var(--text-muted)">' + escapeHtml(inv.project) + '</div>' : '') + '</td>' +
         '<td><input class="fin-date-input" type="month" data-svfield="periodMonth" value="' + escapeHtml(String(inv.period_month).slice(0, 7)) + '" aria-label="Month"></td>' +
@@ -635,19 +635,38 @@
         ? 'No supplier payments match this filter.'
         : 'No supplier payments yet. Generate them for a month (from each placement\u2019s supplier and pay rate) or add one by hand.') + '</div>';
     }
-    var shown = sv.invoices.filter(function (i) { return sv.paymentFilter === 'all' || (sv.paymentFilter === 'paid') === svIsPaid(i); });
+    var q = String(sv.search || '').trim().toLowerCase();
+    var shown = sv.invoices.filter(function (i) {
+      if (!(sv.paymentFilter === 'all' || (sv.paymentFilter === 'paid') === svIsPaid(i))) return false;
+      if (!q) return true;
+      return (String(i.consultant_name || '') + ' ' + String(i.subvendor_name || '') + ' ' + String(i.invoice_number || '') + ' ' + String(i.notes || '')).toLowerCase().indexOf(q) !== -1;
+    });
     var total = 0, paid = 0, unpaid = 0, nPaid = 0, nUnpaid = 0;
     shown.forEach(function (i) { var a = Number(i.amount) || 0; total += a; if (svIsPaid(i)) { paid += a; nPaid += 1; } else { unpaid += a; nUnpaid += 1; } });
     if (!shown.length) return paySummaryStrip('Supplier payments shown:', 0, 0, 0, 0, 0) + '<div class="fin-empty-state">No supplier payments match this payment filter.</div>';
+    // Only one page of rows is drawn at a time: thousands of rows (13+ cells each) make every click slow.
+    var size = Number(sv.pageSize) || 50, pages = Math.max(1, Math.ceil(shown.length / size));
+    if (sv.page >= pages) sv.page = pages - 1; if (sv.page < 0) sv.page = 0;
+    var from = sv.page * size, pageRows = shown.slice(from, from + size);
+    var pager = shown.length <= size ? '' :
+      '<div class="fin-pager" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:10px 0;font-size:13px">' +
+        '<button type="button" class="fin-btn" data-svpage="first"' + (sv.page === 0 ? ' disabled' : '') + '>« First</button>' +
+        '<button type="button" class="fin-btn" data-svpage="prev"' + (sv.page === 0 ? ' disabled' : '') + '>‹ Previous</button>' +
+        '<span>Rows ' + (from + 1) + '–' + Math.min(from + size, shown.length) + ' of ' + shown.length + ' (page ' + (sv.page + 1) + ' of ' + pages + ')</span>' +
+        '<button type="button" class="fin-btn" data-svpage="next"' + (sv.page >= pages - 1 ? ' disabled' : '') + '>Next ›</button>' +
+        '<button type="button" class="fin-btn" data-svpage="last"' + (sv.page >= pages - 1 ? ' disabled' : '') + '>Last »</button>' +
+        '<label>Rows per page <select id="svfilter-size">' + [50, 100, 250, 500].map(function (n) { return '<option value="' + n + '"' + (n === size ? ' selected' : '') + '>' + n + '</option>'; }).join('') + '</select></label>' +
+      '</div>';
     return (
       paySummaryStrip('Supplier payments shown:', total, paid, unpaid, nPaid, nUnpaid) +
+      '<div id="sv-top"></div>' + pager +
       '<div class="fin-table-wrap"><table class="fin-table"><thead><tr>' +
         '<th>S.No.</th><th>Invoice #</th><th>Supplier</th><th>Consultant</th><th>Month</th><th>Rate</th>' +
         '<th>Hours</th><th>Amount</th><th>Net terms</th><th>Issue date</th><th>Due date</th><th>Payment</th><th>Paid on</th><th>Timesheet</th><th>Notes</th><th>Source</th><th></th>' +
       '</tr></thead><tbody>' +
-      shown.map(svRow).join('') +
+      pageRows.map(function (inv, i) { return svRow(inv, from + i); }).join('') +
       '<tr class="fin-total-row"><td colspan="7">Total (' + shown.length + ')</td><td class="fin-num">$' + money(total) + '</td><td colspan="7" style="font-size:12px"><span style="color:#1B7A3A">Paid $' + money(paid) + '</span> · <span style="color:' + (unpaid ? '#B3261E' : 'inherit') + '">Unpaid $' + money(unpaid) + '</span></td></tr>' +
-      '</tbody></table></div>'
+      '</tbody></table></div>' + pager
     );
   }
 
@@ -710,6 +729,7 @@
             return '<option value="' + x.id + '"' + (String(sv.subvendorFilter) === String(x.id) ? ' selected' : '') + '>' + escapeHtml(x.name) + '</option>';
           }).join('') +
         '</select>' +
+        '<input type="search" id="svfilter-search" placeholder="Search consultant, supplier or invoice…" value="' + escapeHtml(sv.search || '') + '" style="min-width:240px" autocomplete="off">' +
         '<select id="svfilter-payment">' +
           '<option value="all"' + (sv.paymentFilter === 'all' ? ' selected' : '') + '>Paid and unpaid</option>' +
           '<option value="unpaid"' + (sv.paymentFilter === 'unpaid' ? ' selected' : '') + '>Unpaid only</option>' +
@@ -1100,6 +1120,14 @@
   }
 
   appEl.addEventListener('click', function (e) {
+    var svPg = e.target.closest('[data-svpage]');
+    if (svPg) {
+      var dir = svPg.getAttribute('data-svpage'), sv0 = state.sv;
+      sv0.page = dir === 'first' ? 0 : dir === 'prev' ? sv0.page - 1 : dir === 'next' ? sv0.page + 1 : 1e9;
+      render();
+      var top = document.getElementById('sv-top'); if (top && top.scrollIntoView) top.scrollIntoView({ block: 'start' });
+      return;
+    }
     var perAll = e.target.closest('[data-per-all]');
     if (perAll) { state.periodYear = null; setPeriod([], null); return; }
     var perYear = e.target.closest('[data-per-year]');
@@ -1386,6 +1414,30 @@
     }
   });
 
+  // A row's supplier dropdown starts with just its current supplier (keeps thousands of rows light); fill in the rest on first use.
+  function fillSupplierSelect(sel) {
+    if (!sel || !sel.getAttribute || sel.getAttribute('data-lazy') !== '1') return;
+    sel.removeAttribute('data-lazy');
+    var list = state.sv.allSuppliers && state.sv.allSuppliers.length ? state.sv.allSuppliers : state.sv.subvendors;
+    var cur = Number(sel.value), have = false;
+    var html = list.map(function (x) { if (x.id === cur) have = true; return '<option value="' + x.id + '"' + (x.id === cur ? ' selected' : '') + '>' + escapeHtml(x.name) + '</option>'; }).join('');
+    if (!have) html = sel.innerHTML + html;
+    sel.innerHTML = html; sel.value = String(cur);
+  }
+  appEl.addEventListener('mousedown', function (e) { if (e.target && e.target.tagName === 'SELECT') fillSupplierSelect(e.target); }, true);
+  appEl.addEventListener('focusin', function (e) { if (e.target && e.target.tagName === 'SELECT') fillSupplierSelect(e.target); });
+  var svSearchTimer = null;
+  appEl.addEventListener('input', function (e) {
+    var box = e.target.closest ? e.target.closest('#svfilter-search') : null;
+    if (!box) return;
+    var val = box.value;
+    clearTimeout(svSearchTimer);
+    svSearchTimer = setTimeout(function () {
+      state.sv.search = val; state.sv.page = 0; render();
+      var again = document.getElementById('svfilter-search');
+      if (again) { again.focus(); try { again.setSelectionRange(val.length, val.length); } catch (err) { /* ignore */ } }
+    }, 350);
+  });
   appEl.addEventListener('change', function (e) {
     var impFile = e.target.closest('#imp-file');
     if (impFile) {
@@ -1429,13 +1481,15 @@
       return;
     }
     var svPeriod = e.target.closest('#svfilter-period');
-    if (svPeriod) { state.sv.periodFilter = svPeriod.value; loadSubvendor(); return; }
+    if (svPeriod) { state.sv.periodFilter = svPeriod.value; state.sv.page = 0; loadSubvendor(); return; }
     var svSub = e.target.closest('#svfilter-subvendor');
-    if (svSub) { state.sv.subvendorFilter = svSub.value; loadSubvendor(); return; }
+    if (svSub) { state.sv.subvendorFilter = svSub.value; state.sv.page = 0; loadSubvendor(); return; }
     var svPay = e.target.closest('#svfilter-payment');
-    if (svPay) { state.sv.paymentFilter = svPay.value; render(); return; }
+    if (svPay) { state.sv.paymentFilter = svPay.value; state.sv.page = 0; render(); return; }
+    var svSize = e.target.closest('#svfilter-size');
+    if (svSize) { state.sv.pageSize = Number(svSize.value) || 50; state.sv.page = 0; render(); return; }
     var svKind = e.target.closest('#svfilter-kind');
-    if (svKind) { state.sv.kindFilter = svKind.value; loadSubvendor(); return; }
+    if (svKind) { state.sv.kindFilter = svKind.value; state.sv.page = 0; loadSubvendor(); return; }
     var svInactive = e.target.closest('#svgen-include-inactive');
     if (svInactive) { state.sv.generateForm.includeInactive = svInactive.checked; return; }
     var svGenField = e.target.closest('#svgen-period, #svgen-net-terms, #svgen-issue-date');
