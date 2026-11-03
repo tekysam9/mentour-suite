@@ -491,3 +491,15 @@ Settings → **Data check** is a read-only report: every saved Ledger and Margin
 Fin-Module → **Payment history import**: choose the decade payment workbook (read in the browser, nothing is sent to the database yet). The app reads it with rules for its quirks (columns without years, "2400-216.55bgv" deductions, split payments, supplier alias cells, W2 "Employee" rows, two corporations, duplicate rows), then asks about everything it is unsure of: which year each column is, what a deduction means, which existing consultant/supplier a spelling is, duplicates, doubtful dates, unreadable cells. Months already in the app are skipped (the app's figure wins), so nothing is doubled.
 
 Nothing is written until **Save**. Saved payments go into `supplier_payment_history`, so a newer Ledger upload can never hide them; they appear on Supplier payments labelled "Payment history". Each import can be **undone** (removes only its payments; Directory records it created stay). Only the owner or HR can use it.
+
+## Security checklist for production (this data is sensitive)
+Already built in: passwords stored hashed (bcrypt, cost 12); HTTP-only, same-site, secure session cookies; a fresh session id at every sign-in; sign-in/sign-up rate limiting; cross-site write blocking; security headers; every query scoped to your organization; HR-only pages for payments/margins; encrypted storage for sensitive personal fields; `npm audit` clean.
+
+Do these in Hostinger (they cannot be done from the code):
+1. `NODE_ENV=production`, a long random `SESSION_SECRET` (32+ chars), and `FIELD_ENCRYPTION_KEY` set. Keep them out of GitHub (`.env` is already ignored).
+2. Once your owner account exists, add the variable **`ALLOW_SIGNUP=false`** and restart: nobody can then create a new company from the sign-up page (teammates still join with the invite code). Keep the invite code private; ask for a new one if it leaks.
+3. Turn on **automatic daily database backups** in Hostinger and also download a manual export (phpMyAdmin → Export) before big imports. Test a restore once.
+4. Use strong, unique passwords (12+ characters) for every login and a password manager; remove logins for people who have left.
+5. Use a database user that only has access to this one database, with a strong password; never reuse your Hostinger account password.
+6. Keep dependencies current: run `npm audit` now and then and act on Hostinger's security notices (as with the `qs` fix).
+7. Only owner/HR logins should see payments; check Settings for who has which role.

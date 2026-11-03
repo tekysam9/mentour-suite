@@ -30,7 +30,21 @@ function publicUser(row) {
 }
 
 // Create a brand-new organization + its first (owner) user.
+// A fresh session id at every sign-in, so an id set before login can never be reused afterwards (session fixation).
+function startSession(req, userId) {
+  return new Promise((resolve, reject) => {
+    req.session.regenerate((err) => {
+      if (err) return reject(err);
+      req.session.userId = userId;
+      req.session.save((err2) => (err2 ? reject(err2) : resolve()));
+    });
+  });
+}
+
 router.post('/signup', authLimiter, async (req, res, next) => {
+  // Set ALLOW_SIGNUP=false in the hosting environment once the owner account exists: nobody can then create a new company
+  // from the sign-up form (people can still join with the invite code).
+  if (String(process.env.ALLOW_SIGNUP || '').toLowerCase() === 'false') return res.status(403).json({ error: 'Creating a new company is turned off. Ask the account owner for an invite code to join.' });
   const { orgName, name, email, password } = req.body || {};
   const validationError = validateSignupInput({ email, password, name });
   if (validationError) return res.status(400).json({ error: validationError });
@@ -53,7 +67,7 @@ router.post('/signup', authLimiter, async (req, res, next) => {
     );
     await conn.commit();
 
-    req.session.userId = userResult.insertId;
+    await startSession(req, userResult.insertId);
     const [rows] = await pool.query(
       `SELECT u.id, u.name, u.email, u.role, u.organization_id, o.name AS organization_name, o.invite_code
        FROM users u JOIN organizations o ON o.id = u.organization_id WHERE u.id = ?`,
@@ -120,7 +134,7 @@ router.post('/join', authLimiter, async (req, res, next) => {
       await conn.commit();
     } catch (e) { await conn.rollback(); throw e; } finally { conn.release(); }
 
-    req.session.userId = userResult.insertId;
+    await startSession(req, userResult.insertId);
     const [rows] = await pool.query(
       `SELECT u.id, u.name, u.email, u.role, u.organization_id, o.name AS organization_name, o.invite_code
        FROM users u JOIN organizations o ON o.id = u.organization_id WHERE u.id = ?`,
@@ -147,7 +161,7 @@ router.post('/login', authLimiter, async (req, res, next) => {
     const match = await comparePassword(password, rows[0].password_hash);
     if (!match) return res.status(401).json({ error: 'Incorrect email or password.' });
 
-    req.session.userId = rows[0].id;
+    await startSession(req, rows[0].id);
     res.json({ user: publicUser(rows[0]) });
   } catch (err) {
     next(err);
