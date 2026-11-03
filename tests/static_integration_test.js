@@ -51,6 +51,8 @@ async function main() {
     const ihRes = await fetch(BASE + '/import-hours.js');
     check('GET /import-hours.js -> 200', ihRes.status === 200, ihRes.status);
     const invHtml = await (await fetch(BASE + '/invoices.html')).text();
+    check('invoices.html has a Paid so far box, a Partial badge and counts only the balance as unpaid',
+      invHtml.includes('data-svfield="amountPaid"') && invHtml.includes("'Partial'") && invHtml.includes("payment_state === 'partial'"));
     check('invoices.html loads /import-hours.js', invHtml.includes('<script src="/import-hours.js"></script>'));
     const IH = require('../public/import-hours.js');
     const resolve = (heads, y) => IH.resolveHourColumns(heads.map(IH.parseHoursHeader), y).map((c) => c.label).join(', ');

@@ -247,6 +247,14 @@ router.get('/', async (req, res, next) => {
     const paidKeys = new Set(records.filter((r) => r.subvendor_id && r.consultant_id)
       .map((r) => r.subvendor_id + '|' + r.consultant_id + '|' + r.period_month));
 
+    // Legacy payments from the payments file / history, summed per supplier|consultant|month.
+    const filePaid = new Map();
+    records.forEach((r) => {
+      if (!r.subvendor_id || !r.consultant_id) return;
+      const k = r.subvendor_id + '|' + r.consultant_id + '|' + r.period_month;
+      filePaid.set(k, (filePaid.get(k) || 0) + (Number(r.amount) || 0));
+    });
+
     const [genRows] = await pool.query(
       `SELECT i.*, c.name AS consultant_name, c.status AS consultant_status, s.name AS subvendor_name,
               cl.name AS project_client, pr.name AS project_vendor
@@ -265,8 +273,21 @@ router.get('/', async (req, res, next) => {
     // A payments-file row the user edited is stored as an override and replaces the file's row.
     const overrideKeys = new Set(genRows.filter((g) => g.overrides_ledger).map((g) => keyOf(g.subvendor_id, g.consultant_id, dateStr(g.period_month))));
     const paid = records.map(paidInvoice).filter((p) => !overrideKeys.has(keyOf(p.subvendor_id, p.consultant_id, p.period_month)));
+    const round2 = (n) => Math.round(n * 100) / 100;
     const generated = genRows
-      .map((g) => ({
+      .map((g) => {
+        const amount = Number(g.amount) || 0;
+        const key = keyOf(g.subvendor_id, g.consultant_id, dateStr(g.period_month));
+        // Paid so far = the larger of what the user entered and what legacy files show (never added, so nothing is counted twice).
+        const paidSoFar = g.overrides_ledger ? 0 : Math.max(Number(g.amount_paid) || 0, filePaid.get(key) || 0);
+        // Only a figure the user typed makes an invoice partial; a legacy file payment alone still replaces the projection as before (its amount may differ slightly).
+        const partial = !g.overrides_ledger && g.payment_status !== 'paid' && amount > 0 && Number(g.amount_paid) > 0 && paidSoFar < amount;
+        return { g, partial, paidSoFar, balance: partial ? round2(amount - paidSoFar) : null, extra: partial ? round2(Math.max(0, paidSoFar - (filePaid.get(key) || 0))) : 0 };
+      })
+      .map(({ g, partial, paidSoFar, balance, extra }) => ({
+        paid_extra: extra,
+        paid_amount: partial ? round2(paidSoFar) : (Number(g.amount_paid) || 0), balance,
+        payment_state: g.payment_status === 'paid' ? 'paid' : (partial ? 'partial' : 'unpaid'),
         kind: 'generated', id: g.id, invoice_number: g.invoice_number,
         period_month: dateStr(g.period_month),
         subvendor_id: g.subvendor_id, subvendor_name: g.subvendor_name,
@@ -280,7 +301,7 @@ router.get('/', async (req, res, next) => {
         assignment_id: g.assignment_id, project: g.project_client ? (g.project_vendor ? g.project_client + ' / ' + g.project_vendor : g.project_client) : null,
         client_tag: g.project_client || null,
       }))
-      .filter((g) => g.overrides_ledger || !paidKeys.has(keyOf(g.subvendor_id, g.consultant_id, g.period_month)));
+      .filter((g) => g.overrides_ledger || g.payment_state === 'partial' || !paidKeys.has(keyOf(g.subvendor_id, g.consultant_id, g.period_month)));
 
     let invoices = paid.concat(generated);
     if (periodMonth) invoices = invoices.filter((i) => i.period_month === periodMonth);
@@ -524,6 +545,21 @@ router.patch('/:id', async (req, res, next) => {
       sets.push('payment_status = ?'); params.push(body.paymentStatus);
       if (!has('paidDate')) { sets.push('paid_date = ?'); params.push(body.paymentStatus === 'paid' ? (existing.paid_date || toDateOnly(new Date())) : null); }
     }
+    if (has('amountPaid')) {
+      const ap = body.amountPaid === null || body.amountPaid === '' ? null : toNullableNumber(body.amountPaid);
+      if ((body.amountPaid !== null && body.amountPaid !== '' && ap === null) || (ap !== null && ap < 0)) return res.status(400).json({ error: 'amountPaid must be a number, zero or more.' });
+      const total = has('amount') ? toNullableNumber(body.amount) : (existing.amount === null ? null : Number(existing.amount));
+      if (ap !== null && total !== null && ap > total + 0.005) return res.status(400).json({ error: 'Paid so far cannot be more than the invoice amount.' });
+      if (ap !== null && total !== null && ap >= total - 0.005 && ap > 0 && !has('paymentStatus')) {
+        // fully paid: mark it paid
+        sets.push('amount_paid = ?'); params.push(total);
+        sets.push('payment_status = ?'); params.push('paid');
+        if (!has('paidDate')) { sets.push('paid_date = ?'); params.push(existing.paid_date || toDateOnly(new Date())); }
+      } else {
+        sets.push('amount_paid = ?'); params.push(ap);
+      }
+    }
+    if (has('paymentStatus') && body.paymentStatus === 'unpaid' && !has('amountPaid')) { sets.push('amount_paid = ?'); params.push(null); }
     if (has('timesheetSubmitted')) {
       if (!['yes', 'no'].includes(body.timesheetSubmitted)) return res.status(400).json({ error: 'timesheetSubmitted must be yes or no.' });
       sets.push('timesheet_submitted = ?'); params.push(body.timesheetSubmitted);
@@ -539,6 +575,7 @@ router.patch('/:id', async (req, res, next) => {
       await pool.query(`UPDATE subvendor_invoices SET ${sets.join(', ')} WHERE id = ? AND organization_id = ?`, params);
     } catch (err) {
       if (err && err.code === 'ER_DUP_ENTRY') return res.status(409).json({ error: 'Another payment already exists for that supplier, consultant and month (or that invoice number is taken).' });
+      if (err && err.code === 'ER_BAD_FIELD_ERROR') return res.status(503).json({ error: 'The database needs updating first: run db/schema.sql once, then try again.' });
       throw err;
     }
     const [rows] = await pool.query('SELECT i.*, s.name AS subvendor_name FROM subvendor_invoices i JOIN subvendors s ON s.id = i.subvendor_id WHERE i.id = ?', [req.params.id]);

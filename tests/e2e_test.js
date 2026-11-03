@@ -1558,6 +1558,37 @@ async function main() {
       r = await svOwner.fetch('/api/subvendor-invoices?kind=weird');
       check('bad kind filter returns 400', r.status === 400, r);
 
+      // Partial payments: balance is worked out (amount - paid so far), never stored.
+      const pId = samDec.id;
+      r = await svOwner.fetch('/api/subvendor-invoices/' + pId, { method: 'PATCH', body: JSON.stringify({ amountPaid: 5000 }) });
+      check('entering a part payment returns 200 and keeps the invoice unpaid', r.status === 200 && r.body.invoice.payment_status === 'unpaid', r.body);
+      r = await svOwner.fetch('/api/subvendor-invoices?periodMonth=2026-12');
+      let pRow = r.body.invoices.find((i) => i.id === pId);
+      check('partial invoice shows paid 5000, balance 4680, state partial', !!pRow && pRow.payment_state === 'partial' && pRow.paid_amount === 5000 && pRow.balance === 4680 && pRow.paid_extra === 5000 && pRow.amount === 9680, pRow);
+      check('an untouched invoice is plain unpaid with no balance', r.body.invoices.filter((i) => i.kind === 'generated' && i.id !== pId).every((i) => i.payment_state === 'unpaid' && i.balance === null), r.body.invoices);
+      r = await svOwner.fetch('/api/subvendor-invoices/' + pId, { method: 'PATCH', body: JSON.stringify({ amountPaid: 99999 }) });
+      check('paying more than the invoice is refused (400)', r.status === 400, r.body);
+      r = await svOwner.fetch('/api/subvendor-invoices/' + pId, { method: 'PATCH', body: JSON.stringify({ amountPaid: -5 }) });
+      check('a negative payment is refused (400)', r.status === 400, r.body);
+      r = await svOwner.fetch('/api/subvendor-invoices/' + pId, { method: 'PATCH', body: JSON.stringify({ amountPaid: 'abc' }) });
+      check('a non-number payment is refused (400)', r.status === 400, r.body);
+      r = await svOwner.fetch('/api/subvendor-invoices/' + pId, { method: 'PATCH', body: JSON.stringify({ amount: 4000 }) });
+      r = await svOwner.fetch('/api/subvendor-invoices?periodMonth=2026-12');
+      pRow = r.body.invoices.find((i) => i.id === pId);
+      check('lowering the invoice total recalculates the balance from the same stored figure (5000 paid >= 4000: no balance left)', !!pRow && pRow.balance === null && pRow.payment_state !== 'partial', pRow);
+      r = await svOwner.fetch('/api/subvendor-invoices/' + pId, { method: 'PATCH', body: JSON.stringify({ amount: 9680 }) });
+      r = await svOwner.fetch('/api/subvendor-invoices/' + pId, { method: 'PATCH', body: JSON.stringify({ amountPaid: 9680 }) });
+      check('paying the full amount marks it paid with a paid date', r.status === 200 && r.body.invoice.payment_status === 'paid' && !!r.body.invoice.paid_date, r.body);
+      r = await svOwner.fetch('/api/subvendor-invoices/' + pId, { method: 'PATCH', body: JSON.stringify({ paymentStatus: 'unpaid' }) });
+      r = await svOwner.fetch('/api/subvendor-invoices?periodMonth=2026-12');
+      pRow = r.body.invoices.find((i) => i.id === pId);
+      check('setting it back to unpaid clears the part payment', !!pRow && pRow.payment_state === 'unpaid' && pRow.paid_amount === 0 && pRow.balance === null, pRow);
+      r = await svOwner.fetch('/api/subvendor-invoices/' + pId, { method: 'PATCH', body: JSON.stringify({ amountPaid: 1000 }) });
+      r = await svOwner.fetch('/api/subvendor-invoices/' + pId, { method: 'PATCH', body: JSON.stringify({ amountPaid: null }) });
+      r = await svOwner.fetch('/api/subvendor-invoices?periodMonth=2026-12');
+      pRow = r.body.invoices.find((i) => i.id === pId);
+      check('clearing "paid so far" returns it to plain unpaid', !!pRow && pRow.payment_state === 'unpaid' && pRow.balance === null, pRow);
+
       // Generated invoices are editable like client invoices.
       r = await svOwner.fetch('/api/subvendor-invoices/' + samDec.id, { method: 'PATCH', body: JSON.stringify({ hours: 100 }) });
       check('entering hours recalculates amount = rate x hours (55 x 100)', r.status === 200 && Number(r.body.invoice.hours) === 100 && Number(r.body.invoice.amount) === 5500, r.body);

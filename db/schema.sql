@@ -441,6 +441,8 @@ ALTER TABLE subvendor_invoices MODIFY COLUMN hours DECIMAL(8,2) NULL;
 -- (kept at the full final list so re-running this file can never narrow the column and fail on rows that use a later value)
 ALTER TABLE subvendor_invoices MODIFY COLUMN rate_source ENUM('ledger', 'margin', 'hours_file', 'manual', 'placement') NOT NULL;
 ALTER TABLE subvendor_invoices MODIFY COLUMN amount DECIMAL(12,2) NULL;
+-- Partial payments: how much of the invoice has been paid so far (entered by the user). The balance is never stored; the app works it out as amount - amount_paid.
+ALTER TABLE subvendor_invoices ADD COLUMN IF NOT EXISTS amount_paid DECIMAL(12,2) NULL;
 
 -- Session store table (used by express-mysql-session; it will create/manage
 -- this automatically, but it's listed here for visibility). No action needed.

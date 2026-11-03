@@ -1218,14 +1218,20 @@
       invoices.forEach(function (i) { months[i.period_month.slice(0, 7)] = true; });
       var monthKeys = Object.keys(months).sort();
       var monthOrder = monthKeys.map(function (k) { return monthLabelOf(k + '-01'); });
-      var records = invoices.map(function (i) {
-        return {
+      var records = [];
+      invoices.forEach(function (i) {
+        var partial = i.payment_state === 'partial';
+        // Partly paid: the unpaid total gets only the balance; any paid part not already on a payments-file row is added as paid.
+        if (partial && Number(i.paid_extra) > 0) {
+          records.push({ subvendor: i.subvendor_name || '(unspecified)', period: monthLabelOf(i.period_month), name: i.consultant_name, amount: Number(i.paid_extra), rate: null, hours: null, verify: null, notes: 'Part payment', paidDate: i.paid_date || null, month: monthLabelOf(i.period_month), clientTag: i.client_tag || i.project || 'Unspecified', year: i.period_month.slice(0, 4), unpaid: false });
+        }
+        records.push({
           subvendor: i.subvendor_name || '(unspecified)', period: i.label || monthLabelOf(i.period_month), name: i.consultant_name,
-          amount: i.amount === null ? null : Number(i.amount), rate: i.rate === null ? null : Number(i.rate),
+          amount: partial ? Number(i.balance) : (i.amount === null ? null : Number(i.amount)), rate: i.rate === null ? null : Number(i.rate),
           hours: i.hours === null ? null : Number(i.hours), verify: null, notes: i.notes || null,
           paidDate: i.paid_date || null, month: monthLabelOf(i.period_month), clientTag: i.client_tag || i.project || 'Unspecified',
           year: i.period_month.slice(0, 4), unpaid: i.payment_status === 'unpaid',
-        };
+        });
       });
       var data = buildLedgerData(records, [], monthOrder, []);
       // A consultant whose placements are all marked Left in Margin shows as Left, not "no recent activity".
