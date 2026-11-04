@@ -444,6 +444,27 @@ ALTER TABLE subvendor_invoices MODIFY COLUMN amount DECIMAL(12,2) NULL;
 -- Partial payments: how much of the invoice has been paid so far (entered by the user). The balance is never stored; the app works it out as amount - amount_paid.
 ALTER TABLE subvendor_invoices ADD COLUMN IF NOT EXISTS amount_paid DECIMAL(12,2) NULL;
 
+-- Void: the invoice stays in the system but is left out of every total. Nothing is deleted; "restore" clears these three columns.
+ALTER TABLE subvendor_invoices ADD COLUMN IF NOT EXISTS voided_at DATETIME NULL;
+ALTER TABLE subvendor_invoices ADD COLUMN IF NOT EXISTS void_reason VARCHAR(255) NULL;
+ALTER TABLE subvendor_invoices ADD COLUMN IF NOT EXISTS voided_by VARCHAR(200) NULL;
+
+-- Deductions: a fixed fee or a % of the invoice amount taken off what is owed. One row per deduction, a reason is required, and the
+-- dollar figure of a % is always worked out from the invoice amount (it is never stored).
+CREATE TABLE IF NOT EXISTS subvendor_invoice_deductions (
+  id              INT AUTO_INCREMENT PRIMARY KEY,
+  organization_id INT NOT NULL,
+  invoice_id      INT NOT NULL,
+  kind            ENUM('fixed', 'percent') NOT NULL,
+  value           DECIMAL(12,4) NOT NULL,
+  reason          VARCHAR(255) NOT NULL,
+  created_by      VARCHAR(200) NULL,
+  created_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE,
+  FOREIGN KEY (invoice_id) REFERENCES subvendor_invoices(id) ON DELETE CASCADE,
+  INDEX idx_sv_deduction_invoice (organization_id, invoice_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 -- Session store table (used by express-mysql-session; it will create/manage
 -- this automatically, but it's listed here for visibility). No action needed.
 

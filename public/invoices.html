@@ -528,6 +528,30 @@
 
   var NET_OPTIONS = ['NET15', 'NET30', 'NET45', 'NET60', 'NET90'];
 
+  // Deductions under the Amount: each line has its reason; the amount owed is invoice amount minus all deductions.
+  function svDeductionBlock(inv) {
+    var open = state.sv.dedOpen === inv.id, can = inv.payment_status !== 'paid' && !inv.voided, draft = state.sv.dedDraft || {};
+    var list = (inv.deductions || []).map(function (d) {
+      var what = d.kind === 'percent' ? (d.value + '% of $' + money(inv.gross_amount)) : 'fixed';
+      return '<div style="font-size:11.5px;color:#8A4B00;white-space:nowrap" title="' + escapeHtml(d.reason) + (d.created_by ? ' — added by ' + escapeHtml(d.created_by) : '') + '">− $' + money(d.amount) + ' <span style="color:#5E6A75">(' + escapeHtml(what) + ')</span> ' + escapeHtml(d.reason) +
+        (can ? ' <button type="button" data-action="sv-ded-remove" data-did="' + d.id + '" class="fin-btn fin-btn-small" style="padding:0 5px" title="Remove this deduction" aria-label="Remove deduction">✕</button>' : '') + '</div>';
+    }).join('');
+    var owed = (inv.deductions || []).length ? '<div style="font-size:12px;font-weight:700">Owed after deductions $' + money(inv.net_amount) + '</div>' : '';
+    var form = '';
+    if (can && open) {
+      form = '<div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:4px;font-size:12px;max-width:260px">' +
+        '<select data-ded="kind" aria-label="Deduction type"><option value="fixed">$ fixed</option><option value="percent"' + (draft.kind === 'percent' ? ' selected' : '') + '>% of invoice</option></select>' +
+        '<input data-ded="value" type="number" step="0.01" min="0" placeholder="Amount" style="width:84px" value="' + escapeHtml(draft.value || '') + '" aria-label="Deduction amount">' +
+        '<input data-ded="reason" type="text" maxlength="255" placeholder="Reason (required)" style="width:100%" value="' + escapeHtml(draft.reason || '') + '" aria-label="Deduction reason">' +
+        '<button type="button" class="fin-btn fin-btn-small fin-btn-primary" data-action="sv-ded-add">Add deduction</button>' +
+        '<button type="button" class="fin-btn fin-btn-small" data-action="sv-ded-cancel">Cancel</button>' +
+        (state.sv.dedError ? '<div style="color:#B3261E;font-weight:600;flex-basis:100%">' + escapeHtml(state.sv.dedError) + '</div>' : '') + '</div>';
+    } else if (can && Number(inv.amount) > 0) {
+      form = '<div><button type="button" class="fin-btn fin-btn-small" data-action="sv-ded-open" style="margin-top:3px">+ Deduction</button></div>';
+    }
+    return list + owed + form;
+  }
+
   function svRow(inv, idx) {
     var src = inv.kind === 'paid'
       ? (inv.source === 'history' ? 'Payment history (older years)' + (inv.history_file ? ' · ' + inv.history_file : '') : 'Payments file' + (inv.paid_in ? ' · paid in ' + inv.paid_in : '') + (inv.multi_month ? ' · multi-month' : ''))
@@ -573,10 +597,10 @@
       ? 'data-file-sv="' + inv.subvendor_id + '" data-file-co="' + inv.consultant_id + '" data-file-pm="' + escapeHtml(String(inv.period_month).slice(0, 7)) + '"'
       : 'data-sv-id="' + inv.id + '"';
     var netCur = (inv.net_terms || '').toUpperCase();
-    return (
-      '<tr ' + trAttr + '>' + head +
+    var rowHtml = (
+      '<tr ' + trAttr + (inv.voided ? ' style="opacity:.6;background:#F3F3F3"' : '') + '>' + head +
         '<td><input class="fin-num-input" type="number" step="0.25" data-svfield="hours" value="' + (inv.hours !== null && inv.hours !== undefined ? inv.hours : '') + '" placeholder="—"></td>' +
-        '<td><input class="fin-num-input" type="number" step="0.01" data-svfield="amount" value="' + (inv.amount !== null && inv.amount !== undefined ? inv.amount : '') + '" placeholder="—"></td>' +
+        '<td><input class="fin-num-input" type="number" step="0.01" data-svfield="amount" value="' + (inv.amount !== null && inv.amount !== undefined ? inv.amount : '') + '" placeholder="—">' + (isFile ? '' : svDeductionBlock(inv)) + '</td>' +
         '<td><select class="fin-select-input" data-svfield="netTerms">' +
           (isFile && !netCur ? '<option value="" selected>—</option>' : '') +
           NET_OPTIONS.map(function (nt) {
@@ -590,8 +614,8 @@
           (isFile || inv.payment_status === 'paid' ? '' :
             '<div style="margin-top:4px;font-size:11.5px;white-space:nowrap">Paid so far <input class="fin-num-input" style="width:84px" type="number" step="0.01" min="0" data-svfield="amountPaid" value="' + (Number(inv.paid_amount) > 0 ? inv.paid_amount : '') + '" placeholder="0.00" aria-label="Paid so far">' +
             (inv.payment_state === 'partial'
-              ? '<div style="color:#1B7A3A">Paid $' + money(inv.paid_amount) + ' of $' + money(inv.amount) + '</div><div style="color:#B3261E;font-weight:700">Still due $' + money(inv.balance) + '</div>'
-              : (Number(inv.amount) > 0 ? '<div style="color:#B3261E">Still due $' + money(inv.amount) + '</div>' : '')) + '</div>') + '</td>' +
+              ? '<div style="color:#1B7A3A">Paid $' + money(inv.paid_amount) + ' of $' + money(inv.net_amount) + '</div><div style="color:#B3261E;font-weight:700">Still due $' + money(inv.balance) + '</div>'
+              : (Number(inv.net_amount) > 0 ? '<div style="color:#B3261E">Still due $' + money(inv.net_amount) + '</div>' : '')) + '</div>') + '</td>' +
         '<td><input class="fin-date-input" type="date" data-svfield="paidDate" value="' + (inv.paid_date ? String(inv.paid_date).slice(0, 10) : '') + '" aria-label="Paid on"></td>' +
         '<td><button type="button" class="fin-status-badge fin-status-' + inv.timesheet_submitted + '" data-action="sv-toggle-timesheet">' + (inv.timesheet_submitted === 'yes' ? 'Submitted' : 'Not yet') + '</button></td>' +
         '<td><input class="fin-notes-input" type="text" data-svfield="notes" value="' + escapeHtml(inv.notes || '') + '" placeholder="Notes"></td>' +
@@ -599,7 +623,20 @@
         '<td>' + (isFile ? '<span class="fin-muted" title="Edit any field to keep your own copy of this payment">Edit any field</span>' : '<button type="button" class="fin-btn fin-btn-small fin-btn-danger" data-action="sv-delete" data-override="' + (inv.overrides_ledger ? '1' : '') + '">' + (inv.overrides_ledger ? 'Revert' : 'Delete') + '</button>') + savedTick + '</td>' +
       '</tr>'
     );
+    if (inv.voided) {
+      // A voided invoice stays on the list but is read-only and left out of every total; owner / HR can restore it.
+      rowHtml = rowHtml.replace(/<input /g, '<input disabled ').replace(/<select /g, '<select disabled ')
+        .replace(/<button type="button" class="fin-status-badge[^>]*>[^<]*<\/button>(<div[\s\S]*?<\/div><\/td>)/, '<span class="fin-status-badge fin-badge-static" style="background:#6B7280;color:#fff">VOID</span><div style="font-size:11.5px;color:#5E6A75;white-space:normal;max-width:200px">' + escapeHtml(inv.void_reason || '') + (inv.voided_by ? ' — ' + escapeHtml(inv.voided_by) : '') + '</div></td>')
+        .replace(/<button type="button" class="fin-btn fin-btn-small fin-btn-danger"/, (canVoid() ? '<button type="button" class="fin-btn fin-btn-small" data-action="sv-unvoid">Restore</button> ' : '') + '<button type="button" class="fin-btn fin-btn-small fin-btn-danger"');
+    } else if (!isFile && canVoid() && inv.payment_status !== 'paid') {
+      var vOpen = state.sv.voidOpen === inv.id;
+      rowHtml = rowHtml.replace(/<button type="button" class="fin-btn fin-btn-small fin-btn-danger"/, (vOpen
+        ? '<div style="display:flex;gap:4px;flex-wrap:wrap;max-width:200px"><input data-void="reason" type="text" maxlength="255" placeholder="Reason for voiding (required)" style="width:100%" value="' + escapeHtml(state.sv.voidDraft || '') + '" aria-label="Void reason"><button type="button" class="fin-btn fin-btn-small fin-btn-primary" data-action="sv-void-confirm">Void it</button><button type="button" class="fin-btn fin-btn-small" data-action="sv-void-cancel">Cancel</button>' + (state.sv.voidError ? '<div style="color:#B3261E;font-weight:600">' + escapeHtml(state.sv.voidError) + '</div>' : '') + '</div>'
+        : '<button type="button" class="fin-btn fin-btn-small" data-action="sv-void" title="Keep the invoice but leave it out of all totals">Void</button> ') + '<button type="button" class="fin-btn fin-btn-small fin-btn-danger"');
+    }
+    return rowHtml;
   }
+  function canVoid() { return !!(state.user && (state.user.role === 'owner' || state.user.role === 'hr')); }
 
   // "Are you sure?" step before invoices are created, so a stray click can't generate a month by mistake.
   function genConfirmBox(prefix, gf, busy) {
@@ -642,13 +679,17 @@
     }
     var q = String(sv.search || '').trim().toLowerCase();
     var shown = sv.invoices.filter(function (i) {
-      if (!(sv.paymentFilter === 'all' || (sv.paymentFilter === 'paid') === svIsPaid(i))) return false;
+      if (i.voided) { if (!(sv.paymentFilter === 'all' || sv.paymentFilter === 'void')) return false; }
+      else if (sv.paymentFilter === 'void') return false;
+      else if (!(sv.paymentFilter === 'all' || (sv.paymentFilter === 'paid') === svIsPaid(i))) return false;
       if (!q) return true;
       return (String(i.consultant_name || '') + ' ' + String(i.subvendor_name || '') + ' ' + String(i.invoice_number || '') + ' ' + String(i.notes || '')).toLowerCase().indexOf(q) !== -1;
     });
     var total = 0, paid = 0, unpaid = 0, nPaid = 0, nUnpaid = 0, nPart = 0;
+    var nVoid = 0;
     shown.forEach(function (i) {
-      var a = Number(i.amount) || 0; if (i.payment_state !== 'partial') total += a;
+      if (i.voided) { nVoid += 1; return; } // voided invoices stay on the list but are in no total
+      var a = (i.net_amount !== undefined && i.net_amount !== null ? Number(i.net_amount) : Number(i.amount)) || 0; if (i.payment_state !== 'partial') total += a;
       if (svIsPaid(i)) { paid += a; nPaid += 1; }
       else if (i.payment_state === 'partial') { nPart += 1; var pp = Number(i.paid_extra) || 0, bal = Number(i.balance) || 0; total += pp + bal; paid += pp; unpaid += bal; nUnpaid += 1; /* the already-paid part is its own payments-file row, so it is not added twice */ }
       else { unpaid += a; nUnpaid += 1; }
@@ -669,6 +710,7 @@
       '</div>';
     return (
       paySummaryStrip('Supplier payments shown:', total, paid, unpaid, nPaid, nUnpaid) +
+      (nVoid ? '<div style="font-size:12px;color:#5E6A75;margin:-4px 0 6px">' + nVoid + ' voided invoice' + (nVoid === 1 ? '' : 's') + ' shown greyed and not counted in Total, Paid or Unpaid.</div>' : '') +
       (nPart ? '<div style="font-size:12px;color:#5E6A75;margin:-4px 0 10px">' + nPart + ' invoice' + (nPart === 1 ? ' is' : 's are') + ' part-paid: the amount already paid is counted under Paid and only the balance still due is counted under Unpaid.</div>' : '') +
       '<div id="sv-top"></div>' + pager +
       '<div class="fin-table-wrap"><table class="fin-table"><thead><tr>' +
@@ -745,6 +787,7 @@
           '<option value="all"' + (sv.paymentFilter === 'all' ? ' selected' : '') + '>Paid and unpaid</option>' +
           '<option value="unpaid"' + (sv.paymentFilter === 'unpaid' ? ' selected' : '') + '>Unpaid only</option>' +
           '<option value="paid"' + (sv.paymentFilter === 'paid' ? ' selected' : '') + '>Paid only</option>' +
+          '<option value="void"' + (sv.paymentFilter === 'void' ? ' selected' : '') + '>Voided only</option>' +
         '</select>' +
         '<select id="svfilter-kind">' +
           '<option value="all"' + (sv.kindFilter === 'all' ? ' selected' : '') + '>All</option>' +
@@ -1237,6 +1280,33 @@
           .catch(function (err) { im2.fixBusy = false; im2.error = err.message; render(); });
         return;
       }
+    }
+    var dedAct = e.target.closest('[data-action^="sv-ded-"], [data-action^="sv-void"], [data-action="sv-unvoid"]');
+    if (dedAct && dedAct.closest('[data-sv-id]')) {
+      var dRow = dedAct.closest('[data-sv-id]'), dId = Number(dRow.getAttribute('data-sv-id')), dAct = dedAct.getAttribute('data-action');
+      var call = function (url, method, body) {
+        return fetch(url, { method: method, headers: { 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined })
+          .then(function (res) { return res.json().catch(function () { return {}; }).then(function (j) { if (!res.ok) throw new Error(j.error || 'Could not save that.'); return j; }); });
+      };
+      if (dAct === 'sv-ded-open') { state.sv.dedOpen = dId; state.sv.dedError = ''; state.sv.dedDraft = {}; render(); }
+      else if (dAct === 'sv-ded-cancel') { state.sv.dedOpen = null; state.sv.dedError = ''; render(); }
+      else if (dAct === 'sv-ded-add') {
+        var q = function (n) { return dRow.querySelector('[data-ded="' + n + '"]'); };
+        call('/api/subvendor-invoices/' + dId + '/deductions', 'POST', { kind: q('kind').value, value: q('value').value, reason: q('reason').value })
+          .then(function () { state.sv.dedOpen = null; state.sv.dedError = ''; loadSubvendor(); })
+          .catch(function (err) { state.sv.dedError = err.message; state.sv.dedDraft = { kind: q('kind').value, value: q('value').value, reason: q('reason').value }; render(); });
+      } else if (dAct === 'sv-ded-remove') {
+        call('/api/subvendor-invoices/' + dId + '/deductions/' + dedAct.getAttribute('data-did'), 'DELETE').then(function () { loadSubvendor(); }).catch(function (err) { alert(err.message); });
+      } else if (dAct === 'sv-void') { state.sv.voidOpen = dId; state.sv.voidError = ''; state.sv.voidDraft = ''; render(); }
+      else if (dAct === 'sv-void-cancel') { state.sv.voidOpen = null; state.sv.voidError = ''; render(); }
+      else if (dAct === 'sv-void-confirm') {
+        call('/api/subvendor-invoices/' + dId + '/void', 'POST', { reason: dRow.querySelector('[data-void="reason"]').value })
+          .then(function () { state.sv.voidOpen = null; state.sv.voidError = ''; loadSubvendor(); })
+          .catch(function (err) { state.sv.voidError = err.message; state.sv.voidDraft = dRow.querySelector('[data-void="reason"]').value; render(); });
+      } else if (dAct === 'sv-unvoid') {
+        call('/api/subvendor-invoices/' + dId + '/unvoid', 'POST').then(function () { loadSubvendor(); }).catch(function (err) { alert(err.message); });
+      }
+      return;
     }
     var svAct = e.target.closest('[data-action="sv-toggle-payment"], [data-action="sv-toggle-timesheet"], [data-action="sv-delete"]');
     if (svAct && svAct.closest('[data-file-sv]')) {

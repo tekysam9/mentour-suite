@@ -51,6 +51,10 @@ async function main() {
     const ihRes = await fetch(BASE + '/import-hours.js');
     check('GET /import-hours.js -> 200', ihRes.status === 200, ihRes.status);
     const invHtml = await (await fetch(BASE + '/invoices.html')).text();
+    check('invoices.html has deductions with a reason and a Void / Restore control, and voided rows are left out of totals',
+      invHtml.includes('data-action="sv-ded-add"') && invHtml.includes('sv-void-confirm') && invHtml.includes('sv-unvoid') && invHtml.includes('if (i.voided) { nVoid += 1; return; }'));
+    const ledgerHtml = await (await fetch(BASE + '/ledger.html')).text();
+    check('ledger.html leaves voided invoices out', ledgerHtml.includes('!i.voided'));
     check('invoices.html has a Paid so far box, a Partial badge and counts only the balance as unpaid',
       invHtml.includes('data-svfield="amountPaid"') && invHtml.includes("'Partial'") && invHtml.includes("payment_state === 'partial'"));
     check('invoices.html loads /import-hours.js', invHtml.includes('<script src="/import-hours.js"></script>'));

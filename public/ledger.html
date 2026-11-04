@@ -1213,7 +1213,8 @@
     ]).then(function (both) {
       var now = new Date();
       var thisMonth = now.getFullYear() + '-' + ('0' + (now.getMonth() + 1)).slice(-2);
-      var invoices = (both[0].invoices || []).filter(function (i) { return i.period_month.slice(0, 7) <= thisMonth; });
+      // Voided invoices stay in Supplier payments but are in no total here.
+      var invoices = (both[0].invoices || []).filter(function (i) { return !i.voided && i.period_month.slice(0, 7) <= thisMonth; });
       var months = {};
       invoices.forEach(function (i) { months[i.period_month.slice(0, 7)] = true; });
       var monthKeys = Object.keys(months).sort();
@@ -1227,7 +1228,7 @@
         }
         records.push({
           subvendor: i.subvendor_name || '(unspecified)', period: i.label || monthLabelOf(i.period_month), name: i.consultant_name,
-          amount: partial ? Number(i.balance) : (i.amount === null ? null : Number(i.amount)), rate: i.rate === null ? null : Number(i.rate),
+          amount: partial ? Number(i.balance) : (i.net_amount !== undefined && i.net_amount !== null && i.amount !== null ? Number(i.net_amount) : (i.amount === null ? null : Number(i.amount))), rate: i.rate === null ? null : Number(i.rate),
           hours: i.hours === null ? null : Number(i.hours), verify: null, notes: i.notes || null,
           paidDate: i.paid_date || null, month: monthLabelOf(i.period_month), clientTag: i.client_tag || i.project || 'Unspecified',
           year: i.period_month.slice(0, 4), unpaid: i.payment_status === 'unpaid',

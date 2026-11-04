@@ -1573,9 +1573,10 @@ async function main() {
       r = await svOwner.fetch('/api/subvendor-invoices/' + pId, { method: 'PATCH', body: JSON.stringify({ amountPaid: 'abc' }) });
       check('a non-number payment is refused (400)', r.status === 400, r.body);
       r = await svOwner.fetch('/api/subvendor-invoices/' + pId, { method: 'PATCH', body: JSON.stringify({ amount: 4000 }) });
+      check('lowering the invoice below what is already paid is refused (400) and nothing changes', r.status === 400, r.body);
       r = await svOwner.fetch('/api/subvendor-invoices?periodMonth=2026-12');
       pRow = r.body.invoices.find((i) => i.id === pId);
-      check('lowering the invoice total recalculates the balance from the same stored figure (5000 paid >= 4000: no balance left)', !!pRow && pRow.balance === null && pRow.payment_state !== 'partial', pRow);
+      check('the part-paid invoice is unchanged after the refused edit', !!pRow && pRow.amount === 9680 && pRow.balance === 4680 && pRow.payment_state === 'partial', pRow);
       r = await svOwner.fetch('/api/subvendor-invoices/' + pId, { method: 'PATCH', body: JSON.stringify({ amount: 9680 }) });
       r = await svOwner.fetch('/api/subvendor-invoices/' + pId, { method: 'PATCH', body: JSON.stringify({ amountPaid: 9680 }) });
       check('paying the full amount marks it paid with a paid date', r.status === 200 && r.body.invoice.payment_status === 'paid' && !!r.body.invoice.paid_date, r.body);
@@ -1595,6 +1596,69 @@ async function main() {
       pRow = r.body.invoices.find((i) => i.id === pId);
       check('an edited copy of a file row with 600 paid shows balance = amount - 600 (not ignored)', !!pRow && pRow.payment_state === 'partial' && pRow.paid_amount === 600 && pRow.paid_extra === 600 && pRow.balance === Math.round((pRow.amount - 600) * 100) / 100, pRow);
       await dbConn.query("UPDATE subvendor_invoices SET overrides_ledger = 0, amount_paid = NULL WHERE id = ?", [pId]);
+
+      // ---- Deductions (fixed or %) with a required reason, and Void ----
+      const dId0 = samDec.id;
+      const getRow = async () => { const g = await svOwner.fetch('/api/subvendor-invoices?periodMonth=2026-12'); return g.body.invoices.find((i) => i.id === dId0); };
+      let dRow0 = await getRow();
+      const gross0 = dRow0.amount;
+      r = await svOwner.fetch('/api/subvendor-invoices/' + dId0 + '/deductions', { method: 'POST', body: JSON.stringify({ kind: 'fixed', value: 100, reason: '' }) });
+      check('a deduction without a reason is refused (400)', r.status === 400, r.body);
+      r = await svOwner.fetch('/api/subvendor-invoices/' + dId0 + '/deductions', { method: 'POST', body: JSON.stringify({ kind: 'percent', value: 150, reason: 'x' }) });
+      check('a percent over 100 is refused (400)', r.status === 400, r.body);
+      r = await svOwner.fetch('/api/subvendor-invoices/' + dId0 + '/deductions', { method: 'POST', body: JSON.stringify({ kind: 'fixed', value: -5, reason: 'x' }) });
+      check('a negative deduction is refused (400)', r.status === 400, r.body);
+      r = await svOwner.fetch('/api/subvendor-invoices/' + dId0 + '/deductions', { method: 'POST', body: JSON.stringify({ kind: 'fixed', value: gross0 + 1, reason: 'too big' }) });
+      check('deductions bigger than the invoice are refused (400)', r.status === 400, r.body);
+      r = await svOwner.fetch('/api/subvendor-invoices/' + dId0 + '/deductions', { method: 'POST', body: JSON.stringify({ kind: 'fixed', value: 100, reason: 'Bank transfer fee' }) });
+      check('a $100 fee with a reason is added (201)', r.status === 201 && r.body.amount === 100, r.body);
+      r = await svOwner.fetch('/api/subvendor-invoices/' + dId0 + '/deductions', { method: 'POST', body: JSON.stringify({ kind: 'percent', value: 2, reason: 'Early-payment discount' }) });
+      const pct2 = Math.round(gross0 * 2) / 100;
+      check('a 2% deduction is worked out from the invoice amount', r.status === 201 && r.body.amount === pct2, r.body);
+      dRow0 = await getRow();
+      check('both deductions are listed with their reasons and the owed amount = amount - deductions',
+        dRow0.deductions.length === 2 && dRow0.deductions[0].reason === 'Bank transfer fee' && dRow0.deductions[1].reason === 'Early-payment discount' &&
+        dRow0.deductions_total === Math.round((100 + pct2) * 100) / 100 && dRow0.net_amount === Math.round((gross0 - 100 - pct2) * 100) / 100 && dRow0.amount === gross0, dRow0);
+      r = await svOwner.fetch('/api/subvendor-invoices/' + dId0, { method: 'PATCH', body: JSON.stringify({ amountPaid: 1000 }) });
+      dRow0 = await getRow();
+      check('part payment after deductions: balance = owed - paid', dRow0.payment_state === 'partial' && dRow0.balance === Math.round((dRow0.net_amount - 1000) * 100) / 100, dRow0);
+      r = await svOwner.fetch('/api/subvendor-invoices/' + dId0, { method: 'PATCH', body: JSON.stringify({ amountPaid: gross0 }) });
+      check('paying more than the amount owed after deductions is refused (400)', r.status === 400, r.body);
+      r = await svOwner.fetch('/api/subvendor-invoices/' + dId0, { method: 'PATCH', body: JSON.stringify({ amount: 150 }) });
+      check('lowering the invoice below its deductions + payments is refused (400)', r.status === 400, r.body);
+      r = await svOwner.fetch('/api/subvendor-invoices/' + dId0 + '/void', { method: 'POST', body: JSON.stringify({ reason: 'dup' }) });
+      check('voiding is blocked while a payment is recorded (409)', r.status === 409, r.body);
+      await svOwner.fetch('/api/subvendor-invoices/' + dId0, { method: 'PATCH', body: JSON.stringify({ amountPaid: null }) });
+      // a non-HR user (recruiter) may not void
+      await svOwner.fetch('/api/onboarding/people', { method: 'POST', body: JSON.stringify({ name: 'Void Tester', email: 'voidtester@svt.test', password: 'Zq7d41c9e02-Lm7!', role: 'recruiter' }) });
+      const rec = makeJar();
+      await rec.fetch('/api/auth/login', { method: 'POST', body: JSON.stringify({ email: 'voidtester@svt.test', password: 'Zq7d41c9e02-Lm7!' }) });
+      r = await rec.fetch('/api/subvendor-invoices/' + dId0 + '/void', { method: 'POST', body: JSON.stringify({ reason: 'nope' }) });
+      check('a non-HR user cannot void (403)', r.status === 403, r.status);
+      r = await svOwner.fetch('/api/subvendor-invoices/' + dId0 + '/void', { method: 'POST', body: JSON.stringify({ reason: '' }) });
+      check('voiding needs a reason (400)', r.status === 400, r.body);
+      r = await svOwner.fetch('/api/subvendor-invoices/' + dId0 + '/void', { method: 'POST', body: JSON.stringify({ reason: 'Raised in error' }) });
+      check('owner can void an unpaid invoice', r.status === 200, r.body);
+      dRow0 = await getRow();
+      check('voided invoice is still listed with its reason and state void', !!dRow0 && dRow0.voided === true && dRow0.void_reason === 'Raised in error' && dRow0.payment_state === 'void' && dRow0.balance === null, dRow0);
+      r = await svOwner.fetch('/api/subvendor-invoices/' + dId0, { method: 'PATCH', body: JSON.stringify({ notes: 'x' }) });
+      check('a voided invoice cannot be edited (409)', r.status === 409, r.body);
+      r = await svOwner.fetch('/api/subvendor-invoices/' + dId0 + '/deductions', { method: 'POST', body: JSON.stringify({ kind: 'fixed', value: 5, reason: 'x' }) });
+      check('a voided invoice cannot take a deduction (409)', r.status === 409, r.body);
+      r = await rec.fetch('/api/subvendor-invoices/' + dId0 + '/unvoid', { method: 'POST' });
+      check('a non-HR user cannot restore (403)', r.status === 403, r.status);
+      r = await svOwner.fetch('/api/subvendor-invoices/' + dId0 + '/unvoid', { method: 'POST' });
+      dRow0 = await getRow();
+      check('restoring a voided invoice brings it back unpaid with its deductions intact', r.status === 200 && dRow0.voided === false && dRow0.payment_state === 'unpaid' && dRow0.deductions.length === 2, dRow0);
+      r = await svOwner.fetch('/api/subvendor-invoices/' + dId0 + '/deductions/' + dRow0.deductions[1].id, { method: 'DELETE' });
+      dRow0 = await getRow();
+      check('removing a deduction puts that amount back', r.status === 200 && dRow0.deductions.length === 1 && dRow0.net_amount === Math.round((gross0 - 100) * 100) / 100, dRow0);
+      // another company cannot touch these
+      r = await otherOrgUser.fetch('/api/subvendor-invoices/' + dId0 + '/deductions', { method: 'POST', body: JSON.stringify({ kind: 'fixed', value: 1, reason: 'x' }) });
+      check('another company cannot add a deduction to this invoice (404)', r.status === 404, r.status);
+      r = await otherOrgUser.fetch('/api/subvendor-invoices/' + dId0 + '/void', { method: 'POST', body: JSON.stringify({ reason: 'x' }) });
+      check('another company cannot void this invoice (404 or 403)', r.status === 404 || r.status === 403, r.status);
+      await dbConn.query('DELETE FROM subvendor_invoice_deductions WHERE invoice_id = ?', [dId0]);
 
       // Generated invoices are editable like client invoices.
       r = await svOwner.fetch('/api/subvendor-invoices/' + samDec.id, { method: 'PATCH', body: JSON.stringify({ hours: 100 }) });

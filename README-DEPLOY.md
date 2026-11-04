@@ -530,3 +530,9 @@ Do these in Hostinger (they cannot be done from the code):
 - The balance is never stored: it is always invoice amount minus paid so far. Typing the full amount marks the invoice Paid; setting it back to Unpaid clears the part payment.
 - Older payments-file or history rows are legacy: on their own they still replace a generated invoice as before. If you have typed a part payment and a file row for the same supplier, consultant and month also exists, the app uses the larger of the two figures, so nothing is counted twice.
 - **One step on deploy:** re-run `db/schema.sql` once (it adds an `amount_paid` column; safe to re-run). Until then, saving a part payment shows a message asking for that.
+
+## Deductions and voiding supplier invoices
+- **Deductions:** under the Amount on each unpaid supplier invoice, "+ Deduction" adds a fixed $ fee or a % of the invoice amount. A reason is required, every deduction is listed on the invoice with its reason, and the amount owed is shown as "Owed after deductions". Paid so far, Still due and the Unpaid totals all use that owed amount. A % is always worked out from the invoice amount (never stored).
+- Deductions cannot be more than the invoice, cannot leave less owed than is already paid, and cannot be added or removed on an invoice marked Paid or Void.
+- **Void:** the owner or an HR admin can void an unpaid invoice (reason required). It stays on the list, greyed with a VOID badge, reason and who voided it, and is left out of Total, Paid and Unpaid on Supplier payments and the Ledger page. Use the "Voided only" filter to see them. A voided invoice can't be edited until it is restored. Voiding is blocked while any payment is recorded on it. Both actions appear in the Activity log.
+- **One step on deploy:** re-run `db/schema.sql` once (adds `voided_at`, `void_reason`, `voided_by` and a `subvendor_invoice_deductions` table; safe to re-run).

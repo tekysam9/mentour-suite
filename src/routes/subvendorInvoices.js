@@ -28,6 +28,27 @@ const { requireAuth } = require('../auth');
 const { maxBillableHours } = require('./invoices');
 
 const { findOrCreateDirectoryRecord } = require('./directoryUpsert');
+const { isHrUser } = require('../placementRules');
+
+const r2 = (n) => Math.round(n * 100) / 100;
+// A deduction's dollar figure: a fixed fee as typed, or a % of the invoice amount (worked out each time, never stored).
+const dedAmount = (d, gross) => (d.kind === 'percent' ? r2(gross * Number(d.value) / 100) : r2(Number(d.value)));
+// All deductions of an organisation, grouped by invoice. The table may not exist yet on a database that has not been updated.
+async function loadDeductions(organizationId, invoiceId) {
+  try {
+    const [rows] = await pool.query(
+      'SELECT * FROM subvendor_invoice_deductions WHERE organization_id = ?' + (invoiceId ? ' AND invoice_id = ?' : '') + ' ORDER BY id',
+      invoiceId ? [organizationId, invoiceId] : [organizationId]);
+    const map = new Map();
+    rows.forEach((d) => { if (!map.has(d.invoice_id)) map.set(d.invoice_id, []); map.get(d.invoice_id).push(d); });
+    return map;
+  } catch (err) {
+    if (err && (err.code === 'ER_NO_SUCH_TABLE' || err.code === 'ER_BAD_FIELD_ERROR')) return new Map();
+    throw err;
+  }
+}
+const dedTotal = (list, gross) => r2((list || []).reduce((t, d) => t + dedAmount(d, gross), 0));
+
 const router = express.Router();
 router.use(requireAuth);
 
@@ -255,6 +276,7 @@ router.get('/', async (req, res, next) => {
       filePaid.set(k, (filePaid.get(k) || 0) + (Number(r.amount) || 0));
     });
 
+    const dedMap = await loadDeductions(organizationId);
     const [genRows] = await pool.query(
       `SELECT i.*, c.name AS consultant_name, c.status AS consultant_status, s.name AS subvendor_name,
               cl.name AS project_client, pr.name AS project_vendor
@@ -273,23 +295,31 @@ router.get('/', async (req, res, next) => {
     // A payments-file row the user edited is stored as an override and replaces the file's row.
     const overrideKeys = new Set(genRows.filter((g) => g.overrides_ledger).map((g) => keyOf(g.subvendor_id, g.consultant_id, dateStr(g.period_month))));
     const paid = records.map(paidInvoice).filter((p) => !overrideKeys.has(keyOf(p.subvendor_id, p.consultant_id, p.period_month)));
-    const round2 = (n) => Math.round(n * 100) / 100;
+    const round2 = r2;
     const generated = genRows
       .map((g) => {
         const amount = Number(g.amount) || 0;
         const key = keyOf(g.subvendor_id, g.consultant_id, dateStr(g.period_month));
+        const deductions = (dedMap.get(g.id) || []).map((d) => ({
+          id: d.id, kind: d.kind, value: Number(d.value), reason: d.reason, created_by: d.created_by, created_at: d.created_at, amount: dedAmount(d, amount),
+        }));
+        const dTotal = round2(deductions.reduce((t, d) => t + d.amount, 0));
+        const net = round2(Math.max(0, amount - dTotal)); // what is actually owed after deductions
+        const voided = !!g.voided_at;
         // Paid so far = the larger of what the user entered and what legacy files show (never added, so nothing is counted twice).
         // An edited copy of a file row has already replaced the file's rows, so only the figure typed on it counts there.
         const fileSide = g.overrides_ledger ? 0 : (filePaid.get(key) || 0);
         const paidSoFar = Math.max(Number(g.amount_paid) || 0, fileSide);
         // Only a figure the user typed makes an invoice partial; a legacy file payment alone still replaces the projection as before (its amount may differ slightly).
-        const partial = g.payment_status !== 'paid' && amount > 0 && Number(g.amount_paid) > 0 && paidSoFar < amount;
-        return { g, partial, paidSoFar, balance: partial ? round2(amount - paidSoFar) : null, extra: partial ? round2(Math.max(0, paidSoFar - fileSide)) : 0 };
+        const partial = !voided && g.payment_status !== 'paid' && net > 0 && Number(g.amount_paid) > 0 && paidSoFar < net;
+        return { g, voided, deductions, dTotal, net, partial, paidSoFar, balance: partial ? round2(net - paidSoFar) : null, extra: partial ? round2(Math.max(0, paidSoFar - fileSide)) : 0 };
       })
-      .map(({ g, partial, paidSoFar, balance, extra }) => ({
+      .map(({ g, voided, deductions, dTotal, net, partial, paidSoFar, balance, extra }) => ({
         paid_extra: extra,
         paid_amount: partial ? round2(paidSoFar) : (Number(g.amount_paid) || 0), balance,
-        payment_state: g.payment_status === 'paid' ? 'paid' : (partial ? 'partial' : 'unpaid'),
+        gross_amount: Number(g.amount) || 0, deductions, deductions_total: dTotal, net_amount: net,
+        voided, void_reason: voided ? g.void_reason : null, voided_by: voided ? g.voided_by : null, voided_at: voided ? g.voided_at : null,
+        payment_state: voided ? 'void' : (g.payment_status === 'paid' ? 'paid' : (partial ? 'partial' : 'unpaid')),
         kind: 'generated', id: g.id, invoice_number: g.invoice_number,
         period_month: dateStr(g.period_month),
         subvendor_id: g.subvendor_id, subvendor_name: g.subvendor_name,
@@ -303,7 +333,7 @@ router.get('/', async (req, res, next) => {
         assignment_id: g.assignment_id, project: g.project_client ? (g.project_vendor ? g.project_client + ' / ' + g.project_vendor : g.project_client) : null,
         client_tag: g.project_client || null,
       }))
-      .filter((g) => g.overrides_ledger || g.payment_state === 'partial' || !paidKeys.has(keyOf(g.subvendor_id, g.consultant_id, g.period_month)));
+      .filter((g) => g.overrides_ledger || g.voided || g.payment_state === 'partial' || !paidKeys.has(keyOf(g.subvendor_id, g.consultant_id, g.period_month)));
 
     let invoices = paid.concat(generated);
     if (periodMonth) invoices = invoices.filter((i) => i.period_month === periodMonth);
@@ -480,6 +510,7 @@ router.patch('/:id', async (req, res, next) => {
     );
     if (!existingRows.length) return res.status(404).json({ error: 'Not found.' });
     const existing = existingRows[0];
+    if (existing.voided_at) return res.status(409).json({ error: 'This invoice is voided. Restore it first if you need to change it.' });
     const body = req.body || {};
     const has = (k) => Object.prototype.hasOwnProperty.call(body, k);
     const sets = [];
@@ -550,8 +581,10 @@ router.patch('/:id', async (req, res, next) => {
     if (has('amountPaid')) {
       const ap = body.amountPaid === null || body.amountPaid === '' ? null : toNullableNumber(body.amountPaid);
       if ((body.amountPaid !== null && body.amountPaid !== '' && ap === null) || (ap !== null && ap < 0)) return res.status(400).json({ error: 'amountPaid must be a number, zero or more.' });
-      const total = has('amount') ? toNullableNumber(body.amount) : (existing.amount === null ? null : Number(existing.amount));
-      if (ap !== null && total !== null && ap > total + 0.005) return res.status(400).json({ error: 'Paid so far cannot be more than the invoice amount.' });
+      const grossNow = has('amount') ? toNullableNumber(body.amount) : (existing.amount === null ? null : Number(existing.amount));
+      // What is owed = invoice amount minus its deductions.
+      const total = grossNow === null ? null : r2(Math.max(0, grossNow - dedTotal((await loadDeductions(req.user.organization_id, existing.id)).get(existing.id), grossNow)));
+      if (ap !== null && total !== null && ap > total + 0.005) return res.status(400).json({ error: 'Paid so far cannot be more than the amount owed after deductions ($' + total.toFixed(2) + ').' });
       if (ap !== null && total !== null && ap >= total - 0.005 && ap > 0 && !has('paymentStatus')) {
         // fully paid: mark it paid
         sets.push('amount_paid = ?'); params.push(total);
@@ -569,6 +602,16 @@ router.patch('/:id', async (req, res, next) => {
     if (has('notes')) {
       sets.push('notes = ?');
       params.push(body.notes === null || body.notes === undefined ? null : String(body.notes).slice(0, 1000));
+    }
+    // A new invoice amount must still cover its deductions and anything already paid.
+    const amtIdx = sets.indexOf('amount = ?');
+    if (amtIdx !== -1 && params[amtIdx] !== null) {
+      const newGross = Number(params[amtIdx]);
+      const dl = (await loadDeductions(req.user.organization_id, existing.id)).get(existing.id);
+      const dt = dedTotal(dl, newGross);
+      if (dt > newGross + 0.005) return res.status(400).json({ error: 'That amount is less than the deductions already on this invoice ($' + dt.toFixed(2) + '). Remove a deduction first.' });
+      const paidTyped = sets.indexOf('amount_paid = ?') !== -1 ? Number(params[sets.indexOf('amount_paid = ?')]) || 0 : Number(existing.amount_paid) || 0;
+      if (paidTyped > r2(newGross - dt) + 0.005) return res.status(400).json({ error: 'That amount is less than what is already paid plus deductions. Lower Paid so far first.' });
     }
     if (!sets.length) return res.json({ invoice: existing });
 
@@ -677,6 +720,86 @@ router.post('/from-ledger', async (req, res, next) => {
     await pool.query('UPDATE subvendor_invoices SET invoice_number = ? WHERE id = ?',
       ['SVI-' + periodMonth.slice(0, 7).replace('-', '') + '-' + String(result.insertId).padStart(5, '0'), result.insertId]);
     res.status(201).json({ id: result.insertId });
+  } catch (err) { next(err); }
+});
+
+// ---- Deductions: a fixed fee or a % of the invoice taken off what is owed. A reason is always required. ----
+// POST   /:id/deductions        { kind: 'fixed'|'percent', value, reason }
+// DELETE /:id/deductions/:did
+async function openInvoice(req, res) {
+  const [rows] = await pool.query('SELECT * FROM subvendor_invoices WHERE id = ? AND organization_id = ?', [req.params.id, req.user.organization_id]);
+  if (!rows.length) { res.status(404).json({ error: 'Not found.' }); return null; }
+  if (rows[0].voided_at) { res.status(409).json({ error: 'This invoice is voided. Restore it first if you need to change it.' }); return null; }
+  return rows[0];
+}
+router.post('/:id/deductions', async (req, res, next) => {
+  try {
+    const inv = await openInvoice(req, res); if (!inv) return;
+    const b = req.body || {};
+    const kind = b.kind === 'percent' ? 'percent' : (b.kind === 'fixed' ? 'fixed' : null);
+    if (!kind) return res.status(400).json({ error: 'Choose a fixed amount or a percent.' });
+    const value = toNullableNumber(b.value);
+    if (value === null || !(value > 0)) return res.status(400).json({ error: 'Enter a deduction greater than zero.' });
+    if (kind === 'percent' && value > 100) return res.status(400).json({ error: 'A percent can’t be more than 100.' });
+    const reason = String(b.reason || '').trim();
+    if (!reason) return res.status(400).json({ error: 'A reason is required for every deduction.' });
+    const gross = Number(inv.amount) || 0;
+    if (!(gross > 0)) return res.status(400).json({ error: 'Enter the invoice amount before adding a deduction.' });
+    const existingList = (await loadDeductions(req.user.organization_id, inv.id)).get(inv.id) || [];
+    const adding = dedAmount({ kind, value }, gross);
+    const after = r2(dedTotal(existingList, gross) + adding);
+    if (after > gross + 0.005) return res.status(400).json({ error: 'Deductions would be more than the invoice amount ($' + gross.toFixed(2) + ').' });
+    const paid = Number(inv.amount_paid) || 0;
+    if (paid > r2(gross - after) + 0.005) return res.status(400).json({ error: 'That deduction leaves less owed than is already paid ($' + paid.toFixed(2) + '). Lower Paid so far first.' });
+    if (inv.payment_status === 'paid') return res.status(409).json({ error: 'This invoice is already marked Paid. Set it back to Unpaid before adding a deduction.' });
+    try {
+      const [r] = await pool.query(
+        'INSERT INTO subvendor_invoice_deductions (organization_id, invoice_id, kind, value, reason, created_by) VALUES (?, ?, ?, ?, ?, ?)',
+        [req.user.organization_id, inv.id, kind, value, reason.slice(0, 255), String(req.user.name || req.user.email || '').slice(0, 200)]);
+      res.status(201).json({ id: r.insertId, amount: adding, deductions_total: after, net_amount: r2(gross - after) });
+    } catch (err) {
+      if (err && err.code === 'ER_NO_SUCH_TABLE') return res.status(503).json({ error: 'The database needs updating first: run db/schema.sql once, then try again.' });
+      throw err;
+    }
+  } catch (err) { next(err); }
+});
+router.delete('/:id/deductions/:did', async (req, res, next) => {
+  try {
+    const inv = await openInvoice(req, res); if (!inv) return;
+    if (inv.payment_status === 'paid') return res.status(409).json({ error: 'This invoice is already marked Paid. Set it back to Unpaid before removing a deduction.' });
+    const [r] = await pool.query('DELETE FROM subvendor_invoice_deductions WHERE id = ? AND invoice_id = ? AND organization_id = ?', [req.params.did, inv.id, req.user.organization_id]);
+    if (!r.affectedRows) return res.status(404).json({ error: 'Not found.' });
+    res.json({ ok: true });
+  } catch (err) { next(err); }
+});
+
+// ---- Void: the invoice stays in the system, shown as Void and left out of every total. Owner / HR only. ----
+// Not allowed once anything is recorded as paid (clear the payment first), so the books stay clean.
+router.post('/:id/void', async (req, res, next) => {
+  try {
+    if (!isHrUser(req.user)) return res.status(403).json({ error: 'Only the account owner or an HR admin can void an invoice.' });
+    const inv = await openInvoice(req, res); if (!inv) return;
+    const reason = String((req.body || {}).reason || '').trim();
+    if (!reason) return res.status(400).json({ error: 'A reason is required to void an invoice.' });
+    if (inv.payment_status === 'paid' || Number(inv.amount_paid) > 0) return res.status(409).json({ error: 'A payment is recorded on this invoice. Clear it (set to Unpaid, Paid so far blank) before voiding.' });
+    try {
+      await pool.query('UPDATE subvendor_invoices SET voided_at = NOW(), void_reason = ?, voided_by = ? WHERE id = ? AND organization_id = ?',
+        [reason.slice(0, 255), String(req.user.name || req.user.email || '').slice(0, 200), inv.id, req.user.organization_id]);
+    } catch (err) {
+      if (err && err.code === 'ER_BAD_FIELD_ERROR') return res.status(503).json({ error: 'The database needs updating first: run db/schema.sql once, then try again.' });
+      throw err;
+    }
+    res.json({ ok: true });
+  } catch (err) { next(err); }
+});
+router.post('/:id/unvoid', async (req, res, next) => {
+  try {
+    if (!isHrUser(req.user)) return res.status(403).json({ error: 'Only the account owner or an HR admin can restore a voided invoice.' });
+    const [rows] = await pool.query('SELECT id, voided_at FROM subvendor_invoices WHERE id = ? AND organization_id = ?', [req.params.id, req.user.organization_id]);
+    if (!rows.length) return res.status(404).json({ error: 'Not found.' });
+    if (!rows[0].voided_at) return res.status(409).json({ error: 'This invoice is not voided.' });
+    await pool.query('UPDATE subvendor_invoices SET voided_at = NULL, void_reason = NULL, voided_by = NULL WHERE id = ? AND organization_id = ?', [rows[0].id, req.user.organization_id]);
+    res.json({ ok: true });
   } catch (err) { next(err); }
 });
 
