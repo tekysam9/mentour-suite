@@ -1588,6 +1588,13 @@ async function main() {
       r = await svOwner.fetch('/api/subvendor-invoices?periodMonth=2026-12');
       pRow = r.body.invoices.find((i) => i.id === pId);
       check('clearing "paid so far" returns it to plain unpaid', !!pRow && pRow.payment_state === 'unpaid' && pRow.balance === null, pRow);
+      // An edited copy of a payments-file row, switched back to Unpaid, must honour a part payment too.
+      await dbConn.query("UPDATE subvendor_invoices SET overrides_ledger = 1 WHERE id = ?", [pId]);
+      r = await svOwner.fetch('/api/subvendor-invoices/' + pId, { method: 'PATCH', body: JSON.stringify({ amountPaid: 600 }) });
+      r = await svOwner.fetch('/api/subvendor-invoices?periodMonth=2026-12');
+      pRow = r.body.invoices.find((i) => i.id === pId);
+      check('an edited copy of a file row with 600 paid shows balance = amount - 600 (not ignored)', !!pRow && pRow.payment_state === 'partial' && pRow.paid_amount === 600 && pRow.paid_extra === 600 && pRow.balance === Math.round((pRow.amount - 600) * 100) / 100, pRow);
+      await dbConn.query("UPDATE subvendor_invoices SET overrides_ledger = 0, amount_paid = NULL WHERE id = ?", [pId]);
 
       // Generated invoices are editable like client invoices.
       r = await svOwner.fetch('/api/subvendor-invoices/' + samDec.id, { method: 'PATCH', body: JSON.stringify({ hours: 100 }) });

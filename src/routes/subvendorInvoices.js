@@ -279,10 +279,12 @@ router.get('/', async (req, res, next) => {
         const amount = Number(g.amount) || 0;
         const key = keyOf(g.subvendor_id, g.consultant_id, dateStr(g.period_month));
         // Paid so far = the larger of what the user entered and what legacy files show (never added, so nothing is counted twice).
-        const paidSoFar = g.overrides_ledger ? 0 : Math.max(Number(g.amount_paid) || 0, filePaid.get(key) || 0);
+        // An edited copy of a file row has already replaced the file's rows, so only the figure typed on it counts there.
+        const fileSide = g.overrides_ledger ? 0 : (filePaid.get(key) || 0);
+        const paidSoFar = Math.max(Number(g.amount_paid) || 0, fileSide);
         // Only a figure the user typed makes an invoice partial; a legacy file payment alone still replaces the projection as before (its amount may differ slightly).
-        const partial = !g.overrides_ledger && g.payment_status !== 'paid' && amount > 0 && Number(g.amount_paid) > 0 && paidSoFar < amount;
-        return { g, partial, paidSoFar, balance: partial ? round2(amount - paidSoFar) : null, extra: partial ? round2(Math.max(0, paidSoFar - (filePaid.get(key) || 0))) : 0 };
+        const partial = g.payment_status !== 'paid' && amount > 0 && Number(g.amount_paid) > 0 && paidSoFar < amount;
+        return { g, partial, paidSoFar, balance: partial ? round2(amount - paidSoFar) : null, extra: partial ? round2(Math.max(0, paidSoFar - fileSide)) : 0 };
       })
       .map(({ g, partial, paidSoFar, balance, extra }) => ({
         paid_extra: extra,
