@@ -1,5 +1,6 @@
 // Pre-placement information (the "Pre-Placement Document"): collected by a recruiter before a placement goes to
-// onboarding. Recruiters see their own records, HR admins and the owner see everyone's.
+// onboarding. Everyone with a login that reaches this module (recruiters, HR admins, the owner) can SEE every candidate, so
+// recruiters can see who is already in the pipeline. Only the recruiter who added a candidate, an HR admin or the owner can CHANGE one.
 //   * Date of birth and the SSN digits are encrypted, never listed, and only the owner / HR can reveal them
 //     (every reveal is written to the Activity log).
 //   * A pre-placement exists while the candidate is still being interviewed: draft -> interviewing -> selected. Only a
@@ -31,10 +32,13 @@ function addLog(row, req, text) {
   const l = parse(row.log, []); l.push({ at: new Date().toISOString(), by: who(req), text });
   row.log = JSON.stringify(l.slice(-200));
 }
-async function load(req, res) {
+const mine = (req, row) => isHr(req) || row.created_by_id === req.user.id;
+// write: true = the caller wants to change it (only the recruiter who added it, HR or the owner may).
+async function load(req, res, opts) {
   if (!/^\d+$/.test(req.params.id)) { res.status(404).json({ error: 'Not found.' }); return null; }
   const [rows] = await pool.query('SELECT * FROM pre_placements WHERE id = ? AND organization_id = ?', [req.params.id, req.user.organization_id]);
-  if (!rows[0] || (!isHr(req) && rows[0].created_by_id !== req.user.id)) { res.status(404).json({ error: 'Pre-placement not found.' }); return null; }
+  if (!rows[0]) { res.status(404).json({ error: 'Pre-placement not found.' }); return null; }
+  if (opts && opts.write && !mine(req, rows[0])) { res.status(403).json({ error: 'Only the recruiter who added this candidate, an HR admin or the owner can change it.' }); return null; }
   return rows[0];
 }
 // Which sensitive values exist, without decrypting them.
@@ -51,7 +55,7 @@ function present(row, req, extra) {
   return Object.assign({
     id: row.id, status: row.status, consultantName: row.consultant_name, data: parse(row.data, {}), secretsSaved: secretFlags(row),
     onboardingId: row.onboarding_id || null, log: parse(row.log, []), createdBy: row.created_by, createdAt: row.created_at, updatedAt: row.updated_at,
-    canReveal: isHr(req) && isConfigured(), canEdit: OPEN.includes(row.status),
+    canReveal: isHr(req) && isConfigured(), canEdit: OPEN.includes(row.status) && mine(req, row), isMine: row.created_by_id === req.user.id,
   }, extra || {});
 }
 async function similarOnes(orgId, name, email, exceptId) {
@@ -96,7 +100,7 @@ router.post('/parse', async (req, res, next) => {
 router.get('/', async (req, res, next) => {
   try {
     const where = ['organization_id = ?']; const params = [req.user.organization_id];
-    if (!isHr(req)) { where.push('created_by_id = ?'); params.push(req.user.id); }
+    if (req.query.mine === '1') { where.push('created_by_id = ?'); params.push(req.user.id); }
     const st = String(req.query.status || 'open');
     if (st === 'open') where.push(`status IN ('draft','interviewing','selected')`);
     else if (STATUSES.includes(st)) { where.push('status = ?'); params.push(st); }
@@ -105,12 +109,12 @@ router.get('/', async (req, res, next) => {
       where.push('(consultant_name LIKE ? OR vendor_name LIKE ? OR client_name LIKE ? OR end_client_name LIKE ?)'); params.push(like, like, like, like);
     }
     const [rows] = await pool.query(`SELECT id, status, consultant_name, vendor_name, client_name, end_client_name, start_date, onboarding_id, created_by, updated_at FROM pre_placements WHERE ${where.join(' AND ')} ORDER BY updated_at DESC LIMIT 500`, params);
-    const [counts] = await pool.query(`SELECT status, COUNT(*) n FROM pre_placements WHERE organization_id = ?${isHr(req) ? '' : ' AND created_by_id = ?'} GROUP BY status`,
-      isHr(req) ? [req.user.organization_id] : [req.user.organization_id, req.user.id]);
+    const [counts] = await pool.query(`SELECT status, COUNT(*) n FROM pre_placements WHERE organization_id = ?${req.query.mine === '1' ? ' AND created_by_id = ?' : ''} GROUP BY status`,
+      req.query.mine === '1' ? [req.user.organization_id, req.user.id] : [req.user.organization_id]);
     res.json({
       counts: Object.fromEntries(counts.map((c) => [c.status, Number(c.n)])),
       items: rows.map((r) => ({ id: r.id, status: r.status, consultantName: r.consultant_name, vendorName: r.vendor_name, clientName: r.client_name, endClientName: r.end_client_name,
-        startDate: dateStr(r.start_date), onboardingId: r.onboarding_id || null, createdBy: r.created_by, updatedAt: r.updated_at })),
+        startDate: dateStr(r.start_date), onboardingId: r.onboarding_id || null, createdBy: r.created_by, isMine: r.created_by_id === req.user.id, updatedAt: r.updated_at })),
     });
   } catch (err) { if (missingTable(err)) return res.status(503).json({ error: SCHEMA_MSG }); next(err); }
 });
@@ -151,7 +155,7 @@ router.get('/:id', async (req, res, next) => {
 // An empty value clears a field; a field that is not sent is left alone. Sensitive values can be replaced or cleared but never read back here.
 router.put('/:id', async (req, res, next) => {
   try {
-    const row = await load(req, res); if (!row) return;
+    const row = await load(req, res, { write: true }); if (!row) return;
     if (!OPEN.includes(row.status)) return res.status(409).json({ error: row.status === 'converted' ? 'This candidate has already been sent to onboarding, so it can no longer be edited here.' : 'This candidate was not selected. Reopen it first to edit.' });
     const { data, secrets, errors } = spec.clean((req.body || {}).data || {});
     if (errors.length) return res.status(400).json({ error: errors[0].message, errors });
@@ -181,7 +185,7 @@ router.put('/:id', async (req, res, next) => {
 // Marking someone "not selected" erases their date of birth and SSN digits (nothing sensitive is kept for a person who is not hired).
 router.post('/:id/status', async (req, res, next) => {
   try {
-    const row = await load(req, res); if (!row) return;
+    const row = await load(req, res, { write: true }); if (!row) return;
     const to = String((req.body || {}).status || '');
     if (!['draft', 'interviewing', 'selected', 'not_selected'].includes(to)) return res.status(400).json({ error: 'Choose draft, interviewing, selected or not selected.' });
     if (row.status === 'converted') return res.status(409).json({ error: 'This candidate has already been sent to onboarding.' });
@@ -200,7 +204,7 @@ router.post('/:id/status', async (req, res, next) => {
 
 router.delete('/:id', async (req, res, next) => {
   try {
-    const row = await load(req, res); if (!row) return;
+    const row = await load(req, res, { write: true }); if (!row) return;
     if (!isHr(req) && row.status !== 'draft') return res.status(403).json({ error: 'Only the account owner or an HR admin can delete a pre-placement that has left draft.' });
     await pool.query('DELETE FROM pre_placements WHERE id = ? AND organization_id = ?', [row.id, row.organization_id]);
     res.json({ ok: true });
@@ -226,7 +230,7 @@ router.post('/:id/reveal', async (req, res, next) => {
 router.post('/:id/send-to-onboarding', async (req, res, next) => {
   let conn;
   try {
-    const row = await load(req, res); if (!row) return;
+    const row = await load(req, res, { write: true }); if (!row) return;
     if (row.status === 'converted') return res.status(409).json({ error: 'This candidate has already been sent to onboarding.' });
     if (row.status !== 'selected') return res.status(409).json({ error: 'Only a selected candidate can be sent to onboarding. Mark the candidate as Selected once they have passed the interview.' });
     const d = parse(row.data, {});
