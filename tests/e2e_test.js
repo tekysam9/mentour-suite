@@ -3543,6 +3543,28 @@ async function main() {
         r = await rita.fetch('/api/pre-placement/' + ppId + '/add-vendor', { method: 'POST', body: JSON.stringify({}) });
         check('pre-placement: a recruiter cannot add the vendor of someone else’s candidate (403)', r.status === 403, r.status);
         r = await svOwner.fetch('/api/pre-placement/' + vId, { method: 'DELETE' });
+        // catch-up for older pre-placements whose vendor never reached the Directory
+        const mk = async (name, vendor, extra) => (await svOwner.fetch('/api/pre-placement', { method: 'POST', body: JSON.stringify({ data: Object.assign({ consultant_name: name, vendor_name: vendor }, extra || {}) }) })).body.id;
+        const s1 = await mk('Sam Sync One', 'Sync Vendor LLC', { vendor_phone: '5550001111', fed_tax_id: '998877665' });
+        const s2 = await mk('Sam Sync Two', 'sync vendor llc');
+        const s3 = await mk('Sam Sync Three', 'Other Sync Corp');
+        const s4 = await mk('Sam Sync Four', 'Rejected Sync Inc');
+        await svOwner.fetch('/api/pre-placement/' + s4 + '/status', { method: 'POST', body: JSON.stringify({ status: 'not_selected' }) });
+        r = await svOwner.fetch('/api/pre-placement?status=all');
+        check('pre-placement: the owner is told how many vendors are not in the Directory yet', r.body.vendorsMissing >= 3, r.body.vendorsMissing);
+        r = await rita.fetch('/api/pre-placement?status=all');
+        check('pre-placement: a recruiter is not shown that prompt', r.body.vendorsMissing === 0, r.body.vendorsMissing);
+        r = await rita.fetch('/api/pre-placement/sync-vendors', { method: 'POST', body: JSON.stringify({}) });
+        check('pre-placement: only the owner or HR can add all the missing vendors (403)', r.status === 403, r.status);
+        r = await svOwner.fetch('/api/pre-placement/sync-vendors', { method: 'POST', body: JSON.stringify({}) });
+        check('pre-placement: the catch-up adds each distinct vendor once (same name in a different case is one supplier)', r.status === 200 && r.body.created.includes('Sync Vendor LLC') && r.body.created.includes('Other Sync Corp') && r.body.created.length === 2 && !r.body.failed.length, r.body);
+        const [syncRows] = await dbConn.query("SELECT name FROM subvendors WHERE LOWER(name) IN ('sync vendor llc','other sync corp','rejected sync inc')");
+        check('pre-placement: a candidate who was not selected does not add their vendor', syncRows.length === 2, syncRows);
+        const [[linked]] = await dbConn.query('SELECT COUNT(*) n FROM pre_placements WHERE id IN (?, ?, ?) AND supplier_id IS NOT NULL', [s1, s2, s3]);
+        check('pre-placement: every caught-up record is linked to its supplier company', Number(linked.n) === 3, linked);
+        r = await svOwner.fetch('/api/pre-placement/sync-vendors', { method: 'POST', body: JSON.stringify({}) });
+        check('pre-placement: running the catch-up again changes nothing', r.status === 200 && !r.body.created.length && !r.body.matched.length, r.body);
+        for (const id of [s1, s2, s3, s4]) await svOwner.fetch('/api/pre-placement/' + id, { method: 'DELETE' });
         r = await svOwner.fetch('/api/pre-placement/' + ritaId + '/status', { method: 'POST', body: JSON.stringify({ status: 'selected' }) });
         r = await svOwner.fetch('/api/pre-placement/' + ritaId + '/send-to-onboarding', { method: 'POST', body: JSON.stringify({}) });
         check('pre-placement: sending needs the engagement type when it is not on the record (400)', r.status === 400, r.body);

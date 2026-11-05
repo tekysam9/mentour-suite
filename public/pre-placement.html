@@ -97,7 +97,7 @@
       var q = '?status=' + encodeURIComponent(S.list.status) + (S.list.q ? '&q=' + encodeURIComponent(S.list.q) : '') + (S.list.mine ? '&mine=1' : '');
       return api('GET', '/api/pre-placement' + q);
     }).then(function (r) {
-      if (!r.ok) { note(r.body.error || 'Could not load.', 'err'); S.list.items = []; } else { S.list.items = r.body.items; S.list.counts = r.body.counts; }
+      if (!r.ok) { note(r.body.error || 'Could not load.', 'err'); S.list.items = []; } else { S.list.items = r.body.items; S.list.counts = r.body.counts; S.list.vendorsMissing = r.body.vendorsMissing || 0; }
       render();
     });
   }
@@ -127,6 +127,7 @@
     }).join('');
     appEl.innerHTML = '<div class="pp"><div class="pp-top"><div><h1>Pre-placement</h1><p class="pp-lede">The vendor and consultant details collected while a candidate is being interviewed. Paste the pre-placement table from the e-mail, or type it in. Only a candidate who is selected goes on to onboarding.</p></div>' +
       '<button class="pp-btn primary" data-act="new">+ New pre-placement</button></div>' + msgHtml() +
+      (isHr() && S.list.vendorsMissing ? '<div class="pp-note warn" style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">' + S.list.vendorsMissing + ' pre-placement' + (S.list.vendorsMissing === 1 ? ' has' : 's have') + ' a vendor that is not in the Directory yet. <button class="pp-btn small" data-act="sync-vendors">Add the missing vendors to the Directory</button></div>' : '') +
       '<div class="pp-tabs">' + tabs.map(function (t) { return '<button class="pp-tab' + (S.list.status === t[0] ? ' on' : '') + '" data-tab="' + t[0] + '">' + esc(t[1]) + '</button>'; }).join('') +
       '<label class="pp-muted" style="margin-left:auto"><input type="checkbox" id="pp-mine"' + (S.list.mine ? ' checked' : '') + '> Only mine</label><input type="search" id="pp-q" placeholder="Search consultant, vendor or client" value="' + esc(S.list.q) + '" style="min-width:240px" aria-label="Search"></div>' +
       '<div class="pp-card" style="padding:6px 10px">' + (rows ? '<table class="pp-table"><thead><tr><th>Consultant</th><th>Vendor</th><th>Client</th><th>Start</th><th>Status</th><th>Recruiter</th><th>Updated</th></tr></thead><tbody>' + rows + '</tbody></table>'
@@ -300,6 +301,17 @@
       api('POST', '/api/pre-placement/' + S.rec.id + '/send-to-onboarding', { workerType: wt }).then(function (r) {
         if (!r.ok) { note(r.body.error || 'Could not send to onboarding.', 'err'); renderDetail(); return; }
         location.href = '/onboarding.html#' + r.body.onboardingId;
+      });
+      return;
+    }
+    if (act === 'sync-vendors') {
+      api('POST', '/api/pre-placement/sync-vendors', {}).then(function (r) {
+        if (!r.ok) { note(r.body.error || 'Could not add the vendors.', 'err'); loadList(); return; }
+        var b = r.body, parts = [];
+        if (b.created.length) parts.push('added ' + b.created.length + ' new supplier compan' + (b.created.length === 1 ? 'y' : 'ies') + ' (' + b.created.join(', ') + ')');
+        if (b.matched.length) parts.push('completed ' + b.matched.length + ' already in the Directory (' + b.matched.join(', ') + ')');
+        note((parts.length ? 'Done: ' + parts.join('; ') + '.' : 'Nothing to add.') + (b.skipped.length ? ' Not copied: ' + b.skipped.join('; ') + '.' : '') + (b.failed.length ? ' Could not add: ' + b.failed.map(function (f) { return f.vendor; }).join(', ') + '.' : ''), b.failed.length ? 'err' : 'ok');
+        loadList();
       });
       return;
     }

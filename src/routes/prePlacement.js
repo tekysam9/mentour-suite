@@ -115,7 +115,15 @@ router.get('/', async (req, res, next) => {
     const [rows] = await pool.query(`SELECT id, status, consultant_name, vendor_name, client_name, end_client_name, start_date, onboarding_id, created_by, updated_at FROM pre_placements WHERE ${where.join(' AND ')} ORDER BY updated_at DESC LIMIT 500`, params);
     const [counts] = await pool.query(`SELECT status, COUNT(*) n FROM pre_placements WHERE organization_id = ?${req.query.mine === '1' ? ' AND created_by_id = ?' : ''} GROUP BY status`,
       req.query.mine === '1' ? [req.user.organization_id, req.user.id] : [req.user.organization_id]);
+    let vendorsMissing = 0;
+    if (isHr(req)) {
+      try {
+        const [m] = await pool.query(`SELECT COUNT(*) n FROM pre_placements WHERE organization_id = ? AND status <> 'not_selected' AND vendor_name IS NOT NULL AND vendor_name <> '' AND supplier_id IS NULL`, [req.user.organization_id]);
+        vendorsMissing = Number(m[0].n);
+      } catch (e) { if (!(e && (e.code === 'ER_BAD_FIELD_ERROR' || missingTable(e)))) throw e; }
+    }
     res.json({
+      vendorsMissing,
       counts: Object.fromEntries(counts.map((c) => [c.status, Number(c.n)])),
       items: rows.map((r) => ({ id: r.id, status: r.status, consultantName: r.consultant_name, vendorName: r.vendor_name, clientName: r.client_name, endClientName: r.end_client_name,
         startDate: dateStr(r.start_date), onboardingId: r.onboarding_id || null, createdBy: r.created_by, isMine: r.created_by_id === req.user.id, updatedAt: r.updated_at })),
@@ -300,6 +308,29 @@ async function addVendorToDirectory(req, row) {
     throw err;
   } finally { conn.release(); }
 }
+
+// One-off catch-up for pre-placements saved before vendors were added to the Directory automatically (owner / HR only).
+// Skips candidates who were not selected. Several candidates with the same vendor share one supplier company.
+router.post('/sync-vendors', async (req, res, next) => {
+  try {
+    if (!isHr(req)) return res.status(403).json({ error: 'Only the account owner or an HR admin can add all the missing vendors at once.' });
+    const [rows] = await pool.query(`SELECT * FROM pre_placements WHERE organization_id = ? AND status <> 'not_selected' AND vendor_name IS NOT NULL AND vendor_name <> '' AND supplier_id IS NULL ORDER BY id`, [req.user.organization_id]);
+    const out = { created: [], matched: [], failed: [], skipped: [] };
+    for (const row of rows) {
+      try {
+        const r = await addVendorToDirectory(req, row);
+        if (r.error) { out.failed.push({ id: row.id, vendor: row.vendor_name, error: r.error }); continue; }
+        (r.created ? out.created : out.matched).push(r.name);
+        r.skipped.forEach((x) => out.skipped.push(r.name + ': ' + x));
+      } catch (e) { out.failed.push({ id: row.id, vendor: row.vendor_name, error: 'Could not be added.' }); }
+    }
+    out.created = Array.from(new Set(out.created)); out.matched = Array.from(new Set(out.matched.filter((n) => !out.created.includes(n))));
+    res.json(out);
+  } catch (err) {
+    if (missingTable(err) || (err && err.code === 'ER_BAD_FIELD_ERROR')) return res.status(503).json({ error: SCHEMA_MSG });
+    next(err);
+  }
+});
 
 router.post('/:id/add-vendor', async (req, res, next) => {
   try {
