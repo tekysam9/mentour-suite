@@ -51,6 +51,10 @@ async function main() {
     const ihRes = await fetch(BASE + '/import-hours.js');
     check('GET /import-hours.js -> 200', ihRes.status === 200, ihRes.status);
     const invHtml = await (await fetch(BASE + '/invoices.html')).text();
+    const ppHtml = await (await fetch(BASE + '/pre-placement.html')).text();
+    const shellJs = await (await fetch(BASE + '/shell.js')).text();
+    check('pre-placement page: paste box, sensitive fields behind Show, start-onboarding, and it is in the People menu',
+      ppHtml.includes('id="pp-paste"') && ppHtml.includes('data-act="eye"') && ppHtml.includes("'reveal'") && ppHtml.includes('data-act="send"') && !/Start onboarding/i.test(ppHtml) && shellJs.includes('/pre-placement.html'));
     check('invoices.html has deductions with a reason and a Void / Restore control, and voided rows are left out of totals',
       invHtml.includes('data-action="sv-ded-add"') && invHtml.includes('sv-void-confirm') && invHtml.includes('sv-unvoid') && invHtml.includes('if (i.voided) { nVoid += 1; return; }'));
     const ledgerHtml = await (await fetch(BASE + '/ledger.html')).text();

@@ -20,6 +20,7 @@
     [/^\/api\/directory/, 'directory record'],
     [/^\/api\/subvendor-invoices/, 'supplier payment'],
     [/^\/api\/invoices/, 'client invoice'],
+    [/^\/api\/pre-placement/, 'pre-placement'],
     [/^\/api\/onboarding\/people/, 'person / role'],
     [/^\/api\/onboarding\/invites/, 'invite code'],
     [/^\/api\/onboarding/, 'onboarding request'],
@@ -30,7 +31,7 @@
     [/^\/api\/ledger/, 'Ledger file import'],
   ];
   var ACTION_WORDS = /\/(generate|import-hours|import-workbook|bulk-status|fill-rates|from-ledger|status|create-records|merge|bulk|email|dismiss|checklist|apply|undo|clear-supplier|swap|reuse|submit|approve|return|reject)\b/;
-  var SECRET = /pass(word)?|secret|token|ssn|tin\b|account_?(no|number)|routing|iban|swift/i;
+  var SECRET = /pass(word)?|secret|token|ssn|dob|birth|tin\b|account_?(no|number)|routing|iban|swift/i;
   var SKIP_FIELDS = /^(_|id$|organization|csrf|apply$)/;
 
   function noun(path) { for (var i = 0; i < NOUNS.length; i++) if (NOUNS[i][0].test(path)) return NOUNS[i][1]; return 'record'; }
@@ -67,7 +68,7 @@
     var path; try { path = new URL(url, location.href).pathname; } catch (e) { return false; }
     if (!/^\/api\//.test(path)) return false;
     if (/^\/api\/(auth|version)\b/.test(path)) return false;
-    if (/parse-email|\/duplicates\/scan/.test(path)) return false;
+    if (/parse-email|\/duplicates\/scan|^\/api\/pre-placement\/(parse|\d+\/reveal)$/.test(path)) return false;
     if (data && data.apply === false) return false; // preview only, nothing is saved
     return true;
   }

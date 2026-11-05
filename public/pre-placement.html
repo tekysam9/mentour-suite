@@ -1,0 +1,328 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pre-placement — Mentour Suite</title>
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<meta name="theme-color" content="#0875E1">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Mentour">
+
+<link rel="stylesheet" href="/shared.css">
+<link rel="stylesheet" href="/shell.css">
+<style>
+  .pp { max-width: 1100px; margin: 0 auto; padding: 28px 24px 72px; }
+  .pp h1 { font-family: Roboto, 'Helvetica Neue', Arial, sans-serif; font-size: 30px; font-weight: 600; color: var(--ink); margin: 0 0 6px; }
+  .pp-lede { color: var(--text-muted); font-size: 13.5px; line-height: 1.55; margin: 0 0 20px; max-width: 760px; }
+  .pp-top { display: flex; justify-content: space-between; align-items: flex-end; gap: 16px; flex-wrap: wrap; margin-bottom: 18px; }
+  .pp-card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 18px 20px; margin-bottom: 16px; }
+  .pp-card h2 { font-size: 12.5px; text-transform: uppercase; letter-spacing: .06em; color: var(--text-muted); margin: 0 0 14px; font-weight: 700; }
+  .pp-btn { border: 1px solid var(--line); background: var(--card); border-radius: 5px; padding: 8px 15px; font-size: 13px; font-weight: 600; cursor: pointer; font-family: inherit; color: var(--text); }
+  .pp-btn:hover { background: var(--paper); }
+  .pp-btn:disabled { opacity: .55; cursor: default; }
+  .pp-btn.primary { background: var(--pine); border-color: var(--pine); color: #FFFFFF; }
+  .pp-btn.primary:hover { background: #0B64C0; }
+  .pp-btn.danger { color: var(--brick); border-color: #E3C2B5; }
+  .pp-btn.small { padding: 4px 10px; font-size: 12px; }
+  .pp-tabs { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 14px; align-items: center; }
+  .pp-tab { border: 1px solid var(--line); background: var(--card); border-radius: 99px; padding: 5px 13px; font-size: 12.5px; font-weight: 600; cursor: pointer; font-family: inherit; color: var(--text); }
+  .pp-tab.on { background: var(--pine); border-color: var(--pine); color: #fff; }
+  .pp-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .pp-table th { text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--text-muted); padding: 8px 10px; border-bottom: 1px solid var(--line); }
+  .pp-table td { padding: 10px; border-bottom: 1px solid #EEF0F2; vertical-align: top; }
+  .pp-table tr.click { cursor: pointer; } .pp-table tr.click:hover td { background: var(--paper); }
+  .pp-badge { font-size: 11px; font-weight: 700; border-radius: 4px; padding: 2px 8px; background: #E8EAED; color: #5E6A75; display: inline-block; }
+  .pp-badge.interviewing { background: #FFF5E5; color: #8A4B00; } .pp-badge.selected { background: #E3F1FD; color: #0B64C0; } .pp-badge.converted { background: #E4F6E9; color: #1B7A3A; } .pp-badge.not_selected { background: #FDECEA; color: #B3261E; }
+  .pp-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 14px 16px; }
+  .pp-f label { display: block; font-size: 11.5px; font-weight: 600; color: var(--text-muted); margin-bottom: 4px; }
+  .pp-f input, .pp-f select { width: 100%; box-sizing: border-box; }
+  .pp-f.wide { grid-column: 1 / -1; }
+  .pp-f .help { font-size: 11px; color: var(--text-muted); margin-top: 3px; line-height: 1.4; }
+  .pp-f.bad input, .pp-f.bad select { border-color: var(--brick); }
+  .pp-req { color: var(--brick); }
+  .pp-paste textarea { width: 100%; min-height: 150px; box-sizing: border-box; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px; }
+  .pp-note { font-size: 13px; border-radius: 8px; padding: 10px 14px; margin-bottom: 14px; line-height: 1.5; }
+  .pp-note.ok { background: #E4F6E9; color: #1B5E2F; } .pp-note.err { background: #FDECEA; color: #B3261E; } .pp-note.warn { background: #FFF5E5; color: #8A4B00; border: 1px solid #FFD9A3; }
+  .pp-actions { display: flex; gap: 10px; flex-wrap: wrap; margin: 12px 0 18px; align-items: center; }
+  .pp-savebar { position: sticky; bottom: 0; background: var(--paper); border-top: 1px solid var(--line); padding: 12px 0; display: flex; gap: 12px; align-items: center; margin-top: 8px; flex-wrap: wrap; }
+  .pp-log { font-size: 12.5px; line-height: 1.5; } .pp-log div { padding: 7px 0; border-bottom: 1px solid #EEF0F2; } .pp-log small { display: block; color: var(--text-muted); font-size: 11px; }
+  .pp-secret { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+  .pp-secret input { flex: 1 1 140px; }
+  .pp-eye { border: 1px solid var(--line); background: var(--card); border-radius: 5px; width: 34px; height: 34px; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; color: var(--text-muted); flex: 0 0 auto; }
+  .pp-eye:hover:not(:disabled) { background: var(--paper); color: var(--ink); } .pp-eye:disabled { opacity: .45; cursor: default; }
+  .pp-shown { font-family: ui-monospace, Menlo, Consolas, monospace; font-weight: 700; color: var(--ink); }
+  .pp-muted { color: var(--text-muted); font-size: 13px; }
+  .pp-empty { padding: 28px; text-align: center; color: var(--text-muted); }
+</style>
+<link rel="stylesheet" href="/theme.css">
+</head>
+<body>
+<div id="app"><div class="pp"><p class="pp-muted">Loading…</p></div></div>
+<script src="/shell.js"></script>
+<script>
+(function () {
+  var appEl = document.getElementById('app');
+  var S = { eye: {}, schema: null, list: { items: [], counts: {}, status: 'open', q: '' }, rec: null, draft: null, isNew: false, msg: null, errors: {}, parsed: null, shown: null, similar: [], busy: false };
+
+  function esc(s) { return s === null || s === undefined ? '' : String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;'); }
+  function api(m, u, b) {
+    return fetch(u, { method: m, headers: { 'Content-Type': 'application/json' }, body: b ? JSON.stringify(b) : undefined })
+      .then(function (r) { return r.json().catch(function () { return {}; }).then(function (j) { return { ok: r.ok, status: r.status, body: j }; }); });
+  }
+  function fmtDate(d) { if (!d) return ''; var p = String(d).slice(0, 10).split('-'); return p.length === 3 ? p[1] + '/' + p[2] + '/' + p[0] : ''; }
+  function fmtWhen(t) { if (!t) return ''; var d = new Date(t); return isNaN(d) ? '' : d.toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }); }
+  var STATUS_LABEL = { draft: 'Collecting details', interviewing: 'Interviewing', selected: 'Selected', not_selected: 'Not selected', converted: 'Sent to onboarding' };
+  function badge(st) { return '<span class="pp-badge ' + esc(st) + '">' + esc(STATUS_LABEL[st] || st) + '</span>'; }
+  function note(text, kind) { S.msg = text ? { text: text, kind: kind || 'ok' } : null; }
+  function isHr() { return S.schema && S.schema.isHr; }
+
+  // -------------------------------------------------------------- routing
+  function route() {
+    var h = location.hash.replace('#', '');
+    S.msg = null; S.errors = {}; S.parsed = null; S.shown = null; S.similar = []; S.eye = {}; S.askNotSelected = false;
+    if (h === 'new') { S.isNew = true; S.rec = null; S.draft = blank(); loadSchema().then(render); return; }
+    if (/^\d+$/.test(h)) { openRec(h); return; }
+    loadList();
+  }
+  window.addEventListener('hashchange', route);
+  function blank() { return { data: {}, secrets: { dob: '', ssn_last5: '' }, clear: {} }; }
+
+  function loadSchema() { return S.schema ? Promise.resolve() : api('GET', '/api/pre-placement/schema').then(function (r) { if (r.ok) S.schema = r.body; }); }
+  function loadList() {
+    S.isNew = false; S.rec = null; S.draft = null;
+    loadSchema().then(function () {
+      var q = '?status=' + encodeURIComponent(S.list.status) + (S.list.q ? '&q=' + encodeURIComponent(S.list.q) : '');
+      return api('GET', '/api/pre-placement' + q);
+    }).then(function (r) {
+      if (!r.ok) { note(r.body.error || 'Could not load.', 'err'); S.list.items = []; } else { S.list.items = r.body.items; S.list.counts = r.body.counts; }
+      render();
+    });
+  }
+  function openRec(id) {
+    S.isNew = false;
+    loadSchema().then(function () { return api('GET', '/api/pre-placement/' + id); }).then(function (r) {
+      if (!r.ok) { note(r.body.error || 'Could not open that one.', 'err'); S.rec = null; S.draft = null; render(); return; }
+      setRec(r.body); render();
+    });
+  }
+  function setRec(rec) { S.rec = rec; S.draft = { data: JSON.parse(JSON.stringify(rec.data || {})), secrets: { dob: '', ssn_last5: '' }, clear: {} }; S.similar = rec.similar || []; }
+
+  // -------------------------------------------------------------- views
+  function render() {
+    if (S.draft) renderDetail(); else renderList();
+  }
+  function msgHtml() { return S.msg ? '<div class="pp-note ' + esc(S.msg.kind) + '" role="status">' + esc(S.msg.text) + '</div>' : ''; }
+
+  function renderList() {
+    var c = S.list.counts || {}, open = (c.draft || 0) + (c.interviewing || 0) + (c.selected || 0), all = open + (c.converted || 0) + (c.not_selected || 0);
+    var tabs = [['open', 'Open (' + open + ')'], ['converted', 'Sent to onboarding (' + (c.converted || 0) + ')'], ['not_selected', 'Not selected (' + (c.not_selected || 0) + ')'], ['all', 'All (' + all + ')']];
+    var rows = S.list.items.map(function (x) {
+      return '<tr class="click" data-open="' + x.id + '" tabindex="0"><td data-label="Consultant"><b>' + esc(x.consultantName) + '</b></td><td data-label="Vendor">' + esc(x.vendorName || '') + '</td>' +
+        '<td data-label="Client">' + esc(x.clientName || '') + (x.endClientName ? '<div class="pp-muted">end client: ' + esc(x.endClientName) + '</div>' : '') + '</td>' +
+        '<td data-label="Start">' + esc(fmtDate(x.startDate)) + '</td><td data-label="Status">' + badge(x.status) + '</td>' +
+        (isHr() ? '<td data-label="Recruiter">' + esc(x.createdBy || '') + '</td>' : '') + '<td data-label="Updated">' + esc(fmtWhen(x.updatedAt)) + '</td></tr>';
+    }).join('');
+    appEl.innerHTML = '<div class="pp"><div class="pp-top"><div><h1>Pre-placement</h1><p class="pp-lede">The vendor and consultant details collected while a candidate is being interviewed. Paste the pre-placement table from the e-mail, or type it in. Only a candidate who is selected goes on to onboarding.</p></div>' +
+      '<button class="pp-btn primary" data-act="new">+ New pre-placement</button></div>' + msgHtml() +
+      '<div class="pp-tabs">' + tabs.map(function (t) { return '<button class="pp-tab' + (S.list.status === t[0] ? ' on' : '') + '" data-tab="' + t[0] + '">' + esc(t[1]) + '</button>'; }).join('') +
+      '<input type="search" id="pp-q" placeholder="Search consultant, vendor or client" value="' + esc(S.list.q) + '" style="margin-left:auto;min-width:240px" aria-label="Search"></div>' +
+      '<div class="pp-card" style="padding:6px 10px">' + (rows ? '<table class="pp-table"><thead><tr><th>Consultant</th><th>Vendor</th><th>Client</th><th>Start</th><th>Status</th>' + (isHr() ? '<th>Recruiter</th>' : '') + '<th>Updated</th></tr></thead><tbody>' + rows + '</tbody></table>'
+        : '<div class="pp-empty">Nothing here yet. Use “New pre-placement” to add one.</div>') + '</div></div>';
+    if (S.refocus) { S.refocus = false; var q = document.getElementById('pp-q'); if (q) { q.focus(); q.setSelectionRange(q.value.length, q.value.length); } }
+  }
+
+  function fieldHtml(fld) {
+    var v = S.draft.data[fld.key]; v = v === undefined || v === null ? '' : v;
+    var bad = S.errors[fld.key];
+    var input;
+    if (fld.kind === 'select') input = '<select data-k="' + fld.key + '"><option value=""></option>' + fld.options.map(function (o) { return '<option' + (o === v ? ' selected' : '') + '>' + esc(o) + '</option>'; }).join('') + '</select>';
+    else input = '<input data-k="' + fld.key + '" type="' + (fld.kind === 'date' ? 'date' : fld.kind === 'number' ? 'number' : fld.kind === 'email' ? 'email' : 'text') + '"' + (fld.kind === 'number' ? ' step="0.01" min="0"' : '') + ' value="' + esc(v) + '" maxlength="300">';
+    return '<div class="pp-f' + (fld.wide ? ' wide' : '') + (bad ? ' bad' : '') + '"><label>' + esc(fld.label) + (fld.required ? ' <span class="pp-req">*</span>' : '') + '</label>' + input +
+      (bad ? '<div class="help" style="color:var(--brick)">' + esc(bad) + '</div>' : (fld.help ? '<div class="help">' + esc(fld.help) + '</div>' : '')) + '</div>';
+  }
+  var EYE = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12z"/><circle cx="12" cy="12" r="3"/></svg>';
+  var EYE_OFF = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17.94 17.94A10.9 10.9 0 0 1 12 19c-7 0-11-7-11-7a19.8 19.8 0 0 1 5.06-5.94M9.9 4.24A10.7 10.7 0 0 1 12 4c7 0 11 7 11 7a19.9 19.9 0 0 1-3.17 4.19M1 1l22 22"/><path d="M14.12 14.12A3 3 0 1 1 9.88 9.88"/></svg>';
+  // A typed value is masked; the eye shows it so you can check what you entered (nothing is sent anywhere). A value that is already saved
+  // is only ever shown by the owner / HR (a server call that is written to the Activity log).
+  function secretHtml(fld) {
+    var key = fld.key;
+    var saved = S.rec && S.rec.secretsSaved && S.rec.secretsSaved[key], typed = S.draft.secrets[key], cleared = S.draft.clear[key];
+    var enabled = S.schema.encryptionConfigured && (!S.rec || S.rec.canEdit);
+    var shown = S.shown && S.shown[key];
+    var visible = S.eye[key] === undefined ? (key === 'dob' && !typed) : S.eye[key];
+    var typeAttr = visible ? (fld.kind === 'date' ? 'date' : 'text') : 'password';
+    var revealMode = saved && !typed && !cleared; // nothing typed: the eye is about the saved value
+    var h = '<div class="pp-f' + (S.errors[key] ? ' bad' : '') + '"><label>' + esc(fld.label) + ' 🔒</label><div class="pp-secret">';
+    if (shown) h += '<span class="pp-shown">' + esc(shown) + '</span>';
+    h += '<input data-s="' + key + '" type="' + typeAttr + '"' + (key === 'ssn_last5' ? ' inputmode="numeric" maxlength="5"' : '') + ' autocomplete="off" value="' + esc(typed) + '"' +
+      (!enabled ? ' disabled' : '') + ' placeholder="' + (cleared ? 'Will be removed when you save' : saved ? 'Saved (hidden) — type to replace' : (key === 'dob' && !visible ? 'YYYY-MM-DD' : '')) + '" aria-label="' + esc(fld.label) + '">';
+    if (revealMode) {
+      var can = isHr() && S.rec && S.rec.canReveal;
+      h += '<button type="button" class="pp-eye" ' + (can ? 'data-act="' + (shown ? 'hide-saved' : 'reveal') + '"' : 'disabled') + ' aria-label="' + (shown ? 'Hide the saved value' : 'Show the saved value') + '" title="' +
+        (can ? (shown ? 'Hide the saved value' : 'Show the saved value (recorded in the Activity log)') : 'Only the account owner or an HR admin can view a saved value') + '">' + (shown ? EYE_OFF : EYE) + '</button>';
+    } else {
+      h += '<button type="button" class="pp-eye" data-act="eye" data-k="' + key + '" aria-pressed="' + (visible ? 'true' : 'false') + '" aria-label="' + (visible ? 'Hide what you typed' : 'Show what you typed so you can check it') + '" title="' +
+        (visible ? 'Hide what you typed' : 'Show what you typed so you can check it') + '"' + (!enabled ? ' disabled' : '') + '>' + (visible ? EYE_OFF : EYE) + '</button>';
+    }
+    if (saved && !cleared && S.rec && S.rec.canEdit) h += '<button type="button" class="pp-btn small" data-act="remove-secret" data-k="' + key + '">Remove</button>';
+    h += '</div>' + (S.errors[key] ? '<div class="help" style="color:var(--brick)">' + esc(S.errors[key]) + '</div>' : (fld.help ? '<div class="help">' + esc(fld.help) + '</div>' : '')) + '</div>';
+    return h;
+  }
+
+  function renderDetail() {
+    var rec = S.rec, canEdit = S.isNew || (rec && rec.canEdit);
+    var h = '<div class="pp"><div class="pp-top"><div><a href="#" data-act="back" class="pp-muted">← All pre-placements</a><h1>' + (S.isNew ? 'New pre-placement' : esc(rec.consultantName)) + '</h1>' +
+      (rec ? '<div>' + badge(rec.status) + (rec.createdBy ? ' <span class="pp-muted">· by ' + esc(rec.createdBy) + '</span>' : '') + '</div>' : '') + '</div></div>' + msgHtml();
+    if (S.similar.length) h += '<div class="pp-note warn">Heads up — there is already an open pre-placement that looks like the same person: ' + S.similar.map(function (x) { return '<a href="#' + x.id + '">' + esc(x.name) + ' (' + esc(x.why) + ')</a>'; }).join(', ') + '.</div>';
+    if (rec && rec.inDirectory) h += '<div class="pp-note warn">A consultant with this name is already in the Directory.</div>';
+    if (rec && rec.status === 'converted') h += '<div class="pp-note ok">This candidate has been sent to onboarding. <a href="/onboarding.html#' + esc(rec.onboardingId) + '">Open the onboarding</a>.</div>';
+    if (rec && rec.status === 'not_selected') h += '<div class="pp-note warn">This candidate was not selected. Their date of birth and SSN digits were erased. Reopen it if the placement is back on (the sensitive details would need to be entered again).</div>';
+    if (canEdit) {
+      h += '<div class="pp-card pp-paste"><h2>Paste from the e-mail</h2><p class="pp-muted" style="margin:0 0 8px">Copy the Pre-Placement table from the e-mail (or the Word file) and paste it here. The fields below fill in; check them, then save.</p>' +
+        '<textarea id="pp-paste" placeholder="Vendor Name\tRPAR technologies services\nVendor Address\t…" aria-label="Pasted pre-placement table"></textarea>' +
+        '<div class="pp-actions" style="margin-bottom:0"><button class="pp-btn" data-act="parse">Read it and fill in the fields</button>' + (S.parsed ? '<span class="pp-muted">' + S.parsed + '</span>' : '') + '</div></div>';
+    }
+    h += '<fieldset style="border:0;padding:0;margin:0"' + (canEdit ? '' : ' disabled') + '>';
+    S.schema.sections.forEach(function (sec) {
+      h += '<div class="pp-card"><h2>' + esc(sec.title) + '</h2><div class="pp-grid">' + sec.fields.map(fieldHtml).join('') + '</div>';
+      if (sec.key === 'consultant') {
+        h += '<h2 style="margin-top:18px">Sensitive details (stored encrypted)</h2>';
+        if (!S.schema.encryptionConfigured) h += '<div class="pp-note warn">Date of birth and SSN digits can’t be saved yet: the server has no encryption key (FIELD_ENCRYPTION_KEY). Everything else saves normally.</div>';
+        h += '<div class="pp-grid">' + S.schema.secretFields.map(secretHtml).join('') + '</div>' +
+          '<div class="pp-muted" style="margin-top:8px">These are never shown in lists. Only the account owner or an HR admin can reveal them, and each reveal is written to the Activity log. Enter only the last 4–5 digits of the SSN.</div>';
+      }
+      h += '</div>';
+    });
+    h += '</fieldset>';
+    if (canEdit) {
+      h += '<div class="pp-savebar"><button class="pp-btn primary" data-act="save"' + (S.busy ? ' disabled' : '') + '>' + (S.isNew ? 'Save' : 'Save changes') + '</button>';
+      if (rec) {
+        var st = rec.status;
+        if (st === 'draft') h += '<button class="pp-btn" data-act="status" data-to="interviewing">Move to interviewing</button>';
+        if (st === 'interviewing') h += '<button class="pp-btn" data-act="status" data-to="selected">Candidate selected</button>';
+        if (st === 'selected') h += '<button class="pp-btn" data-act="status" data-to="interviewing">Back to interviewing</button>';
+        if (st === 'interviewing' || st === 'selected') h += '<button class="pp-btn" data-act="status" data-to="draft">Back to collecting details</button>';
+        h += '<button class="pp-btn danger" data-act="ask-not-selected">Not selected</button>';
+        if (st === 'selected') {
+          h += '<span style="margin-left:auto;display:flex;gap:8px;align-items:center"><select id="pp-wt" aria-label="Engagement for onboarding"><option value="">Engagement…</option>' +
+            ['C2C', 'W2', '1099'].map(function (t) { return '<option' + (((rec.data || {}).engagement) === t ? ' selected' : '') + '>' + t + '</option>'; }).join('') + '</select>' +
+            '<button class="pp-btn primary" data-act="send">Send to onboarding</button></span>';
+        }
+      }
+      h += '</div>';
+      if (S.askNotSelected) h += '<div class="pp-note warn" style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">Mark this candidate as not selected? Their date of birth and SSN digits will be erased. <input id="pp-reason" type="text" maxlength="255" placeholder="Reason (optional), e.g. did not clear the interview" style="flex:1 1 280px"><button class="pp-btn danger small" data-act="not-selected">Yes, not selected</button><button class="pp-btn small" data-act="cancel-ns">Cancel</button></div>';
+    } else if (rec && rec.status === 'not_selected') {
+      h += '<div class="pp-actions"><button class="pp-btn" data-act="status" data-to="interviewing">Reopen (back to interviewing)</button></div>';
+    }
+    if (rec && (isHr() || rec.status === 'draft')) h += '<div class="pp-actions"><button class="pp-btn danger small" data-act="delete">Delete this pre-placement</button></div>';
+    if (rec && rec.log && rec.log.length) h += '<div class="pp-card"><h2>History</h2><div class="pp-log">' + rec.log.slice().reverse().map(function (l) { return '<div>' + esc(l.text) + '<small>' + esc(l.by || '') + ' · ' + esc(fmtWhen(l.at)) + '</small></div>'; }).join('') + '</div></div>';
+    appEl.innerHTML = h + '</div>';
+  }
+
+  // -------------------------------------------------------------- actions
+  function payload() {
+    var d = {};
+    S.schema.sections.forEach(function (sec) { sec.fields.forEach(function (f) { var v = S.draft.data[f.key]; d[f.key] = v === undefined || v === null ? '' : v; }); });
+    ['dob', 'ssn_last5'].forEach(function (k) { if (S.draft.secrets[k]) d[k] = S.draft.secrets[k]; else if (S.draft.clear[k]) d[k] = ''; });
+    return d;
+  }
+  function showErrors(r) {
+    S.errors = {};
+    (r.body.errors || []).forEach(function (e) { S.errors[e.key] = e.message; });
+    note(r.body.error || 'Could not save.', 'err'); renderDetail(); window.scrollTo(0, 0);
+  }
+  appEl.addEventListener('click', function (e) {
+    var open = e.target.closest('[data-open]');
+    if (open && !e.target.closest('a')) { location.hash = open.getAttribute('data-open'); return; }
+    var tab = e.target.closest('[data-tab]');
+    if (tab) { S.list.status = tab.getAttribute('data-tab'); loadList(); return; }
+    var b = e.target.closest('[data-act]'); if (!b) return;
+    var act = b.getAttribute('data-act');
+    if (act === 'back') { e.preventDefault(); location.hash = ''; if (!location.hash) route(); return; }
+    if (act === 'new') { location.hash = 'new'; return; }
+    if (act === 'parse') {
+      var txt = document.getElementById('pp-paste').value;
+      api('POST', '/api/pre-placement/parse', { text: txt }).then(function (r) {
+        if (!r.ok) { S.parsed = esc(r.body.error || 'Could not read that.'); renderDetail(); return; }
+        var f = r.body.fields;
+        Object.keys(f).forEach(function (k) { if (k === 'dob' || k === 'ssn_last5') { S.draft.secrets[k] = f[k]; S.draft.clear[k] = false; } else S.draft.data[k] = f[k]; });
+        S.errors = {};
+        S.parsed = 'Filled in ' + r.body.matched.length + ' fields.' + (r.body.unmatched.length ? ' Could not place: ' + esc(r.body.unmatched.slice(0, 5).join(' | ')) + '.' : '') +
+          (r.body.warnings.length ? ' ' + esc(r.body.warnings.join(' ')) : '') + ' Check them, then save.';
+        if (r.body.similar && r.body.similar.length) S.similar = r.body.similar;
+        renderDetail();
+      });
+      return;
+    }
+    if (act === 'eye') { var ek = b.getAttribute('data-k'); var cur = S.eye[ek] === undefined ? (ek === 'dob' && !S.draft.secrets[ek]) : S.eye[ek]; S.eye[ek] = !cur; renderDetail(); return; }
+    if (act === 'hide-saved') { S.shown = null; note(null); renderDetail(); return; }
+    if (act === 'remove-secret') { S.draft.clear[b.getAttribute('data-k')] = true; S.draft.secrets[b.getAttribute('data-k')] = ''; renderDetail(); return; }
+    if (act === 'reveal') {
+      api('POST', '/api/pre-placement/' + S.rec.id + '/reveal').then(function (r) {
+        if (!r.ok) { note(r.body.error || 'Could not reveal.', 'err'); } else { S.shown = { dob: r.body.dob || '—', ssn_last5: r.body.ssn_last5 || '—' }; note('Shown on this screen only. This view was recorded in the Activity log.', 'warn'); }
+        renderDetail();
+      });
+      return;
+    }
+    if (act === 'save') {
+      S.busy = true; S.errors = {}; note(null);
+      var p = S.isNew ? api('POST', '/api/pre-placement', { data: payload() }) : api('PUT', '/api/pre-placement/' + S.rec.id, { data: payload() });
+      p.then(function (r) {
+        S.busy = false;
+        if (!r.ok) { showErrors(r); return; }
+        var wasNew = S.isNew; S.isNew = false; setRec(r.body); S.shown = null; S.parsed = null; S.eye = {};
+        note(wasNew ? 'Saved.' : 'Changes saved.', 'ok');
+        if (wasNew) { history.replaceState(null, '', '#' + r.body.id); }
+        renderDetail(); window.scrollTo(0, 0);
+      });
+      return;
+    }
+    if (act === 'status' || act === 'not-selected') {
+      var to = act === 'not-selected' ? 'not_selected' : b.getAttribute('data-to');
+      var reason = act === 'not-selected' ? (document.getElementById('pp-reason') || {}).value || '' : '';
+      api('POST', '/api/pre-placement/' + S.rec.id + '/status', { status: to, reason: reason }).then(function (r) {
+        if (!r.ok) { note(r.body.error || 'Could not change the status.', 'err'); renderDetail(); return; }
+        S.askNotSelected = false; S.shown = null; setRec(r.body);
+        note({ draft: 'Moved back to collecting details.', interviewing: 'Marked as interviewing.', selected: 'Candidate selected. You can now send them to onboarding.', not_selected: 'Marked as not selected. Their date of birth and SSN digits were erased.' }[to], 'ok'); renderDetail();
+      });
+      return;
+    }
+    if (act === 'ask-not-selected') { S.askNotSelected = true; renderDetail(); var rs = document.getElementById('pp-reason'); if (rs) rs.focus(); return; }
+    if (act === 'cancel-ns') { S.askNotSelected = false; renderDetail(); return; }
+    if (act === 'send') {
+      var wt = document.getElementById('pp-wt').value;
+      api('POST', '/api/pre-placement/' + S.rec.id + '/send-to-onboarding', { workerType: wt }).then(function (r) {
+        if (!r.ok) { note(r.body.error || 'Could not send to onboarding.', 'err'); renderDetail(); return; }
+        location.href = '/onboarding.html#' + r.body.onboardingId;
+      });
+      return;
+    }
+    if (act === 'delete') {
+      if (!window.confirm('Delete this pre-placement? This cannot be undone.')) return;
+      api('DELETE', '/api/pre-placement/' + S.rec.id).then(function (r) {
+        if (!r.ok) { note(r.body.error || 'Could not delete.', 'err'); renderDetail(); return; }
+        note('Deleted.', 'ok'); location.hash = ''; route();
+      });
+    }
+  });
+  appEl.addEventListener('input', function (e) {
+    var t = e.target;
+    if (t.id === 'pp-q') { S.list.q = t.value; S.refocus = true; clearTimeout(S._qt); S._qt = setTimeout(function () { loadList(); }, 300); return; }
+    if (t.hasAttribute('data-k')) S.draft.data[t.getAttribute('data-k')] = t.value;
+    else if (t.hasAttribute('data-s')) { S.draft.secrets[t.getAttribute('data-s')] = t.value; if (t.value) S.draft.clear[t.getAttribute('data-s')] = false; }
+  });
+  appEl.addEventListener('change', function (e) {
+    var t = e.target; if (t.tagName === 'SELECT' && t.hasAttribute('data-k')) S.draft.data[t.getAttribute('data-k')] = t.value;
+  });
+  appEl.addEventListener('keydown', function (e) {
+    var row = e.target.closest && e.target.closest('[data-open]');
+    if (row && (e.key === 'Enter' || e.key === ' ') && e.target === row) { e.preventDefault(); location.hash = row.getAttribute('data-open'); }
+  });
+  route();
+})();
+</script>
+</body>
+</html>

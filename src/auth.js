@@ -76,9 +76,9 @@ async function requireAuth(req, res, next) {
         return res.status(403).json({ error: 'Your organization requires two-step sign-in for owner and HR logins. Turn it on under Settings → Security.', twoFactorRequired: true });
       }
     }
-    // A recruiter login is limited to the Onboarding module (and its own session endpoints).
-    if (req.user.role === 'recruiter' && !/^\/api\/(onboarding|auth)(\/|$)/.test(req.baseUrl || '')) {
-      return res.status(403).json({ error: 'Your login is limited to the Onboarding module.' });
+    // A recruiter login is limited to the Pre-placement and Onboarding modules (and its own session endpoints).
+    if (req.user.role === 'recruiter' && !/^\/api\/(onboarding|pre-placement|auth)(\/|$)/.test(req.baseUrl || '')) {
+      return res.status(403).json({ error: 'Your login is limited to the Pre-placement and Onboarding modules.' });
     }
     next();
   } catch (err) {

@@ -761,3 +761,29 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS totp_secret TEXT NULL;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS totp_enabled TINYINT(1) NOT NULL DEFAULT 0;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS totp_recovery TEXT NULL;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS totp_last_step BIGINT NULL;
+
+-- Pre-placement information: what a recruiter collects about the vendor and the consultant before a placement goes to
+-- onboarding, while the candidate is still being interviewed (they may not be hired). Statuses: draft -> interviewing -> selected ->
+-- converted (sent to onboarding), or not_selected. Date of birth and the SSN digits are kept apart in `secrets`, encrypted with
+-- FIELD_ENCRYPTION_KEY (never listed, only the owner / HR can reveal them) and are erased if the candidate is not selected. Safe to re-run.
+CREATE TABLE IF NOT EXISTS pre_placements (
+  id              INT AUTO_INCREMENT PRIMARY KEY,
+  organization_id INT NOT NULL,
+  status          ENUM('draft', 'interviewing', 'selected', 'not_selected', 'converted') NOT NULL DEFAULT 'draft',
+  consultant_name VARCHAR(255) NOT NULL,
+  vendor_name     VARCHAR(255) NULL,
+  client_name     VARCHAR(255) NULL,
+  end_client_name VARCHAR(255) NULL,
+  start_date      DATE NULL,
+  data            MEDIUMTEXT NULL,
+  secrets         TEXT NULL,
+  onboarding_id   INT NULL,
+  log             MEDIUMTEXT NULL,
+  created_by      VARCHAR(255) NULL,
+  created_by_id   INT NULL,
+  created_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE,
+  FOREIGN KEY (onboarding_id) REFERENCES onboardings(id) ON DELETE SET NULL,
+  INDEX idx_pre_placements_org_status (organization_id, status)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

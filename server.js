@@ -13,6 +13,7 @@ const directoryImportRoutes = require('./src/routes/directoryImport');
 const invoiceRoutes = require('./src/routes/invoices');
 const subvendorInvoiceRoutes = require('./src/routes/subvendorInvoices');
 const onboardingRoutes = require('./src/routes/onboarding');
+const prePlacementRoutes = require('./src/routes/prePlacement');
 const profileRoutes = require('./src/routes/profiles');
 const formRoutes = require('./src/routes/forms');
 const versionRoutes = require('./src/routes/version');
@@ -80,6 +81,7 @@ app.use('/api/forms', formRoutes);
 app.use('/api/invoices', invoiceRoutes);
 app.use('/api/subvendor-invoices', subvendorInvoiceRoutes);
 app.use('/api/onboarding', onboardingRoutes);
+app.use('/api/pre-placement', prePlacementRoutes);
 app.use('/api/mail-settings', require('./src/routes/mailSettings'));
 app.use('/api/vendor-portal', require('./src/routes/vendorPortal'));
 

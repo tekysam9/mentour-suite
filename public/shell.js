@@ -47,6 +47,7 @@
     { label: 'Ledger', href: '/ledger.html', icon: 'ledger', page: ['/ledger.html'], crumb: ['Dashboards', 'Ledger'] },
     { label: 'Margin', href: '/margin.html', icon: 'chart', page: ['/margin.html'], crumb: ['Dashboards', 'Margin'] },
     { section: 'People' },
+    { label: 'Pre-placement', href: '/pre-placement.html', icon: 'doc', page: ['/pre-placement.html'], crumb: ['People', 'Pre-placement'], everyone: true },
     { label: 'Onboarding', href: '/onboarding.html', icon: 'clipboard', page: ['/onboarding.html'], crumb: ['People', 'Onboarding'], badgeKey: 'pending' },
     { section: 'Directory' },
     { label: 'Consultants', href: '/directory.html#consultants', icon: 'users', page: ['/directory.html'], tab: 'consultants', rec: 'consultants', crumb: ['Directory', 'Consultants'] },
@@ -160,7 +161,7 @@
     document.getElementById('app-uname').textContent = n;
     ls('ms-role', u.role);
     if (u.role !== ROLE) { ROLE = u.role; paintNav(); }
-    if (u.role === 'recruiter' && location.pathname !== '/onboarding.html' && location.pathname !== '/help.html') location.replace('/onboarding.html');
+    if (u.role === 'recruiter' && location.pathname !== '/onboarding.html' && location.pathname !== '/pre-placement.html' && location.pathname !== '/help.html') location.replace('/onboarding.html');
     document.getElementById('app-uorg').textContent = (u.organization && u.organization.name) || '';
   }).catch(function () { /* the page itself redirects to login */ });
 

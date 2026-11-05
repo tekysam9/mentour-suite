@@ -536,3 +536,10 @@ Do these in Hostinger (they cannot be done from the code):
 - Deductions cannot be more than the invoice, cannot leave less owed than is already paid, and cannot be added or removed on an invoice marked Paid or Void.
 - **Void:** the owner or an HR admin can void an unpaid invoice (reason required). It stays on the list, greyed with a VOID badge, reason and who voided it, and is left out of Total, Paid and Unpaid on Supplier payments and the Ledger page. Use the "Voided only" filter to see them. A voided invoice can't be edited until it is restored. Voiding is blocked while any payment is recorded on it. Both actions appear in the Activity log.
 - **One step on deploy:** re-run `db/schema.sql` once (adds `voided_at`, `void_reason`, `voided_by` and a `subvendor_invoice_deductions` table; safe to re-run).
+
+## Pre-placement (People menu)
+- Collects the vendor and consultant details **while a candidate is being interviewed**: paste the Pre-Placement table from the e-mail (the app reads the labels, including the repeated Phone / E-mail rows for vendor, signer and consultant) or type it in.
+- Stages: Collecting details -> Interviewing -> Selected, or Not selected. Only a **Selected** candidate can be sent to onboarding ("Send to onboarding" creates a prefilled Onboarding draft and links it; nothing else is touched).
+- **Date of birth and SSN digits** are stored encrypted (needs `FIELD_ENCRYPTION_KEY`; without it everything else still saves), never shown in lists, and never copied to onboarding. The eye icon beside them shows what you just typed so you can check it; showing an already-saved value is owner / HR only and is written to the Activity log. Only the last 4-5 SSN digits are ever kept. Marking a candidate **Not selected** erases both values.
+- Recruiters, HR and the owner can use it. Recruiters see their own candidates; HR and the owner see everyone's.
+- **One step on deploy:** re-run `db/schema.sql` once (adds the `pre_placements` table; safe to re-run).

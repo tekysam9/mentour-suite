@@ -1005,5 +1005,5 @@ router.post('/:id/create-records', async (req, res, next) => {
   } finally { if (conn) conn.release(); }
 });
 
-router.helpers = { DOC_TYPES, DOC_MAX, parse, formStates, docList, requestView, sha256, SCHEMA_MSG, mergeProfile, companyComplete };
+router.helpers = { clean, TYPES, DOC_TYPES, DOC_MAX, parse, formStates, docList, requestView, sha256, SCHEMA_MSG, mergeProfile, companyComplete };
 module.exports = router;

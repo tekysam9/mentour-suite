@@ -3416,6 +3416,127 @@ async function main() {
           check('and is no longer asked', r.body.twoFactorRequired === false && r.body.twoFactor === true, r.body);
         } finally { srv2.kill(); await sleep(300); }
       }
+      // ---- Pre-placement information ----
+      {
+        const T = "Pre-Placement Document\tPre-Placement Document\nVendor Name\tRPAR technologies services\nVendor Address\t29 glen eagles Dr, Courtice, ON L1E 3C8, Canada\nFed Tax ID\t753132539RT0001\nIncorporated State\tOntario\nE-mail ID\tvend@ppco.test\nFax\t\nPhone\t4384483183\nSigning Authority Name\tArun Kumar Konda\nDesignation\tDirector\nPhone\t4165550101\ne-mail ID\tsigner@ppco.test\nPay Rate\tCAD 65/hr C2C\nBill Rate\tCAD 75/hr\nStart Date\t\nClient Name\tWipro\nEnd Client Name\tTD Bank\nTechnical Skill of the Candidate\tAzure Data Engineer\nProject Duration\t12 months\nDetails of the Consultant\t\nConsultant first and last Name\tPriya Pre Placement\nConsultant Date of Birth\tSeptember 3 1989\nConsultant's SSN (last 5 Digit)\t90566\nConsultant's e-mail\tpriya@ppco.test\nConsultant's cell and home number\t4384483183\nEmergency Contact Number\t6479362340\nConsultant’s Visa Status\tCanadian Citizen\nVisa Expiry Date\t23 August 2034\nWork Location\tToronto\nAddress for Laptop Shipment\t29 glen Eagles Dr, Courtice, ON L1E 3C8, Canada";
+        r = await svOwner.fetch('/api/pre-placement/parse', { method: 'POST', body: JSON.stringify({ text: T }) });
+        const pf = r.body.fields || {};
+        check('pre-placement: the pasted table is read into every field', r.status === 200 && r.body.matched.length >= 26 && r.body.unmatched.length === 0, r.body);
+        check('pre-placement: repeated Phone / E-mail rows go to vendor, signer and consultant in turn', pf.vendor_email === 'vend@ppco.test' && pf.signer_email === 'signer@ppco.test' && pf.consultant_email === 'priya@ppco.test' && pf.vendor_phone === '4384483183' && pf.signer_phone === '4165550101' && pf.consultant_phone === '4384483183', pf);
+        check('pre-placement: rates, currency, engagement and dates are understood', pf.pay_rate === 65 && pf.pay_currency === 'CAD' && pf.pay_basis === 'Hourly' && pf.engagement === 'C2C' && pf.bill_rate === 75 && pf.dob === '1989-09-03' && pf.visa_expiry === '2034-08-23' && pf.ssn_last5 === '90566', pf);
+        r = await svOwner.fetch('/api/pre-placement/parse', { method: 'POST', body: JSON.stringify({ text: T.replace(/\t/g, ': ') }) });
+        check('pre-placement: the "Label: value" form reads the same', r.status === 200 && r.body.fields.vendor_name === 'RPAR technologies services' && r.body.fields.dob === '1989-09-03', r.body.matched && r.body.matched.length);
+        r = await svOwner.fetch('/api/pre-placement/parse', { method: 'POST', body: JSON.stringify({ text: 'hello there\nnothing useful' }) });
+        check('pre-placement: text with no fields is refused (422)', r.status === 422, r.status);
+        r = await svOwner.fetch('/api/pre-placement/parse', { method: 'POST', body: JSON.stringify({ text: 'Consultant first and last Name\tX Y\nConsultant\'s SSN (last 5 Digit)\t123-45-6789' }) });
+        check('pre-placement: a full SSN pasted is cut to the last 5 digits, with a warning', r.status === 200 && r.body.fields.ssn_last5 === '56789' && r.body.warnings.length === 1, r.body);
+
+        const body = Object.assign({}, pf);
+        r = await svOwner.fetch('/api/pre-placement', { method: 'POST', body: JSON.stringify({ data: body }) });
+        const ppId = r.body.id;
+        check('pre-placement: saving creates a draft', r.status === 201 && r.body.status === 'draft' && r.body.consultantName === 'Priya Pre Placement', r.body);
+        check('pre-placement: the response never contains the date of birth or SSN digits', !JSON.stringify(r.body).includes('90566') && !JSON.stringify(r.body).includes('1989-09-03') && r.body.secretsSaved.dob === true && r.body.secretsSaved.ssn_last5 === true, r.body);
+        const [dbRow] = (await dbConn.query('SELECT data, secrets FROM pre_placements WHERE id = ?', [ppId]))[0];
+        check('pre-placement: they are stored encrypted, and not in the plain data', /^v1:/.test(dbRow.secrets) && !dbRow.secrets.includes('90566') && !dbRow.data.includes('90566') && !dbRow.data.includes('1989'), dbRow.secrets && dbRow.secrets.slice(0, 20));
+        r = await svOwner.fetch('/api/pre-placement?status=all');
+        check('pre-placement: the list shows names but no sensitive values', r.status === 200 && r.body.items.some((x) => x.id === ppId && x.vendorName === 'RPAR technologies services' && x.clientName === 'Wipro') && !JSON.stringify(r.body).includes('90566'), r.body);
+        r = await svOwner.fetch('/api/pre-placement?q=Wipro&status=all');
+        check('pre-placement: search finds it by client', r.body.items.some((x) => x.id === ppId));
+        r = await svOwner.fetch('/api/pre-placement', { method: 'POST', body: JSON.stringify({ data: { consultant_name: 'Priya Pre Placement' } }) });
+        check('pre-placement: a second one for the same person is created with a duplicate warning', r.status === 201 && r.body.similar.some((x) => x.id === ppId), r.body);
+        const dupId = r.body.id;
+        r = await svOwner.fetch('/api/pre-placement/' + dupId, { method: 'DELETE' });
+        check('pre-placement: a draft can be deleted', r.status === 200);
+        for (const [label, d] of [['no name', { vendor_name: 'x' }], ['a 9-digit SSN', { consultant_name: 'A B', ssn_last5: '123456789' }], ['a bad e-mail', { consultant_name: 'A B', consultant_email: 'nope' }], ['a bad date', { consultant_name: 'A B', start_date: '2026-13-45' }], ['a bad rate', { consultant_name: 'A B', pay_rate: 'abc' }]]) {
+          r = await svOwner.fetch('/api/pre-placement', { method: 'POST', body: JSON.stringify({ data: d }) });
+          check('pre-placement: ' + label + ' is refused (400)', r.status === 400, r.body);
+        }
+
+        // who can see / reveal
+        await svOwner.fetch('/api/onboarding/people', { method: 'POST', body: JSON.stringify({ name: 'Rita Recruiter', email: 'rita@ppco.test', password: 'Zq7d41c9e02-Lm7!', role: 'recruiter' }) });
+        const rita = makeJar();
+        await rita.fetch('/api/auth/login', { method: 'POST', body: JSON.stringify({ email: 'rita@ppco.test', password: 'Zq7d41c9e02-Lm7!' }) });
+        r = await rita.fetch('/api/pre-placement?status=all');
+        check('pre-placement: a recruiter reaches the module but sees none of the owner’s records', r.status === 200 && r.body.items.length === 0, [r.status, r.body]);
+        r = await rita.fetch('/api/pre-placement/' + ppId);
+        check('pre-placement: a recruiter cannot open someone else’s record (404)', r.status === 404, r.status);
+        r = await rita.fetch('/api/pre-placement', { method: 'POST', body: JSON.stringify({ data: { consultant_name: 'Rita Own', dob: '1990-01-02', ssn_last5: '1234' } }) });
+        const ritaId = r.body.id;
+        check('pre-placement: a recruiter can add their own', r.status === 201, r.body);
+        r = await rita.fetch('/api/pre-placement/' + ritaId + '/reveal', { method: 'POST' });
+        check('pre-placement: a recruiter cannot reveal sensitive details (403), even on their own record', r.status === 403, r.status);
+        r = await svOwner.fetch('/api/pre-placement/' + ritaId);
+        check('pre-placement: the owner can open any record', r.status === 200 && r.body.consultantName === 'Rita Own', r.status);
+        r = await svOwner.fetch('/api/pre-placement/' + ppId + '/reveal', { method: 'POST' });
+        check('pre-placement: the owner can reveal date of birth and SSN digits', r.status === 200 && r.body.dob === '1989-09-03' && r.body.ssn_last5 === '90566', r.body);
+        const [aud] = (await dbConn.query("SELECT COUNT(*) n FROM audit_log WHERE detail LIKE '%Revealed date of birth%' AND path LIKE ?", ['%/pre-placement/' + ppId + '/reveal']))[0];
+        check('pre-placement: the reveal is written to the Activity log', Number(aud.n) === 1, aud);
+        r = await otherOrgUser.fetch('/api/pre-placement/' + ppId);
+        check('pre-placement: another company cannot see it (404)', r.status === 404, r.status);
+        r = await otherOrgUser.fetch('/api/pre-placement/' + ppId + '/reveal', { method: 'POST' });
+        check('pre-placement: another company cannot reveal it (403 or 404)', r.status === 403 || r.status === 404, r.status);
+
+        // editing
+        r = await svOwner.fetch('/api/pre-placement/' + ppId, { method: 'PUT', body: JSON.stringify({ data: { vendor_name: 'RPAR Technologies Inc', start_date: '2026-12-01' } }) });
+        check('pre-placement: editing changes only what is sent', r.status === 200 && r.body.data.vendor_name === 'RPAR Technologies Inc' && r.body.data.client_name === 'Wipro' && r.body.data.start_date === '2026-12-01', r.body);
+        r = await svOwner.fetch('/api/pre-placement/' + ppId + '/reveal', { method: 'POST' });
+        check('pre-placement: the sensitive values survive an edit that does not touch them', r.body.ssn_last5 === '90566' && r.body.dob === '1989-09-03', r.body);
+        r = await svOwner.fetch('/api/pre-placement/' + ppId, { method: 'PUT', body: JSON.stringify({ data: { ssn_last5: '' } }) });
+        r = await svOwner.fetch('/api/pre-placement/' + ppId + '/reveal', { method: 'POST' });
+        check('pre-placement: an SSN can be removed, leaving the date of birth', r.body.ssn_last5 === '' && r.body.dob === '1989-09-03', r.body);
+        r = await svOwner.fetch('/api/pre-placement/' + ppId, { method: 'PUT', body: JSON.stringify({ data: { consultant_name: '' } }) });
+        check('pre-placement: the name cannot be cleared (400)', r.status === 400, r.body);
+
+        // interview stages and the hand-off to onboarding (only a SELECTED candidate goes across)
+        r = await svOwner.fetch('/api/pre-placement/' + ppId + '/send-to-onboarding', { method: 'POST', body: JSON.stringify({}) });
+        check('pre-placement: a candidate who has not been selected cannot be sent to onboarding (409)', r.status === 409 && /selected/i.test(r.body.error), r.body);
+        r = await svOwner.fetch('/api/pre-placement/' + ppId + '/status', { method: 'POST', body: JSON.stringify({ status: 'interviewing' }) });
+        check('pre-placement: can be moved to interviewing', r.status === 200 && r.body.status === 'interviewing', r.body);
+        r = await svOwner.fetch('/api/pre-placement/' + ppId + '/send-to-onboarding', { method: 'POST', body: JSON.stringify({}) });
+        check('pre-placement: still not allowed while only interviewing (409)', r.status === 409, r.body);
+        r = await svOwner.fetch('/api/pre-placement/' + ppId + '/status', { method: 'POST', body: JSON.stringify({ status: 'bogus' }) });
+        check('pre-placement: an unknown status is refused (400)', r.status === 400, r.body);
+        r = await svOwner.fetch('/api/pre-placement/' + ppId + '/status', { method: 'POST', body: JSON.stringify({ status: 'selected' }) });
+        check('pre-placement: can be marked selected', r.status === 200 && r.body.status === 'selected', r.body);
+        r = await svOwner.fetch('/api/pre-placement/' + ritaId + '/status', { method: 'POST', body: JSON.stringify({ status: 'selected' }) });
+        r = await svOwner.fetch('/api/pre-placement/' + ritaId + '/send-to-onboarding', { method: 'POST', body: JSON.stringify({}) });
+        check('pre-placement: sending needs the engagement type when it is not on the record (400)', r.status === 400, r.body);
+        r = await svOwner.fetch('/api/pre-placement/' + ppId + '/send-to-onboarding', { method: 'POST', body: JSON.stringify({}) });
+        const obId = r.body.onboardingId;
+        check('pre-placement: a selected candidate is sent to onboarding using the C2C read from the pay line', r.status === 201 && !!obId, r.body);
+        r = await svOwner.fetch('/api/onboarding/' + obId);
+        const od = JSON.stringify(r.body);
+        check('pre-placement: the onboarding is prefilled (consultant, vendor as the employer, end client, e-mail)', r.status === 200 && od.includes('Priya Pre Placement') && od.includes('RPAR Technologies Inc') && od.includes('TD Bank') && od.includes('priya@ppco.test'), od.slice(0, 300));
+        check('pre-placement: date of birth and SSN are not copied into the onboarding', !od.includes('1989-09-03') && !od.includes('90566'));
+        r = await svOwner.fetch('/api/pre-placement/' + ppId);
+        check('pre-placement: it is now marked sent to onboarding and linked', r.body.status === 'converted' && r.body.onboardingId === obId && r.body.canEdit === false, r.body);
+        r = await svOwner.fetch('/api/pre-placement/' + ppId + '/send-to-onboarding', { method: 'POST', body: JSON.stringify({}) });
+        check('pre-placement: it cannot be sent twice (409)', r.status === 409, r.body);
+        r = await svOwner.fetch('/api/pre-placement/' + ppId, { method: 'PUT', body: JSON.stringify({ data: { vendor_name: 'x' } }) });
+        check('pre-placement: a sent record can no longer be edited (409)', r.status === 409, r.body);
+        r = await svOwner.fetch('/api/pre-placement/' + ppId + '/status', { method: 'POST', body: JSON.stringify({ status: 'not_selected' }) });
+        check('pre-placement: a record already sent to onboarding cannot be marked not selected (409)', r.status === 409, r.body);
+        const [obs] = (await dbConn.query("SELECT COUNT(*) n FROM onboardings WHERE consultant_name = 'Priya Pre Placement'"))[0];
+        check('pre-placement: exactly one onboarding was created', Number(obs.n) === 1, obs);
+        // a candidate who is not selected: sensitive details erased
+        r = await svOwner.fetch('/api/pre-placement/' + ritaId + '/status', { method: 'POST', body: JSON.stringify({ status: 'not_selected', reason: 'Did not clear the technical round' }) });
+        check('pre-placement: a candidate can be marked not selected, with a reason in the history', r.status === 200 && r.body.status === 'not_selected' && r.body.log.some((l) => /Did not clear the technical round/.test(l.text)), r.body);
+        check('pre-placement: not selected erases the date of birth and SSN digits', r.body.secretsSaved.dob === false && r.body.secretsSaved.ssn_last5 === false && r.body.log.some((l) => /erased/.test(l.text)), r.body.secretsSaved);
+        const [ns] = (await dbConn.query('SELECT secrets FROM pre_placements WHERE id = ?', [ritaId]))[0];
+        check('pre-placement: the encrypted values are gone from the database', ns.secrets === null, ns);
+        r = await svOwner.fetch('/api/pre-placement/' + ritaId + '/send-to-onboarding', { method: 'POST', body: JSON.stringify({ workerType: 'W2' }) });
+        check('pre-placement: a not-selected candidate cannot be sent to onboarding (409)', r.status === 409, r.body);
+        r = await svOwner.fetch('/api/pre-placement/' + ritaId, { method: 'PUT', body: JSON.stringify({ data: { vendor_name: 'x' } }) });
+        check('pre-placement: a not-selected record cannot be edited until reopened (409)', r.status === 409, r.body);
+        r = await svOwner.fetch('/api/pre-placement/' + ritaId + '/status', { method: 'POST', body: JSON.stringify({ status: 'interviewing' }) });
+        check('pre-placement: it can be reopened to interviewing', r.status === 200 && r.body.status === 'interviewing', r.body);
+        r = await rita.fetch('/api/pre-placement/' + ritaId + '/status', { method: 'POST', body: JSON.stringify({ status: 'selected' }) });
+        check('pre-placement: a recruiter can move their own candidate through the stages', r.status === 200 && r.body.status === 'selected', r.body);
+        r = await rita.fetch('/api/pre-placement/' + ritaId, { method: 'DELETE' });
+        check('pre-placement: a recruiter cannot delete one that has left draft (403)', r.status === 403, r.status);
+        r = await rita.fetch('/api/subvendor-invoices');
+        check('pre-placement: a recruiter is still kept out of the money pages (403)', r.status === 403, r.status);
+      }
     } finally {
       await dbConn.end();
     }
