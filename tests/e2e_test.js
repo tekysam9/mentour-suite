@@ -3543,6 +3543,59 @@ async function main() {
         r = await rita.fetch('/api/pre-placement/' + ppId + '/add-vendor', { method: 'POST', body: JSON.stringify({}) });
         check('pre-placement: a recruiter cannot add the vendor of someone else’s candidate (403)', r.status === 403, r.status);
         r = await svOwner.fetch('/api/pre-placement/' + vId, { method: 'DELETE' });
+        // resume (optional)
+        const pdfB64 = Buffer.from('%PDF-1.4\n1 0 obj<<>>endobj\ntrailer<<>>\n%%EOF\n').toString('base64');
+        r = await svOwner.fetch('/api/pre-placement/' + ppId);
+        check('pre-placement: a resume is not required (none yet, and the page says it is optional)', r.body.resume === null, r.body.resume);
+        r = await svOwner.fetch('/api/pre-placement/schema');
+        check('pre-placement: the schema says a resume is not mandatory for now', r.body.resumeRequired === false, r.body);
+        r = await svOwner.fetch('/api/pre-placement/' + ppId + '/resume', { method: 'POST', body: JSON.stringify({ filename: 'resume.exe', contentBase64: pdfB64 }) });
+        check('pre-placement: only PDF / Word resumes are accepted (415)', r.status === 415, r.body);
+        r = await svOwner.fetch('/api/pre-placement/' + ppId + '/resume', { method: 'POST', body: JSON.stringify({ filename: 'resume.pdf', contentBase64: Buffer.from('not a pdf at all').toString('base64') }) });
+        check('pre-placement: a file that is not really a PDF is refused (415)', r.status === 415, r.body);
+        r = await svOwner.fetch('/api/pre-placement/' + ppId + '/resume', { method: 'POST', body: JSON.stringify({ filename: 'Priya Resume.pdf', contentBase64: pdfB64 }) });
+        check('pre-placement: a resume can be added', r.status === 201 && r.body.resume && r.body.resume.name === 'Priya Resume.pdf' && r.body.resume.size > 10 && !!r.body.resume.by, r.body);
+        const [[rdb]] = await dbConn.query('SELECT content, mime FROM pre_placement_resumes WHERE pre_placement_id = ?', [ppId]);
+        check('pre-placement: the file is stored encrypted, not as the readable PDF', rdb && !rdb.content.toString('latin1').includes('%PDF-') && rdb.mime === 'application/pdf', rdb && rdb.mime);
+        r = await svOwner.raw('/api/pre-placement/' + ppId + '/resume');
+        check('pre-placement: the resume opens as the same PDF (inline, never cached)', r.status === 200 && r.buf.toString('latin1').startsWith('%PDF-1.4') && /^inline/.test(r.headers.get('content-disposition')) && /no-store/.test(r.headers.get('cache-control')), [r.status, r.headers.get('content-disposition')]);
+        r = await rita.raw('/api/pre-placement/' + ppId + '/resume');
+        check('pre-placement: a recruiter who can see the candidate can open the resume', r.status === 200, r.status);
+        r = await rita.fetch('/api/pre-placement/' + ppId + '/resume', { method: 'POST', body: JSON.stringify({ filename: 'x.pdf', contentBase64: pdfB64 }) });
+        check('pre-placement: but not change someone else’s resume (403)', r.status === 403, r.status);
+        r = await rita.fetch('/api/pre-placement/' + ppId + '/resume', { method: 'DELETE' });
+        check('pre-placement: or remove it (403)', r.status === 403, r.status);
+        r = await svOwner.fetch('/api/pre-placement/' + ppId + '/resume', { method: 'POST', body: JSON.stringify({ filename: 'Priya Resume v2.docx', contentBase64: Buffer.concat([Buffer.from([0x50, 0x4b, 0x03, 0x04]), Buffer.from('x')]).toString('base64') }) });
+        const [[rc]] = await dbConn.query('SELECT COUNT(*) n FROM pre_placement_resumes WHERE pre_placement_id = ?', [ppId]);
+        check('pre-placement: adding another replaces it (one resume per candidate)', r.status === 201 && r.body.resume.name === 'Priya Resume v2.docx' && Number(rc.n) === 1, r.body);
+        r = await svOwner.fetch('/api/pre-placement/' + ppId);
+        check('pre-placement: the history records the resume, and the list never carries the file', r.body.log.some((l) => /Resume replaced/.test(l.text)) && !JSON.stringify(r.body).includes('contentBase64'));
+        r = await svOwner.fetch('/api/pre-placement/' + ppId + '/resume', { method: 'DELETE' });
+        check('pre-placement: the resume can be removed', r.status === 200 && r.body.resume === null, r.body);
+        r = await svOwner.fetch('/api/pre-placement/' + ppId + '/resume');
+        check('pre-placement: and is then gone (404)', r.status === 404, r.status);
+        // when the company decides a resume is mandatory (PREPLACEMENT_RESUME_REQUIRED=1): a second server on the same database
+        const srv3 = spawn('node', ['server.js'], { cwd: path.join(__dirname, '..'), env: Object.assign({}, process.env, { PORT: '3004', PREPLACEMENT_RESUME_REQUIRED: '1' }), stdio: 'pipe' });
+        try {
+          const B3 = 'http://localhost:3004'; let up3 = false;
+          for (let i = 0; i < 40 && !up3; i++) { await sleep(250); try { up3 = (await fetch(B3 + '/api/auth/me')).status === 401; } catch (e) { /* not yet */ } }
+          let ck3 = null;
+          const f3 = async (u, o = {}) => { const h = Object.assign({ 'Content-Type': 'application/json' }, ck3 ? { Cookie: ck3 } : {}); const x = await fetch(B3 + u, Object.assign({}, o, { headers: h })); const c = x.headers.get('set-cookie'); if (c) ck3 = c.split(';')[0]; let bd = null; try { bd = await x.json(); } catch (e) { /* none */ } return { status: x.status, body: bd }; };
+          await f3('/api/auth/signup', { method: 'POST', body: JSON.stringify({ orgName: 'Resume Req Co', name: 'Rex Req', email: 'rex@reqco.test', password: 'Zqb97d866a7-Lm7!' }) });
+          r = await f3('/api/pre-placement/schema');
+          check('pre-placement: the schema reports the resume as required when the setting is on', r.body.resumeRequired === true, r.body);
+          r = await f3('/api/pre-placement', { method: 'POST', body: JSON.stringify({ data: { consultant_name: 'Rae Required' } }) });
+          const rq = r.body.id;
+          check('pre-placement: even when required, a draft can still be saved without one', r.status === 201, r.body);
+          r = await f3('/api/pre-placement/' + rq + '/status', { method: 'POST', body: JSON.stringify({ status: 'interviewing' }) });
+          check('pre-placement: once required, a candidate without a resume cannot move to interviewing (409)', r.status === 409 && /resume/i.test(r.body.error), r.body);
+          await f3('/api/pre-placement/' + rq + '/resume', { method: 'POST', body: JSON.stringify({ filename: 'r.pdf', contentBase64: pdfB64 }) });
+          r = await f3('/api/pre-placement/' + rq + '/status', { method: 'POST', body: JSON.stringify({ status: 'interviewing' }) });
+          check('pre-placement: with a resume it can', r.status === 200 && r.body.status === 'interviewing', r.body);
+          r = await f3('/api/pre-placement/' + rq + '/resume', { method: 'DELETE' });
+          check('pre-placement: and the resume cannot then be removed, only replaced (409)', r.status === 409, r.body);
+        } finally { srv3.kill(); await sleep(300); }
+
         // catch-up for older pre-placements whose vendor never reached the Directory
         const mk = async (name, vendor, extra) => (await svOwner.fetch('/api/pre-placement', { method: 'POST', body: JSON.stringify({ data: Object.assign({ consultant_name: name, vendor_name: vendor }, extra || {}) }) })).body.id;
         const s1 = await mk('Sam Sync One', 'Sync Vendor LLC', { vendor_phone: '5550001111', fed_tax_id: '998877665' });

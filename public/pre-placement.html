@@ -83,7 +83,7 @@
   function route() {
     var h = location.hash.replace('#', '');
     S.msg = null; S.errors = {}; S.parsed = null; S.shown = null; S.similar = []; S.eye = {}; S.askNotSelected = false;
-    if (h === 'new') { S.isNew = true; S.rec = null; S.draft = blank(); loadSchema().then(render); return; }
+    if (h === 'new') { S.isNew = true; S.rec = null; S.pendingResume = null; S.draft = blank(); loadSchema().then(render); return; }
     if (/^\d+$/.test(h)) { openRec(h); return; }
     loadList();
   }
@@ -134,6 +134,35 @@
         : '<div class="pp-empty">Nothing here yet. Use “New pre-placement” to add one.</div>') + '</div></div>';
     if (S.refocus) { S.refocus = false; var q = document.getElementById('pp-q'); if (q) { q.focus(); q.setSelectionRange(q.value.length, q.value.length); } }
   }
+
+  // -------------------------------------------------------------- resume (optional)
+  function fmtSize(n) { n = Number(n) || 0; return n >= 1048576 ? (n / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(n / 1024)) + ' KB'; }
+  function resumeCard(rec, canEdit) {
+    var req = S.schema && S.schema.resumeRequired, h = '<div class="pp-card"><h2>Resume' + (req ? ' <span class="pp-req">*</span>' : ' <span class="pp-muted" style="font-weight:400;font-size:13px">(optional)</span>') + '</h2>';
+    var r = rec && rec.resume, url = rec ? '/api/pre-placement/' + rec.id + '/resume' : '';
+    if (r) {
+      h += '<div class="pp-actions" style="margin:0;align-items:center"><span><b>' + esc(r.name) + '</b> <span class="pp-muted">· ' + esc(fmtSize(r.size)) + (r.by ? ' · added by ' + esc(r.by) : '') + (r.at ? ' · ' + esc(fmtWhen(r.at)) : '') + '</span></span>' +
+        '<a class="pp-btn small" href="' + url + '" target="_blank" rel="noopener">View</a><a class="pp-btn small" href="' + url + '?download=1">Download</a>' +
+        (canEdit ? '<label class="pp-btn small" style="cursor:pointer">Replace<input type="file" data-act="resume-up" accept=".pdf,.doc,.docx,.rtf" hidden></label><button class="pp-btn small danger" data-act="resume-del">Remove</button>' : '') + '</div>';
+    } else if (canEdit) {
+      h += S.isNew
+        ? '<p class="pp-muted" style="margin:0 0 8px">Choose the resume now; it is attached when you save.</p><input type="file" data-act="resume-pick" accept=".pdf,.doc,.docx,.rtf">' + (S.pendingResume ? ' <span class="pp-muted">Ready to attach: ' + esc(S.pendingResume.name) + '</span>' : '')
+        : '<label class="pp-btn" style="cursor:pointer">Add resume<input type="file" data-act="resume-up" accept=".pdf,.doc,.docx,.rtf" hidden></label>';
+      h += ' <span class="pp-muted">PDF or Word (.doc, .docx), up to 10 MB. Stored encrypted.</span>';
+    } else h += '<span class="pp-muted">No resume has been added.</span>';
+    if (canEdit && !S.schema.encryptionConfigured) h += '<div class="pp-note warn" style="margin-top:8px">A resume can’t be stored yet: the server has no encryption key (FIELD_ENCRYPTION_KEY).</div>';
+    return h + '</div>';
+  }
+  function readFile(file) {
+    return new Promise(function (resolve, reject) {
+      if (file.size > 10 * 1024 * 1024) { reject(new Error('That file is larger than 10 MB.')); return; }
+      var rd = new FileReader();
+      rd.onload = function () { resolve({ name: file.name, b64: String(rd.result).split(',')[1] || '' }); };
+      rd.onerror = function () { reject(new Error('Could not read that file.')); };
+      rd.readAsDataURL(file);
+    });
+  }
+  function uploadResume(id, f) { return api('POST', '/api/pre-placement/' + id + '/resume', { filename: f.name, contentBase64: f.b64 }); }
 
   function fieldHtml(fld) {
     var v = S.draft.data[fld.key]; v = v === undefined || v === null ? '' : v;
@@ -200,6 +229,7 @@
       h += '</div>';
     });
     h += '</fieldset>';
+    h += resumeCard(rec, canEdit);
     if (canEdit) {
       h += '<div class="pp-savebar"><button class="pp-btn primary" data-act="save"' + (S.busy ? ' disabled' : '') + '>' + (S.isNew ? 'Save' : 'Save changes') + '</button>';
       if (rec) {
@@ -280,6 +310,13 @@
         var wasNew = S.isNew; S.isNew = false; setRec(r.body); S.shown = null; S.parsed = null; S.eye = {};
         note(wasNew ? 'Saved.' : 'Changes saved.', 'ok');
         if (wasNew) { history.replaceState(null, '', '#' + r.body.id); }
+        var pend = wasNew ? S.pendingResume : null; S.pendingResume = null;
+        if (pend) {
+          return uploadResume(r.body.id, pend).then(function (u) {
+            if (u.ok) { setRec(u.body); note('Saved, and the resume was attached.', 'ok'); } else note('Saved, but the resume could not be attached: ' + (u.body.error || 'try again from this page.'), 'err');
+            renderDetail(); window.scrollTo(0, 0);
+          });
+        }
         renderDetail(); window.scrollTo(0, 0);
       });
       return;
@@ -315,6 +352,15 @@
       });
       return;
     }
+    if (act === 'resume-del') {
+      if (!window.confirm('Remove this resume?')) return;
+      var keepD = S.draft;
+      api('DELETE', '/api/pre-placement/' + S.rec.id + '/resume').then(function (r) {
+        if (!r.ok) { note(r.body.error || 'Could not remove the resume.', 'err'); renderDetail(); return; }
+        setRec(r.body); S.draft = keepD; note('Resume removed.', 'ok'); renderDetail();
+      });
+      return;
+    }
     if (act === 'add-vendor') {
       api('POST', '/api/pre-placement/' + S.rec.id + '/add-vendor', {}).then(function (r) {
         if (!r.ok) { note(r.body.error || 'Could not add the vendor to the Directory.', 'err'); renderDetail(); return; }
@@ -342,6 +388,19 @@
   });
   appEl.addEventListener('change', function (e) {
     var t = e.target; if (t.tagName === 'SELECT' && t.hasAttribute('data-k')) S.draft.data[t.getAttribute('data-k')] = t.value;
+    var ra = t.getAttribute && t.getAttribute('data-act');
+    if ((ra === 'resume-up' || ra === 'resume-pick') && t.files && t.files[0]) {
+      var file = t.files[0];
+      readFile(file).then(function (f) {
+        if (ra === 'resume-pick') { S.pendingResume = f; renderDetail(); return; }
+        note('Uploading ' + f.name + '…');
+        var keep = S.draft;
+        return uploadResume(S.rec.id, f).then(function (r) {
+          if (!r.ok) { note(r.body.error || 'Could not add the resume.', 'err'); renderDetail(); return; }
+          setRec(r.body); S.draft = keep; note('Resume saved.', 'ok'); renderDetail();
+        });
+      }).catch(function (err) { note(err.message, 'err'); renderDetail(); });
+    }
   });
   appEl.addEventListener('keydown', function (e) {
     var row = e.target.closest && e.target.closest('[data-open]');

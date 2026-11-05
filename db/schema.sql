@@ -791,3 +791,19 @@ CREATE TABLE IF NOT EXISTS pre_placements (
 -- Pre-placement: the Directory supplier company created / matched from the vendor details.
 ALTER TABLE pre_placements ADD COLUMN IF NOT EXISTS supplier_id INT NULL;
 ALTER TABLE pre_placements ADD CONSTRAINT fk_prep_supplier FOREIGN KEY IF NOT EXISTS (supplier_id) REFERENCES subvendors(id) ON DELETE SET NULL;
+
+-- Pre-placement: the candidate's resume (optional for now). The file is stored encrypted in the database (not on disk:
+-- the host replaces the app folder on every deploy); the small columns on pre_placements describe it for lists and pages.
+ALTER TABLE pre_placements ADD COLUMN IF NOT EXISTS resume_name VARCHAR(255) NULL;
+ALTER TABLE pre_placements ADD COLUMN IF NOT EXISTS resume_size INT NULL;
+ALTER TABLE pre_placements ADD COLUMN IF NOT EXISTS resume_at TIMESTAMP NULL DEFAULT NULL;
+ALTER TABLE pre_placements ADD COLUMN IF NOT EXISTS resume_by VARCHAR(255) NULL;
+CREATE TABLE IF NOT EXISTS pre_placement_resumes (
+  pre_placement_id INT NOT NULL PRIMARY KEY,
+  organization_id  INT NOT NULL,
+  mime             VARCHAR(120) NOT NULL,
+  content          LONGBLOB NOT NULL,
+  FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE,
+  FOREIGN KEY (pre_placement_id) REFERENCES pre_placements(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+

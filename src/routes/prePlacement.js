@@ -13,7 +13,7 @@ const pool = require('../db');
 const { requireAuth } = require('../auth');
 const spec = require('./prePlacementSpec');
 const onboarding = require('./onboarding');
-const { isConfigured, encrypt, decrypt } = require('../crypto');
+const { isConfigured, encrypt, decrypt, encryptBuffer, decryptBuffer } = require('../crypto');
 const profiles = require('./profiles');
 const { flagLikelyDuplicates } = require('./directoryDedup');
 const { SPEC: PROFILE_SPEC } = require('./profileFields');
@@ -58,7 +58,8 @@ function secretFlags(row) {
 function present(row, req, extra) {
   return Object.assign({
     id: row.id, status: row.status, consultantName: row.consultant_name, data: parse(row.data, {}), secretsSaved: secretFlags(row),
-    onboardingId: row.onboarding_id || null, supplierId: row.supplier_id || null, log: parse(row.log, []), createdBy: row.created_by, createdAt: row.created_at, updatedAt: row.updated_at,
+    onboardingId: row.onboarding_id || null, supplierId: row.supplier_id || null,
+    resume: row.resume_name ? { name: row.resume_name, size: row.resume_size, at: row.resume_at, by: row.resume_by } : null, log: parse(row.log, []), createdBy: row.created_by, createdAt: row.created_at, updatedAt: row.updated_at,
     canReveal: isHr(req) && isConfigured(), canEdit: OPEN.includes(row.status) && mine(req, row), isMine: row.created_by_id === req.user.id,
   }, extra || {});
 }
@@ -87,7 +88,7 @@ const cols = (data) => ({
 });
 
 router.get('/schema', (req, res) => {
-  res.json({ sections: spec.SECTIONS, secretFields: spec.SECRET_FIELDS, encryptionConfigured: isConfigured(), isHr: isHr(req) });
+  res.json({ sections: spec.SECTIONS, secretFields: spec.SECRET_FIELDS, encryptionConfigured: isConfigured(), isHr: isHr(req), resumeRequired: resumeRequired(), resumeTypes: Object.keys(RESUME_TYPES) });
 });
 
 router.post('/parse', async (req, res, next) => {
@@ -202,6 +203,7 @@ router.post('/:id/status', async (req, res, next) => {
     if (!['draft', 'interviewing', 'selected', 'not_selected'].includes(to)) return res.status(400).json({ error: 'Choose draft, interviewing, selected or not selected.' });
     if (row.status === 'converted') return res.status(409).json({ error: 'This candidate has already been sent to onboarding.' });
     if (row.status === to) return res.json(present(row, req));
+    if (resumeRequired() && (to === 'interviewing' || to === 'selected') && !row.resume_name) return res.status(409).json({ error: 'Add the candidate’s resume before moving them to interviewing.' });
     const reason = String((req.body || {}).reason || '').trim().slice(0, 255);
     const notes = { draft: 'Moved back to collecting details.', interviewing: 'Marked as interviewing.', selected: 'Candidate selected — ready to send to onboarding.',
       not_selected: 'Candidate not selected / placement not going ahead' + (reason ? ': ' + reason : '') + '.' };
@@ -308,6 +310,91 @@ async function addVendorToDirectory(req, row) {
     throw err;
   } finally { conn.release(); }
 }
+
+// ------------------------------------------------------------------ resume (optional; one file per candidate)
+// PDF / Word (.doc, .docx) / RTF up to 10 MB, stored encrypted in the database. Anyone who can see the candidate can open the
+// resume; only the people who can change the candidate can add, replace or remove it. It is NOT copied into onboarding.
+// It becomes mandatory (before a candidate can move to "interviewing") by setting PREPLACEMENT_RESUME_REQUIRED=1.
+const RESUME_MAX = 10 * 1024 * 1024;
+const RESUME_TYPES = {
+  pdf: { mime: 'application/pdf', magic: (b) => b.subarray(0, 5).toString('latin1') === '%PDF-' },
+  doc: { mime: 'application/msword', magic: (b) => b.subarray(0, 8).equals(Buffer.from([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1])) },
+  docx: { mime: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', magic: (b) => b[0] === 0x50 && b[1] === 0x4b && b[2] === 0x03 && b[3] === 0x04 },
+  rtf: { mime: 'application/rtf', magic: (b) => b.subarray(0, 5).toString('latin1') === '{\\rtf' },
+};
+const resumeRequired = () => /^(1|true|yes)$/i.test(String(process.env.PREPLACEMENT_RESUME_REQUIRED || ''));
+
+router.post('/:id/resume', async (req, res, next) => {
+  let conn;
+  try {
+    const row = await load(req, res, { write: true }); if (!row) return;
+    if (!OPEN.includes(row.status)) return res.status(409).json({ error: row.status === 'converted' ? 'This candidate has already been sent to onboarding.' : 'Reopen this candidate before changing the resume.' });
+    const b = req.body || {};
+    const filename = String(b.filename || '').replace(/[\\/\r\n"]/g, '_').trim().slice(0, 200);
+    const ext = (/\.([a-z0-9]+)$/i.exec(filename) || [])[1];
+    const t = ext && RESUME_TYPES[ext.toLowerCase()];
+    if (!t) return res.status(415).json({ error: 'Upload the resume as a PDF or Word (.doc, .docx) file.' });
+    if (typeof b.contentBase64 !== 'string' || !b.contentBase64) return res.status(400).json({ error: 'Choose a file to upload.' });
+    if (b.contentBase64.length > Math.ceil(RESUME_MAX / 3) * 4 + 8) return res.status(413).json({ error: 'That file is larger than 10 MB.' });
+    const buf = Buffer.from(b.contentBase64, 'base64');
+    if (!buf.length) return res.status(400).json({ error: 'That file is empty.' });
+    if (buf.length > RESUME_MAX) return res.status(413).json({ error: 'That file is larger than 10 MB.' });
+    if (!t.magic(buf)) return res.status(415).json({ error: 'That file does not look like a real .' + ext.toLowerCase() + ' file.' });
+    if (!isConfigured()) return res.status(503).json({ error: 'The resume cannot be stored yet: the server has no encryption key (FIELD_ENCRYPTION_KEY). Nothing was saved.' });
+    const replaced = !!row.resume_name;
+    addLog(row, req, 'Resume ' + (replaced ? 'replaced' : 'added') + ' (' + filename + ', ' + Math.max(1, Math.round(buf.length / 1024)) + ' KB).');
+    conn = await pool.getConnection();
+    await conn.beginTransaction();
+    await conn.query('INSERT INTO pre_placement_resumes (pre_placement_id, organization_id, mime, content) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE mime = VALUES(mime), content = VALUES(content)', [row.id, row.organization_id, t.mime, encryptBuffer(buf)]);
+    await conn.query('UPDATE pre_placements SET resume_name = ?, resume_size = ?, resume_at = NOW(), resume_by = ?, log = ? WHERE id = ? AND organization_id = ?', [filename, buf.length, who(req), row.log, row.id, row.organization_id]);
+    await conn.commit();
+    const [rows] = await pool.query('SELECT * FROM pre_placements WHERE id = ?', [row.id]);
+    res.status(201).json(present(rows[0], req));
+  } catch (err) {
+    if (conn) { try { await conn.rollback(); } catch (e) { /* ignore */ } }
+    if (missingTable(err) || (err && err.code === 'ER_BAD_FIELD_ERROR')) return res.status(503).json({ error: SCHEMA_MSG });
+    if (err && (err.code === 'ER_NET_PACKET_TOO_LARGE' || err.code === 'EPIPE')) return res.status(413).json({ error: 'The database refused a file that large. Try a smaller file.' });
+    next(err);
+  } finally { if (conn) conn.release(); }
+});
+
+router.get('/:id/resume', async (req, res, next) => {
+  try {
+    const row = await load(req, res); if (!row) return;
+    if (!row.resume_name) return res.status(404).json({ error: 'There is no resume on this pre-placement.' });
+    const [d] = await pool.query('SELECT mime, content FROM pre_placement_resumes WHERE pre_placement_id = ? AND organization_id = ?', [row.id, row.organization_id]);
+    if (!d[0]) return res.status(404).json({ error: 'There is no resume on this pre-placement.' });
+    let buf;
+    try { buf = decryptBuffer(d[0].content); } catch (e) { return res.status(503).json({ error: 'The resume cannot be decrypted with the server’s current encryption key.' }); }
+    const mode = req.query.download || d[0].mime !== 'application/pdf' ? 'attachment' : 'inline';
+    res.set({
+      'Content-Type': d[0].mime, 'Content-Length': buf.length, 'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff',
+      'Content-Disposition': mode + '; filename="' + row.resume_name.replace(/[^\x20-\x7e]/g, '_') + '"; filename*=UTF-8\'\'' + encodeURIComponent(row.resume_name),
+    });
+    res.end(buf);
+  } catch (err) { if (missingTable(err) || (err && err.code === 'ER_BAD_FIELD_ERROR')) return res.status(404).json({ error: 'There is no resume on this pre-placement.' }); next(err); }
+});
+
+router.delete('/:id/resume', async (req, res, next) => {
+  let conn;
+  try {
+    const row = await load(req, res, { write: true }); if (!row) return;
+    if (!OPEN.includes(row.status)) return res.status(409).json({ error: 'Reopen this candidate before changing the resume.' });
+    if (!row.resume_name) return res.status(404).json({ error: 'There is no resume on this pre-placement.' });
+    if (resumeRequired() && row.status !== 'draft') return res.status(409).json({ error: 'A resume is required once a candidate is being interviewed. Replace it instead of removing it.' });
+    addLog(row, req, 'Resume removed (' + row.resume_name + ').');
+    conn = await pool.getConnection();
+    await conn.beginTransaction();
+    await conn.query('DELETE FROM pre_placement_resumes WHERE pre_placement_id = ? AND organization_id = ?', [row.id, row.organization_id]);
+    await conn.query('UPDATE pre_placements SET resume_name = NULL, resume_size = NULL, resume_at = NULL, resume_by = NULL, log = ? WHERE id = ? AND organization_id = ?', [row.log, row.id, row.organization_id]);
+    await conn.commit();
+    const [rows] = await pool.query('SELECT * FROM pre_placements WHERE id = ?', [row.id]);
+    res.json(present(rows[0], req));
+  } catch (err) {
+    if (conn) { try { await conn.rollback(); } catch (e) { /* ignore */ } }
+    next(err);
+  } finally { if (conn) conn.release(); }
+});
 
 // One-off catch-up for pre-placements saved before vendors were added to the Directory automatically (owner / HR only).
 // Skips candidates who were not selected. Several candidates with the same vendor share one supplier company.
