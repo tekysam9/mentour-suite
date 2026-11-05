@@ -787,3 +787,7 @@ CREATE TABLE IF NOT EXISTS pre_placements (
   FOREIGN KEY (onboarding_id) REFERENCES onboardings(id) ON DELETE SET NULL,
   INDEX idx_pre_placements_org_status (organization_id, status)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Pre-placement: the Directory supplier company created / matched from the vendor details.
+ALTER TABLE pre_placements ADD COLUMN IF NOT EXISTS supplier_id INT NULL;
+ALTER TABLE pre_placements ADD CONSTRAINT fk_prep_supplier FOREIGN KEY IF NOT EXISTS (supplier_id) REFERENCES subvendors(id) ON DELETE SET NULL;

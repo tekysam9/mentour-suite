@@ -199,6 +199,14 @@ const SPEC = {
         f('website', 'Website', 'url'),
         f('account_owner', 'Relationship owner', 'text'),
         f('lead_source', 'Source', 'select', { options: ['Referral', 'Job board', 'LinkedIn', 'Direct', 'Other'] }),
+        f('incorporated_state', 'Incorporated state / province', 'text'),
+        f('fax', 'Fax', 'phone'),
+      ] },
+      { title: 'Signing authority', fields: [
+        f('signer_name', 'Name', 'text'),
+        f('signer_designation', 'Designation', 'text'),
+        f('signer_phone', 'Phone', 'phone'),
+        f('signer_email', 'Email', 'email'),
       ] },
       { title: 'Primary contact', fields: [
         f('contact_name', 'Contact name', 'text'),

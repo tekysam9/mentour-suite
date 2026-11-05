@@ -179,6 +179,7 @@
     if (S.similar.length) h += '<div class="pp-note warn">Heads up — there is already an open pre-placement that looks like the same person: ' + S.similar.map(function (x) { return '<a href="#' + x.id + '">' + esc(x.name) + ' (' + esc(x.why) + ')</a>'; }).join(', ') + '.</div>';
     if (rec && rec.inDirectory) h += '<div class="pp-note warn">A consultant with this name is already in the Directory.</div>';
     if (rec && !rec.canEdit && !rec.isMine && ['draft', 'interviewing', 'selected'].indexOf(rec.status) !== -1) h += '<div class="pp-note warn">Added by ' + esc(rec.createdBy || 'another recruiter') + '. You can view it, but only they, an HR admin or the owner can change it.</div>';
+    if (rec && rec.supplierId) h += '<div class="pp-note ok">The vendor is in the Directory as a supplier company. <a href="/directory.html">Open the Directory</a>.</div>';
     if (rec && rec.status === 'converted') h += '<div class="pp-note ok">This candidate has been sent to onboarding. <a href="/onboarding.html#' + esc(rec.onboardingId) + '">Open the onboarding</a>.</div>';
     if (rec && rec.status === 'not_selected') h += '<div class="pp-note warn">This candidate was not selected. Their date of birth and SSN digits were erased. Reopen it if the placement is back on (the sensitive details would need to be entered again).</div>';
     if (canEdit) {
@@ -206,6 +207,7 @@
         if (st === 'interviewing') h += '<button class="pp-btn" data-act="status" data-to="selected">Candidate selected</button>';
         if (st === 'selected') h += '<button class="pp-btn" data-act="status" data-to="interviewing">Back to interviewing</button>';
         if (st === 'interviewing' || st === 'selected') h += '<button class="pp-btn" data-act="status" data-to="draft">Back to collecting details</button>';
+        if (rec.data && rec.data.vendor_name && st !== 'converted') h += '<button class="pp-btn" data-act="add-vendor" title="Adds the saved vendor details to the Directory as a supplier company (only blank fields are filled if it already exists)">' + (rec.supplierId ? 'Update vendor in Directory' : 'Add vendor to Directory') + '</button>';
         h += '<button class="pp-btn danger" data-act="ask-not-selected">Not selected</button>';
         if (st === 'selected') {
           h += '<span style="margin-left:auto;display:flex;gap:8px;align-items:center"><select id="pp-wt" aria-label="Engagement for onboarding"><option value="">Engagement…</option>' +
@@ -298,6 +300,16 @@
       api('POST', '/api/pre-placement/' + S.rec.id + '/send-to-onboarding', { workerType: wt }).then(function (r) {
         if (!r.ok) { note(r.body.error || 'Could not send to onboarding.', 'err'); renderDetail(); return; }
         location.href = '/onboarding.html#' + r.body.onboardingId;
+      });
+      return;
+    }
+    if (act === 'add-vendor') {
+      api('POST', '/api/pre-placement/' + S.rec.id + '/add-vendor', {}).then(function (r) {
+        if (!r.ok) { note(r.body.error || 'Could not add the vendor to the Directory.', 'err'); renderDetail(); return; }
+        var keep = S.draft; setRec(r.body.pre); S.draft = keep; // keep anything typed but not saved yet
+        var b2 = r.body;
+        note('Vendor “' + b2.name + '” ' + (b2.created ? 'added to the Directory' : 'was already in the Directory and was completed') + (b2.filled.length ? ' (filled: ' + b2.filled.join(', ') + ')' : ' (nothing new to fill)') + '.' + (b2.skipped.length ? ' Not copied: ' + b2.skipped.join('; ') + '.' : ''), 'ok');
+        renderDetail();
       });
       return;
     }

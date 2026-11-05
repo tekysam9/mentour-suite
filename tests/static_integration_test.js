@@ -152,6 +152,7 @@ async function main() {
     const helpHtml = fs.readFileSync(path.join(pubDir, 'help.html'), 'utf8');
     check('help.html filters by the signed-in role', helpHtml.includes('/api/auth/me') && helpHtml.includes('forRole(role)'));
 
+    check('pre-placement page has the Add vendor to Directory button', ppHtml.includes('data-act="add-vendor"') && ppHtml.includes('Add vendor to Directory'));
     check('home page has a Pre-placement card', fs.readFileSync(path.join(pubDir, 'index.html'), 'utf8').includes('href="/pre-placement.html"'));
     // "/" should serve index.html (express.static default)
     const rootRes = await fetch(BASE + '/');

@@ -5,14 +5,18 @@
 //     (every reveal is written to the Activity log).
 //   * A pre-placement exists while the candidate is still being interviewed: draft -> interviewing -> selected. Only a
 //     SELECTED candidate can be sent to onboarding. If the candidate is not selected, the sensitive details are erased.
-//   * Nothing here touches invoices, supplier payments or the Directory. "Send to onboarding" only creates a
-//     draft in the existing Onboarding module.
+//   * Nothing here touches invoices or supplier payments. "Add vendor to Directory" (and sending a selected candidate to
+//     onboarding) creates / completes the vendor's supplier company in the Directory, filling only blanks. "Send to
+//     onboarding" otherwise only creates a draft in the existing Onboarding module.
 const express = require('express');
 const pool = require('../db');
 const { requireAuth } = require('../auth');
 const spec = require('./prePlacementSpec');
 const onboarding = require('./onboarding');
 const { isConfigured, encrypt, decrypt } = require('../crypto');
+const profiles = require('./profiles');
+const { flagLikelyDuplicates } = require('./directoryDedup');
+const { SPEC: PROFILE_SPEC } = require('./profileFields');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -54,7 +58,7 @@ function secretFlags(row) {
 function present(row, req, extra) {
   return Object.assign({
     id: row.id, status: row.status, consultantName: row.consultant_name, data: parse(row.data, {}), secretsSaved: secretFlags(row),
-    onboardingId: row.onboarding_id || null, log: parse(row.log, []), createdBy: row.created_by, createdAt: row.created_at, updatedAt: row.updated_at,
+    onboardingId: row.onboarding_id || null, supplierId: row.supplier_id || null, log: parse(row.log, []), createdBy: row.created_by, createdAt: row.created_at, updatedAt: row.updated_at,
     canReveal: isHr(req) && isConfigured(), canEdit: OPEN.includes(row.status) && mine(req, row), isMine: row.created_by_id === req.user.id,
   }, extra || {});
 }
@@ -225,6 +229,91 @@ router.post('/:id/reveal', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+// ------------------------------------------------------------ vendor -> Directory supplier company
+// Creates the supplier company (or completes an existing one with the same name) from the vendor / signing-authority fields.
+// Only BLANK fields are filled, so nothing already in the Directory is overwritten. The tax ID is encrypted like every other
+// Directory secret and is only copied by the owner / HR.
+const PROFILE_MAP = { incorporated_state: 'incorporated_state', vendor_fax: 'fax', signer_name: 'signer_name', signer_designation: 'signer_designation', signer_phone: 'signer_phone', signer_email: 'signer_email' };
+const supplierField = (key) => PROFILE_SPEC.subvendors.sections.flatMap((s) => s.fields).find((x) => x.key === key);
+async function addVendorToDirectory(req, row) {
+  const d = parse(row.data, {});
+  const name = String(d.vendor_name || '').replace(/\s+/g, ' ').trim().slice(0, 255);
+  if (!name) return { status: 422, error: 'There is no vendor name on this pre-placement.' };
+  const orgId = row.organization_id;
+  const skipped = []; const filled = [];
+  const conn = await pool.getConnection();
+  let created = false; let id;
+  try {
+    await conn.beginTransaction();
+    const [ex] = await conn.query('SELECT id, email, phone, address FROM subvendors WHERE organization_id = ? AND LOWER(name) = LOWER(?) FOR UPDATE', [orgId, name]);
+    const core = {};
+    const email = String(d.vendor_email || '').trim(); const phone = String(d.vendor_phone || '').trim(); const address = String(d.vendor_address || '').replace(/\s+/g, ' ').trim().slice(0, 500);
+    if (email) { const c = profiles.helpers.cleanValue(supplierField('email'), email); if (c.error) skipped.push('e-mail'); else core.email = c.value; }
+    if (phone) { const c = profiles.helpers.cleanValue(supplierField('phone'), phone); if (c.error) skipped.push('phone'); else core.phone = c.value; }
+    if (address) core.address = address;
+    if (ex[0]) {
+      id = ex[0].id;
+      for (const [k, v] of Object.entries(core)) {
+        if (!ex[0][k]) { await conn.query(`UPDATE subvendors SET ${k} = ? WHERE id = ? AND organization_id = ?`, [v, id, orgId]); filled.push(k); }
+      }
+    } else {
+      const [r] = await conn.query(`INSERT INTO subvendors (organization_id, name, status, email, phone, address) VALUES (?, ?, 'active', ?, ?, ?)`, [orgId, name, core.email || null, core.phone || null, core.address || null]);
+      id = r.insertId; created = true; filled.push(...Object.keys(core));
+    }
+    // profile (extra) fields, blanks only
+    const [cur] = await conn.query(`SELECT data FROM record_profiles WHERE organization_id = ? AND entity = 'subvendors' AND record_id = ? FOR UPDATE`, [orgId, id]);
+    const prof = cur[0] ? parse(cur[0].data, {}) : {};
+    const want = Object.assign({ contact_name: d.signer_name, contact_title: d.signer_designation }, Object.fromEntries(Object.entries(PROFILE_MAP).map(([from, to]) => [to, d[from]])));
+    let pchanged = false;
+    for (const [key, raw] of Object.entries(want)) {
+      const v = String(raw || '').trim(); if (!v || prof[key]) continue;
+      const def = supplierField(key); if (!def) continue;
+      const c = profiles.helpers.cleanValue(def, v);
+      if (c.error || !c.value) { skipped.push(def.label.toLowerCase()); continue; }
+      prof[key] = c.value; pchanged = true; filled.push(def.label.toLowerCase());
+    }
+    if (pchanged) await conn.query(`INSERT INTO record_profiles (organization_id, entity, record_id, data) VALUES (?, 'subvendors', ?, ?) ON DUPLICATE KEY UPDATE data = VALUES(data)`, [orgId, id, JSON.stringify(prof)]);
+    // tax ID (encrypted)
+    const tax = String(d.fed_tax_id || '').trim();
+    if (tax) {
+      const [has] = await conn.query(`SELECT 1 FROM record_secrets WHERE organization_id = ? AND entity = 'subvendors' AND record_id = ? AND field = 'tax_id'`, [orgId, id]);
+      if (!has[0]) {
+        const clean = profiles.helpers.secretClean('taxid', tax);
+        if (!isHr(req)) skipped.push('tax ID (only HR or the owner can copy it — they can add it with “Add vendor to Directory”)');
+        else if (!isConfigured()) skipped.push('tax ID (the server has no encryption key)');
+        else if (!clean) skipped.push('tax ID (not a valid format)');
+        else { await conn.query(`INSERT INTO record_secrets (organization_id, entity, record_id, field, cipher, last4) VALUES (?, 'subvendors', ?, 'tax_id', ?, ?) ON DUPLICATE KEY UPDATE cipher = VALUES(cipher), last4 = VALUES(last4)`, [orgId, id, encrypt(clean), clean.slice(-4)]); filled.push('tax ID (encrypted)'); }
+      }
+    }
+    const uniq = Array.from(new Set(filled));
+    const text = (created ? 'Created from pre-placement #' + row.id + ' (' + (row.consultant_name || 'candidate') + ').' : 'Completed from pre-placement #' + row.id + ' (blank fields only).') + (uniq.length ? ' Filled: ' + uniq.join(', ') + '.' : '');
+    try { await conn.query(`INSERT INTO record_notes (organization_id, entity, record_id, kind, body, user_name) VALUES (?, 'subvendors', ?, 'log', ?, ?)`, [orgId, id, text, who(req)]); } catch (e) { if (!missingTable(e)) throw e; }
+    addLog(row, req, 'Vendor “' + name + '” ' + (created ? 'added to the Directory' : 'matched to the existing supplier company') + (uniq.length ? ' (' + uniq.join(', ') + ')' : '') + '.');
+    await conn.query('UPDATE pre_placements SET supplier_id = ?, log = ? WHERE id = ? AND organization_id = ?', [id, row.log, row.id, orgId]);
+    await conn.commit();
+    row.supplier_id = id;
+    if (created) flagLikelyDuplicates(pool, { organizationId: orgId, tableName: 'subvendors', newId: id, newName: name }).catch(() => {});
+    return { status: created ? 201 : 200, supplierId: id, name, created, filled: uniq, skipped };
+  } catch (err) {
+    try { await conn.rollback(); } catch (e) { /* ignore */ }
+    if (err && err.code === 'ER_DUP_ENTRY') return { status: 409, error: 'A supplier company with that name was just added. Try again.' };
+    throw err;
+  } finally { conn.release(); }
+}
+
+router.post('/:id/add-vendor', async (req, res, next) => {
+  try {
+    const row = await load(req, res, { write: true }); if (!row) return;
+    if (row.status === 'not_selected') return res.status(409).json({ error: 'This candidate was not selected. Reopen it first if you still want the vendor in the Directory.' });
+    const r = await addVendorToDirectory(req, row);
+    if (r.error) return res.status(r.status).json({ error: r.error });
+    res.status(r.status).json(Object.assign({ pre: present(row, req) }, r));
+  } catch (err) {
+    if (missingTable(err) || (err && err.code === 'ER_BAD_FIELD_ERROR')) return res.status(503).json({ error: SCHEMA_MSG });
+    next(err);
+  }
+});
+
 // Only for a SELECTED candidate (one who passed the interview). Creates a prefilled Onboarding draft (owned by whoever clicks) and links
 // it. The date of birth and SSN are NOT copied: Onboarding collects its own sensitive paperwork.
 router.post('/:id/send-to-onboarding', async (req, res, next) => {
@@ -265,6 +354,19 @@ router.post('/:id/send-to-onboarding', async (req, res, next) => {
     addLog(row, req, 'Sent to onboarding (onboarding #' + ins.insertId + ').');
     await conn.query(`UPDATE pre_placements SET status = 'converted', onboarding_id = ?, log = ? WHERE id = ? AND organization_id = ? AND status <> 'converted'`, [ins.insertId, row.log, row.id, row.organization_id]);
     await conn.commit();
+    // The vendor becomes a supplier company in the Directory (blank fields only). A problem here never undoes the hand-off.
+    if (String(d.vendor_name || '').trim()) {
+      try {
+        const fresh = Object.assign({}, row, { log: (await pool.query('SELECT log FROM pre_placements WHERE id = ?', [row.id]))[0][0].log });
+        const v = await addVendorToDirectory(req, fresh);
+        if (v.error) notes.push('Vendor was not added to the Directory: ' + v.error);
+        else {
+          notes.push('Vendor “' + v.name + '” ' + (v.created ? 'added to the Directory.' : 'was already in the Directory and was completed.'));
+          if (v.skipped.length) notes.push('Not copied to the Directory: ' + v.skipped.join('; ') + '.');
+          if (workerType === 'C2C') await pool.query('UPDATE onboardings SET supplier_id = ? WHERE id = ? AND organization_id = ? AND supplier_id IS NULL', [v.supplierId, ins.insertId, row.organization_id]).catch(() => {});
+        }
+      } catch (e) { notes.push('Vendor could not be added to the Directory automatically; use “Add vendor to Directory” on the pre-placement.'); }
+    }
     res.status(201).json({ onboardingId: ins.insertId, notes });
   } catch (err) {
     if (conn) { try { await conn.rollback(); } catch (e) { /* ignore */ } }
