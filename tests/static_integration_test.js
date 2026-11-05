@@ -52,7 +52,7 @@ async function main() {
     check('GET /import-hours.js -> 200', ihRes.status === 200, ihRes.status);
     const invHtml = await (await fetch(BASE + '/invoices.html')).text();
     const ppHtml = await (await fetch(BASE + '/pre-placement.html')).text();
-    const shellJs = await (await fetch(BASE + '/shell.js')).text();
+    let shellJs = await (await fetch(BASE + '/shell.js')).text();
     check('pre-placement page: paste box, sensitive fields behind Show, start-onboarding, and it is in the People menu',
       ppHtml.includes('id="pp-paste"') && ppHtml.includes('data-act="eye"') && ppHtml.includes("'reveal'") && ppHtml.includes('data-act="send"') && !/Start onboarding/i.test(ppHtml) && shellJs.includes('/pre-placement.html'));
     check('invoices.html has deductions with a reason and a Void / Restore control, and voided rows are left out of totals',
@@ -146,7 +146,7 @@ async function main() {
     check('help: HR admin and owner get checklist, forms, vendor link and people sections', ['owner', 'hr'].every((r) => ['onb-hr', 'checklist', 'forms', 'vendor-link', 'people', 'invoices', 'ledger'].every((k) => ids(r).includes(k))));
     check('help: owner-only blocks hidden from HR admin', !/Change anyone’s role/.test(txt('hr')) && /Change anyone’s role/.test(txt('owner')));
     check('help: an unknown role gets no sections', ids('nobody').length === 0);
-    const shellJs = fs.readFileSync(path.join(pubDir, 'shell.js'), 'utf8');
+    shellJs = fs.readFileSync(path.join(pubDir, 'shell.js'), 'utf8');
     check('shell: Help link in the menu for everyone', /label: 'Help', href: '\/help.html'[^}]*everyone: true/.test(shellJs) && shellJs.includes('n.everyone'));
     check('shell: recruiters are not redirected away from Help', shellJs.includes("location.pathname !== '/help.html'"));
     const helpHtml = fs.readFileSync(path.join(pubDir, 'help.html'), 'utf8');
