@@ -807,3 +807,29 @@ CREATE TABLE IF NOT EXISTS pre_placement_resumes (
   FOREIGN KEY (pre_placement_id) REFERENCES pre_placements(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+-- Pre-placement resumes, several versions per candidate (a candidate may send a different resume later). The newest version
+-- is the current one; the summary columns on pre_placements describe it. Files are stored encrypted. Replaces the earlier
+-- one-file table pre_placement_resumes, whose rows are moved here once (safe to re-run).
+CREATE TABLE IF NOT EXISTS pre_placement_resume_files (
+  id               INT AUTO_INCREMENT PRIMARY KEY,
+  organization_id  INT NOT NULL,
+  pre_placement_id INT NOT NULL,
+  version          INT NOT NULL,
+  filename         VARCHAR(255) NOT NULL,
+  mime             VARCHAR(120) NOT NULL,
+  size             INT NOT NULL,
+  sha256           CHAR(64) NULL,
+  content          LONGBLOB NOT NULL,
+  uploaded_by      VARCHAR(255) NULL,
+  uploaded_by_id   INT NULL,
+  uploaded_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE,
+  FOREIGN KEY (pre_placement_id) REFERENCES pre_placements(id) ON DELETE CASCADE,
+  UNIQUE KEY uq_prep_resume_version (pre_placement_id, version)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+INSERT INTO pre_placement_resume_files (organization_id, pre_placement_id, version, filename, mime, size, content, uploaded_by, uploaded_at)
+  SELECT r.organization_id, r.pre_placement_id, 1, COALESCE(p.resume_name, 'resume'), r.mime, COALESCE(p.resume_size, LENGTH(r.content)), r.content, p.resume_by, COALESCE(p.resume_at, NOW())
+  FROM pre_placement_resumes r JOIN pre_placements p ON p.id = r.pre_placement_id
+  WHERE NOT EXISTS (SELECT 1 FROM pre_placement_resume_files f WHERE f.pre_placement_id = r.pre_placement_id);
+DELETE r FROM pre_placement_resumes r WHERE EXISTS (SELECT 1 FROM pre_placement_resume_files f WHERE f.pre_placement_id = r.pre_placement_id);
+

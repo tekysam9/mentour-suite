@@ -108,6 +108,7 @@ const COMMON_TAIL = [
   item('background_check', 'Background check cleared', { group: 'Compliance', answer: 'yesno', upload: 'optional', hint: 'Choose Yes or No. Attaching the report is optional.' }),
   item('rate_confirmation', 'Rate confirmation sent and accepted', { group: 'Commercial', answer: 'yesno', hint: 'Bill rate and pay rate agreed in writing.' }),
   item('timesheet_access', 'Timesheet process and access arranged', { group: 'Setup', answer: 'yesno' }),
+  item('resume', 'Resume', { group: 'Setup', optional: true, upload: 'optional', hint: 'Copied from the pre-placement when the candidate was sent here. Optional; attach or replace it if needed.' }),
   item('client_docs', 'Client onboarding paperwork, badge and equipment', { group: 'Setup', optional: true }),
   item('directory_records', 'Directory records created', { group: 'Setup', auto: 'records', hint: 'Use “Create directory records” on this page.' }),
 ];

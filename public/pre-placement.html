@@ -83,7 +83,7 @@
   function route() {
     var h = location.hash.replace('#', '');
     S.msg = null; S.errors = {}; S.parsed = null; S.shown = null; S.similar = []; S.eye = {}; S.askNotSelected = false;
-    if (h === 'new') { S.isNew = true; S.rec = null; S.pendingResume = null; S.draft = blank(); loadSchema().then(render); return; }
+    if (h === 'new') { S.isNew = true; S.rec = null; S.pendingResume = null; S.resumes = null; S.draft = blank(); loadSchema().then(render); return; }
     if (/^\d+$/.test(h)) { openRec(h); return; }
     loadList();
   }
@@ -105,7 +105,12 @@
     S.isNew = false;
     loadSchema().then(function () { return api('GET', '/api/pre-placement/' + id); }).then(function (r) {
       if (!r.ok) { note(r.body.error || 'Could not open that one.', 'err'); S.rec = null; S.draft = null; render(); return; }
-      setRec(r.body); render();
+      setRec(r.body); S.resumes = null; render(); loadResumes(r.body.id);
+    });
+  }
+  function loadResumes(id) {
+    return api('GET', '/api/pre-placement/' + id + '/resumes').then(function (r) {
+      if (S.rec && S.rec.id === id) { S.resumes = r.ok ? r.body.versions : []; if (S.draft) renderDetail(); }
     });
   }
   function setRec(rec) { S.rec = rec; S.draft = { data: JSON.parse(JSON.stringify(rec.data || {})), secrets: { dob: '', ssn_last5: '' }, clear: {} }; S.similar = rec.similar || []; }
@@ -139,18 +144,23 @@
   function fmtSize(n) { n = Number(n) || 0; return n >= 1048576 ? (n / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(n / 1024)) + ' KB'; }
   function resumeCard(rec, canEdit) {
     var req = S.schema && S.schema.resumeRequired, h = '<div class="pp-card"><h2>Resume' + (req ? ' <span class="pp-req">*</span>' : ' <span class="pp-muted" style="font-weight:400;font-size:13px">(optional)</span>') + '</h2>';
-    var r = rec && rec.resume, url = rec ? '/api/pre-placement/' + rec.id + '/resume' : '';
-    if (r) {
-      h += '<div class="pp-actions" style="margin:0;align-items:center"><span><b>' + esc(r.name) + '</b> <span class="pp-muted">· ' + esc(fmtSize(r.size)) + (r.by ? ' · added by ' + esc(r.by) : '') + (r.at ? ' · ' + esc(fmtWhen(r.at)) : '') + '</span></span>' +
-        '<a class="pp-btn small" href="' + url + '" target="_blank" rel="noopener">View</a><a class="pp-btn small" href="' + url + '?download=1">Download</a>' +
-        (canEdit ? '<label class="pp-btn small" style="cursor:pointer">Replace<input type="file" data-act="resume-up" accept=".pdf,.doc,.docx,.rtf" hidden></label><button class="pp-btn small danger" data-act="resume-del">Remove</button>' : '') + '</div>';
-    } else if (canEdit) {
-      h += S.isNew
-        ? '<p class="pp-muted" style="margin:0 0 8px">Choose the resume now; it is attached when you save.</p><input type="file" data-act="resume-pick" accept=".pdf,.doc,.docx,.rtf">' + (S.pendingResume ? ' <span class="pp-muted">Ready to attach: ' + esc(S.pendingResume.name) + '</span>' : '')
-        : '<label class="pp-btn" style="cursor:pointer">Add resume<input type="file" data-act="resume-up" accept=".pdf,.doc,.docx,.rtf" hidden></label>';
-      h += ' <span class="pp-muted">PDF or Word (.doc, .docx), up to 10 MB. Stored encrypted.</span>';
-    } else h += '<span class="pp-muted">No resume has been added.</span>';
-    if (canEdit && !S.schema.encryptionConfigured) h += '<div class="pp-note warn" style="margin-top:8px">A resume can’t be stored yet: the server has no encryption key (FIELD_ENCRYPTION_KEY).</div>';
+    var list = rec ? (S.resumes || (rec.resume ? [{ id: 0, version: 1, name: rec.resume.name, size: rec.resume.size, by: rec.resume.by, at: rec.resume.at, current: true }] : [])) : [];
+    var base = rec ? '/api/pre-placement/' + rec.id + '/resume' : '';
+    if (list.length) {
+      h += '<table class="pp-table" style="margin-bottom:10px"><tbody>' + list.map(function (v) {
+        var u = base + (v.id ? '/' + v.id : '');
+        return '<tr><td><b>v' + esc(v.version) + '</b>' + (v.current ? ' <span class="pp-badge selected">current</span>' : '') + '</td><td>' + esc(v.name) + ' <span class="pp-muted">· ' + esc(fmtSize(v.size)) + '</span></td>' +
+          '<td class="pp-muted">' + (v.by ? esc(v.by) + ' · ' : '') + esc(fmtWhen(v.at)) + '</td><td style="white-space:nowrap"><a class="pp-btn small" href="' + u + '" target="_blank" rel="noopener">View</a> <a class="pp-btn small" href="' + u + '?download=1">Download</a>' +
+          (canEdit && v.id ? ' <button class="pp-btn small danger" data-act="resume-del" data-id="' + v.id + '">Remove</button>' : '') + '</td></tr>';
+      }).join('') + '</tbody></table>';
+      if (list.length > 1) h += '<p class="pp-muted" style="margin:0 0 8px">The current (newest) version is the one copied to onboarding. Older versions are kept until someone removes them.</p>';
+    } else if (!canEdit) h += '<span class="pp-muted">No resume has been added.</span>';
+    if (canEdit) {
+      if (S.isNew) h += '<p class="pp-muted" style="margin:0 0 8px">Choose the resume now; it is attached when you save.</p><input type="file" data-act="resume-pick" accept=".pdf,.doc,.docx,.rtf">' + (S.pendingResume ? ' <span class="pp-muted">Ready to attach: ' + esc(S.pendingResume.name) + '</span>' : '');
+      else h += '<label class="pp-btn" style="cursor:pointer">' + (list.length ? 'Upload a different version' : 'Add resume') + '<input type="file" data-act="resume-up" accept=".pdf,.doc,.docx,.rtf" hidden></label>';
+      h += ' <span class="pp-muted">PDF or Word (.doc, .docx), up to 10 MB each. Stored encrypted.</span>';
+      if (!S.schema.encryptionConfigured) h += '<div class="pp-note warn" style="margin-top:8px">A resume can’t be stored yet: the server has no encryption key (FIELD_ENCRYPTION_KEY).</div>';
+    }
     return h + '</div>';
   }
   function readFile(file) {
@@ -313,7 +323,7 @@
         var pend = wasNew ? S.pendingResume : null; S.pendingResume = null;
         if (pend) {
           return uploadResume(r.body.id, pend).then(function (u) {
-            if (u.ok) { setRec(u.body); note('Saved, and the resume was attached.', 'ok'); } else note('Saved, but the resume could not be attached: ' + (u.body.error || 'try again from this page.'), 'err');
+            if (u.ok) { setRec(u.body); S.resumes = null; loadResumes(u.body.id); note('Saved, and the resume was attached.', 'ok'); } else note('Saved, but the resume could not be attached: ' + (u.body.error || 'try again from this page.'), 'err');
             renderDetail(); window.scrollTo(0, 0);
           });
         }
@@ -353,11 +363,11 @@
       return;
     }
     if (act === 'resume-del') {
-      if (!window.confirm('Remove this resume?')) return;
-      var keepD = S.draft;
-      api('DELETE', '/api/pre-placement/' + S.rec.id + '/resume').then(function (r) {
+      if (!window.confirm('Remove this version of the resume?')) return;
+      var keepD = S.draft, rid = S.rec.id;
+      api('DELETE', '/api/pre-placement/' + rid + '/resume/' + b.getAttribute('data-id')).then(function (r) {
         if (!r.ok) { note(r.body.error || 'Could not remove the resume.', 'err'); renderDetail(); return; }
-        setRec(r.body); S.draft = keepD; note('Resume removed.', 'ok'); renderDetail();
+        setRec(r.body); S.draft = keepD; note('Resume version removed.', 'ok'); renderDetail(); loadResumes(rid);
       });
       return;
     }
@@ -397,7 +407,7 @@
         var keep = S.draft;
         return uploadResume(S.rec.id, f).then(function (r) {
           if (!r.ok) { note(r.body.error || 'Could not add the resume.', 'err'); renderDetail(); return; }
-          setRec(r.body); S.draft = keep; note('Resume saved.', 'ok'); renderDetail();
+          var rid2 = S.rec.id; setRec(r.body); S.draft = keep; note(r.body.resumeVersion > 1 ? 'Saved as version ' + r.body.resumeVersion + ' (now the current resume).' : 'Resume saved.', 'ok'); renderDetail(); loadResumes(rid2);
         });
       }).catch(function (err) { note(err.message, 'err'); renderDetail(); });
     }

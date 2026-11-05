@@ -311,11 +311,14 @@ async function addVendorToDirectory(req, row) {
   } finally { conn.release(); }
 }
 
-// ------------------------------------------------------------------ resume (optional; one file per candidate)
-// PDF / Word (.doc, .docx) / RTF up to 10 MB, stored encrypted in the database. Anyone who can see the candidate can open the
-// resume; only the people who can change the candidate can add, replace or remove it. It is NOT copied into onboarding.
-// It becomes mandatory (before a candidate can move to "interviewing") by setting PREPLACEMENT_RESUME_REQUIRED=1.
+// ------------------------------------------------------------------ resume (optional; several versions per candidate)
+// A candidate may send a different resume later, so every upload is kept as a new VERSION (v1, v2 ...); the newest is the
+// current one, older versions stay viewable until someone removes them. PDF / Word (.doc, .docx) / RTF up to 10 MB each, stored
+// encrypted. Anyone who can see the candidate can open the resumes; only the people who can change the candidate can add or remove
+// them. When the candidate is sent to onboarding the CURRENT resume is copied across. A resume becomes mandatory (before a
+// candidate can move to "interviewing") by setting PREPLACEMENT_RESUME_REQUIRED=1.
 const RESUME_MAX = 10 * 1024 * 1024;
+const RESUME_VERSIONS_MAX = 20;
 const RESUME_TYPES = {
   pdf: { mime: 'application/pdf', magic: (b) => b.subarray(0, 5).toString('latin1') === '%PDF-' },
   doc: { mime: 'application/msword', magic: (b) => b.subarray(0, 8).equals(Buffer.from([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1])) },
@@ -323,12 +326,31 @@ const RESUME_TYPES = {
   rtf: { mime: 'application/rtf', magic: (b) => b.subarray(0, 5).toString('latin1') === '{\\rtf' },
 };
 const resumeRequired = () => /^(1|true|yes)$/i.test(String(process.env.PREPLACEMENT_RESUME_REQUIRED || ''));
+const sha = (buf) => require('crypto').createHash('sha256').update(buf).digest('hex');
+const noResumeErr = (res) => res.status(404).json({ error: 'There is no such resume on this pre-placement.' });
 
+// Point the summary columns on the pre-placement at the newest remaining version (or clear them).
+async function syncResumeSummary(conn, orgId, id) {
+  const [l] = await conn.query('SELECT filename, size, uploaded_at, uploaded_by FROM pre_placement_resume_files WHERE pre_placement_id = ? AND organization_id = ? ORDER BY version DESC LIMIT 1', [id, orgId]);
+  if (l[0]) await conn.query('UPDATE pre_placements SET resume_name = ?, resume_size = ?, resume_at = ?, resume_by = ? WHERE id = ? AND organization_id = ?', [l[0].filename, l[0].size, l[0].uploaded_at, l[0].uploaded_by, id, orgId]);
+  else await conn.query('UPDATE pre_placements SET resume_name = NULL, resume_size = NULL, resume_at = NULL, resume_by = NULL WHERE id = ? AND organization_id = ?', [id, orgId]);
+}
+
+// Every version, newest first (no file contents).
+router.get('/:id/resumes', async (req, res, next) => {
+  try {
+    const row = await load(req, res); if (!row) return;
+    const [v] = await pool.query('SELECT id, version, filename, size, uploaded_by, uploaded_at FROM pre_placement_resume_files WHERE pre_placement_id = ? AND organization_id = ? ORDER BY version DESC', [row.id, row.organization_id]);
+    res.json({ versions: v.map((x, i) => ({ id: x.id, version: x.version, name: x.filename, size: x.size, by: x.uploaded_by, at: x.uploaded_at, current: i === 0 })), maxVersions: RESUME_VERSIONS_MAX });
+  } catch (err) { if (missingTable(err)) return res.json({ versions: [], maxVersions: RESUME_VERSIONS_MAX }); next(err); }
+});
+
+// Add a new version.
 router.post('/:id/resume', async (req, res, next) => {
   let conn;
   try {
     const row = await load(req, res, { write: true }); if (!row) return;
-    if (!OPEN.includes(row.status)) return res.status(409).json({ error: row.status === 'converted' ? 'This candidate has already been sent to onboarding.' : 'Reopen this candidate before changing the resume.' });
+    if (!OPEN.includes(row.status)) return res.status(409).json({ error: row.status === 'converted' ? 'This candidate has already been sent to onboarding. Add the new resume on the onboarding instead.' : 'Reopen this candidate before changing the resume.' });
     const b = req.body || {};
     const filename = String(b.filename || '').replace(/[\\/\r\n"]/g, '_').trim().slice(0, 200);
     const ext = (/\.([a-z0-9]+)$/i.exec(filename) || [])[1];
@@ -341,15 +363,23 @@ router.post('/:id/resume', async (req, res, next) => {
     if (buf.length > RESUME_MAX) return res.status(413).json({ error: 'That file is larger than 10 MB.' });
     if (!t.magic(buf)) return res.status(415).json({ error: 'That file does not look like a real .' + ext.toLowerCase() + ' file.' });
     if (!isConfigured()) return res.status(503).json({ error: 'The resume cannot be stored yet: the server has no encryption key (FIELD_ENCRYPTION_KEY). Nothing was saved.' });
-    const replaced = !!row.resume_name;
-    addLog(row, req, 'Resume ' + (replaced ? 'replaced' : 'added') + ' (' + filename + ', ' + Math.max(1, Math.round(buf.length / 1024)) + ' KB).');
+    const digest = sha(buf);
     conn = await pool.getConnection();
     await conn.beginTransaction();
-    await conn.query('INSERT INTO pre_placement_resumes (pre_placement_id, organization_id, mime, content) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE mime = VALUES(mime), content = VALUES(content)', [row.id, row.organization_id, t.mime, encryptBuffer(buf)]);
-    await conn.query('UPDATE pre_placements SET resume_name = ?, resume_size = ?, resume_at = NOW(), resume_by = ?, log = ? WHERE id = ? AND organization_id = ?', [filename, buf.length, who(req), row.log, row.id, row.organization_id]);
+    const [pl] = await conn.query('SELECT id FROM pre_placements WHERE id = ? AND organization_id = ? FOR UPDATE', [row.id, row.organization_id]); // serialises version numbers
+    if (!pl[0]) { await conn.rollback(); return res.status(404).json({ error: 'Pre-placement not found.' }); }
+    const [cur] = await conn.query('SELECT version, sha256, filename FROM pre_placement_resume_files WHERE pre_placement_id = ? AND organization_id = ? ORDER BY version DESC', [row.id, row.organization_id]);
+    if (cur[0] && cur[0].sha256 === digest) { await conn.rollback(); return res.status(409).json({ error: 'That is the same file as the current resume (version ' + cur[0].version + ', ' + cur[0].filename + ').' }); }
+    if (cur.length >= RESUME_VERSIONS_MAX) { await conn.rollback(); return res.status(409).json({ error: 'There are already ' + RESUME_VERSIONS_MAX + ' versions of this resume. Remove an old one first.' }); }
+    const version = (cur[0] ? cur[0].version : 0) + 1;
+    await conn.query('INSERT INTO pre_placement_resume_files (organization_id, pre_placement_id, version, filename, mime, size, sha256, content, uploaded_by, uploaded_by_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      [row.organization_id, row.id, version, filename, t.mime, buf.length, digest, encryptBuffer(buf), who(req), req.user.id]);
+    addLog(row, req, 'Resume ' + (version === 1 ? 'added' : 'version ' + version + ' added (now the current one)') + ' (' + filename + ', ' + Math.max(1, Math.round(buf.length / 1024)) + ' KB).');
+    await conn.query('UPDATE pre_placements SET log = ? WHERE id = ? AND organization_id = ?', [row.log, row.id, row.organization_id]);
+    await syncResumeSummary(conn, row.organization_id, row.id);
     await conn.commit();
     const [rows] = await pool.query('SELECT * FROM pre_placements WHERE id = ?', [row.id]);
-    res.status(201).json(present(rows[0], req));
+    res.status(201).json(present(rows[0], req, { resumeVersion: version }));
   } catch (err) {
     if (conn) { try { await conn.rollback(); } catch (e) { /* ignore */ } }
     if (missingTable(err) || (err && err.code === 'ER_BAD_FIELD_ERROR')) return res.status(503).json({ error: SCHEMA_MSG });
@@ -358,40 +388,51 @@ router.post('/:id/resume', async (req, res, next) => {
   } finally { if (conn) conn.release(); }
 });
 
-router.get('/:id/resume', async (req, res, next) => {
+// View / download: the current version, or one chosen by its id.
+async function sendResume(req, res, next, versionId) {
   try {
     const row = await load(req, res); if (!row) return;
-    if (!row.resume_name) return res.status(404).json({ error: 'There is no resume on this pre-placement.' });
-    const [d] = await pool.query('SELECT mime, content FROM pre_placement_resumes WHERE pre_placement_id = ? AND organization_id = ?', [row.id, row.organization_id]);
-    if (!d[0]) return res.status(404).json({ error: 'There is no resume on this pre-placement.' });
+    const [d] = versionId
+      ? await pool.query('SELECT filename, mime, content FROM pre_placement_resume_files WHERE id = ? AND pre_placement_id = ? AND organization_id = ?', [versionId, row.id, row.organization_id])
+      : await pool.query('SELECT filename, mime, content FROM pre_placement_resume_files WHERE pre_placement_id = ? AND organization_id = ? ORDER BY version DESC LIMIT 1', [row.id, row.organization_id]);
+    if (!d[0]) return noResumeErr(res);
     let buf;
     try { buf = decryptBuffer(d[0].content); } catch (e) { return res.status(503).json({ error: 'The resume cannot be decrypted with the server’s current encryption key.' }); }
     const mode = req.query.download || d[0].mime !== 'application/pdf' ? 'attachment' : 'inline';
     res.set({
       'Content-Type': d[0].mime, 'Content-Length': buf.length, 'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff',
-      'Content-Disposition': mode + '; filename="' + row.resume_name.replace(/[^\x20-\x7e]/g, '_') + '"; filename*=UTF-8\'\'' + encodeURIComponent(row.resume_name),
+      'Content-Disposition': mode + '; filename="' + d[0].filename.replace(/[^\x20-\x7e]/g, '_') + '"; filename*=UTF-8\'\'' + encodeURIComponent(d[0].filename),
     });
     res.end(buf);
-  } catch (err) { if (missingTable(err) || (err && err.code === 'ER_BAD_FIELD_ERROR')) return res.status(404).json({ error: 'There is no resume on this pre-placement.' }); next(err); }
-});
+  } catch (err) { if (missingTable(err) || (err && err.code === 'ER_BAD_FIELD_ERROR')) return noResumeErr(res); next(err); }
+}
+router.get('/:id/resume', (req, res, next) => sendResume(req, res, next, null));
+router.get('/:id/resume/:vid', (req, res, next) => { if (!/^\d+$/.test(req.params.vid)) return noResumeErr(res); return sendResume(req, res, next, Number(req.params.vid)); });
 
-router.delete('/:id/resume', async (req, res, next) => {
+// Remove one version.
+router.delete('/:id/resume/:vid', async (req, res, next) => {
   let conn;
   try {
     const row = await load(req, res, { write: true }); if (!row) return;
     if (!OPEN.includes(row.status)) return res.status(409).json({ error: 'Reopen this candidate before changing the resume.' });
-    if (!row.resume_name) return res.status(404).json({ error: 'There is no resume on this pre-placement.' });
-    if (resumeRequired() && row.status !== 'draft') return res.status(409).json({ error: 'A resume is required once a candidate is being interviewed. Replace it instead of removing it.' });
-    addLog(row, req, 'Resume removed (' + row.resume_name + ').');
+    if (!/^\d+$/.test(req.params.vid)) return noResumeErr(res);
     conn = await pool.getConnection();
     await conn.beginTransaction();
-    await conn.query('DELETE FROM pre_placement_resumes WHERE pre_placement_id = ? AND organization_id = ?', [row.id, row.organization_id]);
-    await conn.query('UPDATE pre_placements SET resume_name = NULL, resume_size = NULL, resume_at = NULL, resume_by = NULL, log = ? WHERE id = ? AND organization_id = ?', [row.log, row.id, row.organization_id]);
+    await conn.query('SELECT id FROM pre_placements WHERE id = ? AND organization_id = ? FOR UPDATE', [row.id, row.organization_id]);
+    const [all] = await conn.query('SELECT id, version, filename FROM pre_placement_resume_files WHERE pre_placement_id = ? AND organization_id = ?', [row.id, row.organization_id]);
+    const v = all.find((x) => x.id === Number(req.params.vid));
+    if (!v) { await conn.rollback(); return noResumeErr(res); }
+    if (resumeRequired() && row.status !== 'draft' && all.length === 1) { await conn.rollback(); return res.status(409).json({ error: 'A resume is required once a candidate is being interviewed. Add the new version first, then remove this one.' }); }
+    await conn.query('DELETE FROM pre_placement_resume_files WHERE id = ?', [v.id]);
+    addLog(row, req, 'Resume version ' + v.version + ' removed (' + v.filename + ').');
+    await conn.query('UPDATE pre_placements SET log = ? WHERE id = ? AND organization_id = ?', [row.log, row.id, row.organization_id]);
+    await syncResumeSummary(conn, row.organization_id, row.id);
     await conn.commit();
     const [rows] = await pool.query('SELECT * FROM pre_placements WHERE id = ?', [row.id]);
     res.json(present(rows[0], req));
   } catch (err) {
     if (conn) { try { await conn.rollback(); } catch (e) { /* ignore */ } }
+    if (missingTable(err) || (err && err.code === 'ER_BAD_FIELD_ERROR')) return res.status(503).json({ error: SCHEMA_MSG });
     next(err);
   } finally { if (conn) conn.release(); }
 });
@@ -469,6 +510,14 @@ router.post('/:id/send-to-onboarding', async (req, res, next) => {
     const [ins] = await conn.query(
       `INSERT INTO onboardings (organization_id, worker_type, status, consultant_name, start_date, data, checklist, log, created_by, created_by_id) VALUES (?, ?, 'draft', ?, ?, ?, '{}', ?, ?, ?)`,
       [req.user.organization_id, workerType, obData.consultant_name, obData.start_date || null, JSON.stringify(obData), obLog, who(req), req.user.id]);
+    // the current resume goes across as the onboarding's Resume document (same encryption key, so the sealed bytes are copied as they are)
+    const [cr] = await conn.query('SELECT id, filename, version FROM pre_placement_resume_files WHERE pre_placement_id = ? AND organization_id = ? ORDER BY version DESC LIMIT 1', [row.id, row.organization_id]);
+    if (cr[0]) {
+      await conn.query(`INSERT INTO onboarding_documents (organization_id, onboarding_id, item_key, filename, mime, size, content, uploaded_by, uploaded_by_id)
+        SELECT organization_id, ?, 'resume', filename, mime, size, content, ?, ? FROM pre_placement_resume_files WHERE id = ?`, [ins.insertId, who(req), req.user.id, cr[0].id]);
+      await conn.query('UPDATE onboardings SET log = ? WHERE id = ?', [JSON.stringify(parse(obLog, []).concat([{ at: new Date().toISOString(), by: who(req), text: 'Resume copied from the pre-placement (' + cr[0].filename + (cr[0].version > 1 ? ', version ' + cr[0].version : '') + ').' }])), ins.insertId]);
+      notes.push('Resume “' + cr[0].filename + '” copied to the onboarding.');
+    }
     addLog(row, req, 'Sent to onboarding (onboarding #' + ins.insertId + ').');
     await conn.query(`UPDATE pre_placements SET status = 'converted', onboarding_id = ?, log = ? WHERE id = ? AND organization_id = ? AND status <> 'converted'`, [ins.insertId, row.log, row.id, row.organization_id]);
     await conn.commit();

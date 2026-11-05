@@ -2182,7 +2182,7 @@ async function main() {
       // W-9 by hand (paper copy on file)
       r = await pfOwner.fetch('/api/onboarding/' + obId + '/checklist', { method: 'POST', body: JSON.stringify({ key: 'company_w9', done: true, note: 'paper copy' }) });
       ob = r.body;
-      check('only the optional item is still open', ob.checklist.filter((c) => !c.done && !c.na).map((c) => c.key).join() === 'client_docs', ob.checklist.filter((c) => !c.done).map((c) => c.key));
+      check('only the optional items (resume, client documents) are still open', ob.checklist.filter((c) => !c.done && !c.na).map((c) => c.key).join() === 'resume,client_docs', ob.checklist.filter((c) => !c.done).map((c) => c.key));
       r = await pfOwner.fetch('/api/onboarding/' + obId + '/status', { method: 'POST', body: JSON.stringify({ status: 'complete' }) });
       check('HR completes the onboarding with the optional item still open', r.status === 200 && r.body.status === 'complete' && r.body.progress.done === r.body.progress.total && r.body.checklist.find((c) => c.key === 'client_docs').done === false, r.body);
       r = await pfOwner.fetch('/api/onboarding/' + obId, { method: 'PUT', body: JSON.stringify({ data: { recruiter: 'x' } }) });
@@ -3481,6 +3481,7 @@ async function main() {
         check('pre-placement: the owner can open and change any record', r.status === 200 && r.body.canEdit === true && r.body.consultantName === 'Rita Own', r.status);
         r = await svOwner.fetch('/api/pre-placement/' + ppId + '/reveal', { method: 'POST' });
         check('pre-placement: the owner can reveal date of birth and SSN digits', r.status === 200 && r.body.dob === '1989-09-03' && r.body.ssn_last5 === '90566', r.body);
+        await sleep(400);
         const [aud] = (await dbConn.query("SELECT COUNT(*) n FROM audit_log WHERE detail LIKE '%Revealed date of birth%' AND path LIKE ?", ['%/pre-placement/' + ppId + '/reveal']))[0];
         check('pre-placement: the reveal is written to the Activity log', Number(aud.n) === 1, aud);
         r = await otherOrgUser.fetch('/api/pre-placement/' + ppId);
@@ -3555,25 +3556,41 @@ async function main() {
         check('pre-placement: a file that is not really a PDF is refused (415)', r.status === 415, r.body);
         r = await svOwner.fetch('/api/pre-placement/' + ppId + '/resume', { method: 'POST', body: JSON.stringify({ filename: 'Priya Resume.pdf', contentBase64: pdfB64 }) });
         check('pre-placement: a resume can be added', r.status === 201 && r.body.resume && r.body.resume.name === 'Priya Resume.pdf' && r.body.resume.size > 10 && !!r.body.resume.by, r.body);
-        const [[rdb]] = await dbConn.query('SELECT content, mime FROM pre_placement_resumes WHERE pre_placement_id = ?', [ppId]);
-        check('pre-placement: the file is stored encrypted, not as the readable PDF', rdb && !rdb.content.toString('latin1').includes('%PDF-') && rdb.mime === 'application/pdf', rdb && rdb.mime);
+        const [[rdb]] = await dbConn.query('SELECT content, mime, version, sha256 FROM pre_placement_resume_files WHERE pre_placement_id = ?', [ppId]);
+        check('pre-placement: the file is stored encrypted, not as the readable PDF', rdb && !rdb.content.toString('latin1').includes('%PDF-') && rdb.mime === 'application/pdf' && rdb.version === 1, rdb && rdb.mime);
         r = await svOwner.raw('/api/pre-placement/' + ppId + '/resume');
         check('pre-placement: the resume opens as the same PDF (inline, never cached)', r.status === 200 && r.buf.toString('latin1').startsWith('%PDF-1.4') && /^inline/.test(r.headers.get('content-disposition')) && /no-store/.test(r.headers.get('cache-control')), [r.status, r.headers.get('content-disposition')]);
         r = await rita.raw('/api/pre-placement/' + ppId + '/resume');
         check('pre-placement: a recruiter who can see the candidate can open the resume', r.status === 200, r.status);
         r = await rita.fetch('/api/pre-placement/' + ppId + '/resume', { method: 'POST', body: JSON.stringify({ filename: 'x.pdf', contentBase64: pdfB64 }) });
-        check('pre-placement: but not change someone else’s resume (403)', r.status === 403, r.status);
-        r = await rita.fetch('/api/pre-placement/' + ppId + '/resume', { method: 'DELETE' });
-        check('pre-placement: or remove it (403)', r.status === 403, r.status);
-        r = await svOwner.fetch('/api/pre-placement/' + ppId + '/resume', { method: 'POST', body: JSON.stringify({ filename: 'Priya Resume v2.docx', contentBase64: Buffer.concat([Buffer.from([0x50, 0x4b, 0x03, 0x04]), Buffer.from('x')]).toString('base64') }) });
-        const [[rc]] = await dbConn.query('SELECT COUNT(*) n FROM pre_placement_resumes WHERE pre_placement_id = ?', [ppId]);
-        check('pre-placement: adding another replaces it (one resume per candidate)', r.status === 201 && r.body.resume.name === 'Priya Resume v2.docx' && Number(rc.n) === 1, r.body);
+        check('pre-placement: but not add a resume to someone else’s candidate (403)', r.status === 403, r.status);
+        // several versions
+        r = await svOwner.fetch('/api/pre-placement/' + ppId + '/resume', { method: 'POST', body: JSON.stringify({ filename: 'Priya Resume again.pdf', contentBase64: pdfB64 }) });
+        check('pre-placement: the very same file is not added twice (409)', r.status === 409 && /same file/i.test(r.body.error), r.body);
+        const docxB64 = Buffer.concat([Buffer.from([0x50, 0x4b, 0x03, 0x04]), Buffer.from('second version')]).toString('base64');
+        r = await svOwner.fetch('/api/pre-placement/' + ppId + '/resume', { method: 'POST', body: JSON.stringify({ filename: 'Priya Resume v2.docx', contentBase64: docxB64 }) });
+        check('pre-placement: a different resume is added as a new version and becomes the current one', r.status === 201 && r.body.resumeVersion === 2 && r.body.resume.name === 'Priya Resume v2.docx', r.body);
+        r = await svOwner.fetch('/api/pre-placement/' + ppId + '/resumes');
+        const v1 = r.body.versions.find((x) => x.version === 1), v2 = r.body.versions.find((x) => x.version === 2);
+        check('pre-placement: both versions are listed, newest first, with the newest marked current', r.body.versions.length === 2 && r.body.versions[0].version === 2 && r.body.versions[0].current === true && v1.current === false && v1.name === 'Priya Resume.pdf', r.body);
+        r = await rita.fetch('/api/pre-placement/' + ppId + '/resumes');
+        check('pre-placement: a recruiter can see the version list', r.status === 200 && r.body.versions.length === 2, r.status);
+        r = await svOwner.raw('/api/pre-placement/' + ppId + '/resume/' + v1.id);
+        check('pre-placement: the older version can still be opened', r.status === 200 && r.buf.toString('latin1').startsWith('%PDF-1.4'), r.status);
+        r = await svOwner.raw('/api/pre-placement/' + ppId + '/resume');
+        check('pre-placement: “the resume” is the newest version (a download for Word files)', r.status === 200 && r.buf.toString('latin1').includes('second version') && /^attachment/.test(r.headers.get('content-disposition')), r.headers.get('content-disposition'));
+        r = await rita.fetch('/api/pre-placement/' + ppId + '/resume/' + v1.id, { method: 'DELETE' });
+        check('pre-placement: a recruiter cannot remove a version of someone else’s candidate (403)', r.status === 403, r.status);
+        r = await svOwner.fetch('/api/pre-placement/' + ppId + '/resume/999999', { method: 'DELETE' });
+        check('pre-placement: removing a version that does not exist is a 404', r.status === 404, r.status);
+        r = await svOwner.fetch('/api/pre-placement/' + ppId + '/resume/' + v2.id, { method: 'DELETE' });
+        check('pre-placement: removing the newest version makes the previous one current again', r.status === 200 && r.body.resume && r.body.resume.name === 'Priya Resume.pdf', r.body);
         r = await svOwner.fetch('/api/pre-placement/' + ppId);
-        check('pre-placement: the history records the resume, and the list never carries the file', r.body.log.some((l) => /Resume replaced/.test(l.text)) && !JSON.stringify(r.body).includes('contentBase64'));
-        r = await svOwner.fetch('/api/pre-placement/' + ppId + '/resume', { method: 'DELETE' });
-        check('pre-placement: the resume can be removed', r.status === 200 && r.body.resume === null, r.body);
-        r = await svOwner.fetch('/api/pre-placement/' + ppId + '/resume');
-        check('pre-placement: and is then gone (404)', r.status === 404, r.status);
+        check('pre-placement: the history records the versions', r.body.log.some((l) => /version 2 added/.test(l.text)) && r.body.log.some((l) => /version 2 removed/.test(l.text)) && !JSON.stringify(r.body).includes('contentBase64'));
+        r = await svOwner.fetch('/api/pre-placement/' + ppId + '/resume', { method: 'POST', body: JSON.stringify({ filename: 'Priya Final Resume.docx', contentBase64: Buffer.concat([Buffer.from([0x50, 0x4b, 0x03, 0x04]), Buffer.from('final version')]).toString('base64') }) });
+        check('pre-placement: a later upload continues the numbering from the newest remaining version', r.status === 201 && r.body.resumeVersion === 2 && r.body.resume.name === 'Priya Final Resume.docx', r.body);
+        r = await svOwner.fetch('/api/pre-placement/' + ppId + '/resume/12345678');
+        check('pre-placement: an unknown version id is a 404', r.status === 404, r.status);
         // when the company decides a resume is mandatory (PREPLACEMENT_RESUME_REQUIRED=1): a second server on the same database
         const srv3 = spawn('node', ['server.js'], { cwd: path.join(__dirname, '..'), env: Object.assign({}, process.env, { PORT: '3004', PREPLACEMENT_RESUME_REQUIRED: '1' }), stdio: 'pipe' });
         try {
@@ -3592,8 +3609,9 @@ async function main() {
           await f3('/api/pre-placement/' + rq + '/resume', { method: 'POST', body: JSON.stringify({ filename: 'r.pdf', contentBase64: pdfB64 }) });
           r = await f3('/api/pre-placement/' + rq + '/status', { method: 'POST', body: JSON.stringify({ status: 'interviewing' }) });
           check('pre-placement: with a resume it can', r.status === 200 && r.body.status === 'interviewing', r.body);
-          r = await f3('/api/pre-placement/' + rq + '/resume', { method: 'DELETE' });
-          check('pre-placement: and the resume cannot then be removed, only replaced (409)', r.status === 409, r.body);
+          const vs3 = (await f3('/api/pre-placement/' + rq + '/resumes')).body.versions;
+          r = await f3('/api/pre-placement/' + rq + '/resume/' + vs3[0].id, { method: 'DELETE' });
+          check('pre-placement: and the only resume cannot then be removed (409)', r.status === 409, r.body);
         } finally { srv3.kill(); await sleep(300); }
 
         // catch-up for older pre-placements whose vendor never reached the Directory
@@ -3631,6 +3649,11 @@ async function main() {
         const od = JSON.stringify(r.body);
         check('pre-placement: the onboarding is prefilled (consultant, vendor as the employer, end client, e-mail)', r.status === 200 && od.includes('Priya Pre Placement') && od.includes('RPAR Technologies Inc') && od.includes('TD Bank') && od.includes('priya@ppco.test'), od.slice(0, 300));
         check('pre-placement: date of birth and SSN are not copied into the onboarding', !od.includes('1989-09-03') && !od.includes('90566'));
+        const rcItem = (r.body.checklist || []).find((c) => c.key === 'resume');
+        check('pre-placement: the current resume was copied to the onboarding’s Resume item', rcItem && rcItem.optional === true && rcItem.documents.length === 1 && rcItem.documents[0].filename === 'Priya Final Resume.docx', rcItem);
+        const rcDoc = await svOwner.raw('/api/onboarding/' + obId + '/documents/' + rcItem.documents[0].id);
+        check('pre-placement: the copied resume opens on the onboarding with the same content', rcDoc.status === 200 && rcDoc.buf.toString('latin1').includes('final version'), rcDoc.status);
+        check('pre-placement: the onboarding history says where the resume came from, and it does not block completing it', /Resume copied/.test(od) && (r.body.checklist.filter((c) => c.key === 'resume')[0].optional === true));
         r = await svOwner.fetch('/api/pre-placement/' + ppId);
         check('pre-placement: it is now marked sent to onboarding and linked', r.body.status === 'converted' && r.body.onboardingId === obId && r.body.canEdit === false, r.body);
         r = await svOwner.fetch('/api/pre-placement/' + ppId + '/send-to-onboarding', { method: 'POST', body: JSON.stringify({}) });
