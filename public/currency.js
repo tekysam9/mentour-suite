@@ -20,3 +20,16 @@ function curSelectHtml(attr, value, extra) {
   return '<select ' + attr + ' class="fin-cur-select" aria-label="Currency" title="Currency" style="width:auto;min-width:62px;font-size:12px;padding:2px"' + (extra || '') + '>' +
     CUR_LIST.map(function (k) { return '<option value="' + k + '"' + (curCode(value) === k ? ' selected' : '') + '>' + k + '</option>'; }).join('') + '</select>';
 }
+
+// Same map, but each currency is labelled with its code so the split is obvious.
+// stacked (default): one line per currency; inline: side by side. Never adds across currencies.
+var CUR_TINT = { USD: '#E8F0FE', CAD: '#FDE7E7', INR: '#FFF1DB' };
+function curSumHtml(map, short, inline) {
+  var keys = CUR_LIST.filter(function (k) { return map && Math.abs(map[k] || 0) > 0.004; });
+  if (!keys.length) keys = ['USD'], map = { USD: 0 };
+  return keys.map(function (k) {
+    return '<span class="fin-cur-amt" style="display:' + (inline ? 'inline-flex' : 'flex') + ';gap:6px;align-items:baseline;justify-content:' + (inline ? 'flex-start' : 'flex-end') + ';white-space:nowrap;' + (inline ? 'margin-right:10px' : '') + '">' +
+      '<span title="' + k + ' total" style="font-size:10px;font-weight:700;letter-spacing:.4px;padding:1px 5px;border-radius:4px;color:#33414E;background:' + CUR_TINT[k] + '">' + k + '</span>' +
+      '<span>' + (short ? curShort(map[k], k) : curMoney(map[k], k)) + '</span></span>';
+  }).join('');
+}

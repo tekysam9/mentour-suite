@@ -189,7 +189,7 @@ function renderHxTab() {
       : '<strong>Preview only — nothing has been created yet.</strong> ') +
       'Check the numbers below, then apply.</div>';
     out += '<div class="hist-cards">' +
-      hxCard('Invoices to create', hxNum(sm.willCreate), (sm.totalByCurrency ? curSum(sm.totalByCurrency) : hxMoney(sm.totalAmount)) + ' · ' + hxNum(sm.totalHours) + ' hrs') +
+      hxCard('Invoices to create', hxNum(sm.willCreate), (sm.totalByCurrency ? curSumHtml(sm.totalByCurrency, false, true) : hxMoney(sm.totalAmount)) + ' · ' + hxNum(sm.totalHours) + ' hrs') +
       hxCard('0-hour invoices to fill', hxNum(sm.willFill), 'existing, no hours yet') +
       hxCard('Already have hours', hxNum(sm.skippedExisting), 'left untouched') +
       hxCard('Not invoiced', hxNum(sm.issues), 'see the lists below') +
@@ -207,7 +207,7 @@ function renderHxTab() {
     }
 
     out += hxDetails('Invoices to create, by invoice year', p.byYear.length, ['Year', 'Invoices', 'Hours', 'Amount'], p.byYear.map(function (y) {
-      return '<tr><td>' + y.year + '</td><td class="fin-num">' + hxNum(y.invoices) + '</td><td class="fin-num">' + hxNum(y.hours) + '</td><td class="fin-num">' + (y.amounts ? curSum(y.amounts) : hxMoney(y.amount)) + '</td></tr>';
+      return '<tr><td>' + y.year + '</td><td class="fin-num">' + hxNum(y.invoices) + '</td><td class="fin-num">' + hxNum(y.hours) + '</td><td class="fin-num">' + (y.amounts ? curSumHtml(y.amounts, false, true) : hxMoney(y.amount)) + '</td></tr>';
     }).join(''), true);
 
     var notes = p.notes;

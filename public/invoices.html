@@ -315,7 +315,7 @@
 
   // Total / Paid / Unpaid for the rows being shown
   function paySummaryStrip(label, total, paid, unpaid, nPaid, nUnpaid) {
-    var chip = function (l, v, n, color) { return '<span style="display:inline-flex;gap:6px;align-items:baseline;margin-right:26px"><span style="color:#5E6A75;font-size:12px">' + l + (n !== null ? ' (' + n + ')' : '') + '</span><b style="font-size:17px;color:' + color + '">' + ((v && typeof v === 'object') ? curSum(v) : '$' + money(v)) + '</b></span>'; };
+    var chip = function (l, v, n, color) { return '<span style="display:inline-flex;gap:6px;align-items:baseline;margin-right:26px"><span style="color:#5E6A75;font-size:12px">' + l + (n !== null ? ' (' + n + ')' : '') + '</span><b style="font-size:17px;color:' + color + '">' + ((v && typeof v === 'object') ? curSumHtml(v, false, true) : '$' + money(v)) + '</b></span>'; };
     return '<div class="fin-pay-summary" style="display:flex;flex-wrap:wrap;align-items:baseline;gap:4px;padding:10px 16px;margin:0 0 10px;background:#F7FAFE;border:1px solid var(--line);border-radius:8px">' +
       '<span style="font-size:12px;color:#5E6A75;margin-right:18px">' + label + '</span>' +
       chip('Total', total, nPaid + nUnpaid, 'var(--ink)') + chip('Paid', paid, nPaid, '#1B7A3A') + chip('Unpaid', unpaid, nUnpaid, ((unpaid && typeof unpaid === 'object') ? Object.keys(unpaid).some(function (k) { return Math.abs(unpaid[k]) > 0.004; }) : unpaid) ? '#B3261E' : 'var(--ink)') + '</div>';
@@ -344,8 +344,8 @@
     var anyAmt = function (m) { return Object.keys(m).some(function (k) { return Math.abs(m[k]) > 0.004; }); };
     var sumCells = function (label, hours, amount, cls, paid, unpaid) {
       return '<tr class="' + cls + '"><td colspan="7" style="text-align:right">' + label + '</td>' +
-        '<td class="fin-num">' + fmtHours(hours) + ' h</td><td class="fin-num">' + curSum(amount) + '</td><td colspan="' + (COLS - 9) + '" style="font-weight:600;font-size:12px">' +
-        '<span style="color:#1B7A3A">Paid ' + curSum(paid) + '</span> · <span style="color:' + (anyAmt(unpaid) ? '#B3261E' : 'inherit') + '">Unpaid ' + curSum(unpaid) + '</span></td></tr>';
+        '<td class="fin-num">' + fmtHours(hours) + ' h</td><td class="fin-num">' + curSumHtml(amount) + '</td><td colspan="' + (COLS - 9) + '" style="font-weight:600;font-size:12px">' +
+        '<span style="color:#1B7A3A">Paid ' + curSumHtml(paid, false, true) + '</span> · <span style="color:' + (anyAmt(unpaid) ? '#B3261E' : 'inherit') + '">Unpaid ' + curSumHtml(unpaid, false, true) + '</span></td></tr>';
     };
     var body = groups.map(function (g) {
       var h = 0, a = {}, gp = {}, gu = {};
@@ -749,7 +749,7 @@
         '<th>Hours</th><th>Amount</th><th>Net terms</th><th>Issue date</th><th>Due date</th><th>Payment</th><th>Paid on</th><th>Timesheet</th><th>Notes</th><th>Source</th><th></th>' +
       '</tr></thead><tbody>' +
       pageRows.map(function (inv, i) { return svRow(inv, from + i); }).join('') +
-      '<tr class="fin-total-row"><td colspan="7">Total (' + shown.length + ')</td><td class="fin-num">' + curSum(total) + '</td><td colspan="7" style="font-size:12px"><span style="color:#1B7A3A">Paid ' + curSum(paid) + '</span> · <span style="color:' + (Object.keys(unpaid).some(function (k) { return Math.abs(unpaid[k]) > 0.004; }) ? '#B3261E' : 'inherit') + '">Unpaid ' + curSum(unpaid) + '</span></td></tr>' +
+      '<tr class="fin-total-row"><td colspan="7">Total (' + shown.length + ')</td><td class="fin-num">' + curSumHtml(total) + '</td><td colspan="7" style="font-size:12px"><span style="color:#1B7A3A">Paid ' + curSumHtml(paid, false, true) + '</span> · <span style="color:' + (Object.keys(unpaid).some(function (k) { return Math.abs(unpaid[k]) > 0.004; }) ? '#B3261E' : 'inherit') + '">Unpaid ' + curSumHtml(unpaid, false, true) + '</span></td></tr>' +
       '</tbody></table></div>' + pager
     );
   }

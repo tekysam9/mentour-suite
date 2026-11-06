@@ -52,7 +52,7 @@ function histCurCard(s, which) {
   if (!s.amounts) return histMoney(which === 'billed' ? s.amount : which === 'paid' ? s.amount - s.unpaidAmount : s.unpaidAmount);
   var m = {};
   Object.keys(s.amounts).forEach(function (k) { m[k] = which === 'billed' ? s.amounts[k] : which === 'paid' ? s.amounts[k] - (s.unpaidAmounts[k] || 0) : (s.unpaidAmounts[k] || 0); });
-  return curSum(m);
+  return curSumHtml(m, false, true);
 }
 function histOnePct(s, which) {
   if (!s.amounts || Object.keys(s.amounts).length !== 1) return '';
@@ -102,7 +102,7 @@ function renderHistoryTab() {
     d.years.map(function (y) {
       var on = String(y.year) === String(h.year);
       return '<button type="button" class="hist-chip' + (on ? ' on' : '') + '" aria-pressed="' + on + '" data-hist-year="' + y.year + '">' + y.year +
-        '<span>' + histFmt(y.invoices) + ' · ' + (y.amounts ? curSum(y.amounts, true) : histShort(y.amount)) + '</span></button>';
+        '<span>' + histFmt(y.invoices) + ' · ' + (y.amounts ? curSumHtml(y.amounts, true, true) : histShort(y.amount)) + '</span></button>';
     }).join('') + '</div>';
 
   // Month tiles
@@ -115,7 +115,7 @@ function renderHistoryTab() {
     HIST_MONTHS.map(function (name, i) {
       var m = byMonth[i + 1], on = String(h.month) === String(i + 1);
       return '<button type="button" class="hist-month' + (on ? ' on' : '') + (m ? '' : ' empty') + '" aria-pressed="' + on + '" data-hist-month="' + (i + 1) + '">' +
-        '<b>' + name.slice(0, 3) + '</b>' + (m ? '<span>' + histFmt(m.invoices) + ' · ' + (m.amounts ? curSum(m.amounts, true) : histShort(m.amount)) + '</span>' : '<span>none</span>') + '</button>';
+        '<b>' + name.slice(0, 3) + '</b>' + (m ? '<span>' + histFmt(m.invoices) + ' · ' + (m.amounts ? curSumHtml(m.amounts, true, true) : histShort(m.amount)) + '</span>' : '<span>none</span>') + '</button>';
     }).join('') + '</div>';
 
   // Filters
