@@ -12,6 +12,8 @@
 const US_STATES = ['AL','AK','AZ','AR','CA','CO','CT','DE','DC','FL','GA','HI','ID','IL','IN','IA','KS','KY','LA','ME','MD','MA','MI','MN','MS','MO','MT','NE','NV','NH','NJ','NM','NY','NC','ND','OH','OK','OR','PA','RI','SC','SD','TN','TX','UT','VT','VA','WA','WV','WI','WY'];
 const RATE_BASIS = ['Hourly', 'Daily', 'Monthly', 'Annual'];
 const YES_NO = ['Yes', 'No'];
+const C = require('../countries');
+const REGIONS = { 'United States': US_STATES, Canada: C.CA_PROVINCES, India: C.IN_STATES };
 const f = (key, label, kind, extra) => Object.assign({ key, label, kind }, extra || {});
 
 const WORKER_TYPES = [
@@ -23,12 +25,13 @@ const WORKER_TYPES = [
 const SECTIONS = [
   { key: 'consultant', title: 'Consultant', fields: [
     f('consultant_name', 'Consultant name', 'text', { required: true }),
+    f('country', 'Country', 'select', { options: C.COUNTRIES, help: 'Where the consultant is based and paid. Changes the address fields, currency and paperwork below. Blank = United States.' }),
     f('phone', 'Contact number', 'phone'),
     f('email', 'Email', 'email'),
     f('technical_skill', 'Technical skill', 'text'),
-    f('work_authorization', 'Work authorization', 'select', { options: ['US citizen', 'Green card', 'H-1B', 'L-1', 'OPT / CPT', 'TN', 'EAD', 'Other'] }),
-    f('h1b_filing_required', 'H-1B filing required', 'select', { options: YES_NO, required: true }),
-    f('visa_expiry', 'Visa / work authorization expiry', 'date'),
+    f('work_authorization', 'Work authorization', 'select', { options: ['US citizen', 'Green card', 'H-1B', 'L-1', 'OPT / CPT', 'TN', 'EAD', 'Other'], byCountry: { Canada: { options: ['Canadian citizen', 'Permanent resident', 'Work permit', 'Other'] }, India: { options: ['Indian citizen', 'OCI', 'Work visa', 'Other'] } } }),
+    f('h1b_filing_required', 'H-1B filing required', 'select', { options: YES_NO, required: true, byCountry: { Canada: { help: 'Choose No unless the consultant is being moved to the US.' }, India: { help: 'Choose No unless the consultant is being moved to the US.' } } }),
+    f('visa_expiry', 'Visa / work authorization expiry', 'date', { byCountry: { Canada: { label: 'Work permit expiry' }, India: { label: 'Visa expiry' } } }),
     f('emergency_contact', 'Emergency contact (name, relationship, phone)', 'text', { wide: true }),
     f('laptop_address', 'Address for laptop shipment', 'text', { wide: true }),
   ] },
@@ -37,13 +40,15 @@ const SECTIONS = [
     f('duration', 'Project duration', 'text', { help: 'e.g. 12 months' }),
     f('end_client', 'End client', 'text', { required: true, help: 'As you write it in the e-mail, e.g. "CDW / OCC".' }),
     f('bill_to', 'Bill to (customer: T1 / end client)', 'text'),
-    f('location', 'Project location (state and city)', 'text', { help: 'Or "Remote".' }),
+    f('location', 'Project location (state and city)', 'text', { help: 'Or "Remote".', byCountry: { Canada: { label: 'Project location (province and city)' } } }),
   ] },
   { key: 'rates', title: 'Rates', fields: [
     f('bill_rate', 'Bill rate', 'number', { required: true }),
+    f('bill_currency', 'Bill currency', 'select', { options: C.CURRENCIES, help: 'Blank = USD for a US consultant, the country’s currency otherwise.' }),
     f('bill_rate_basis', 'Bill rate basis', 'select', { options: RATE_BASIS }),
     f('pay_to', 'Pay to (consultant / vendor)', 'text'),
     f('pay_rate', 'Pay rate', 'number', { required: true }),
+    f('pay_currency', 'Pay currency', 'select', { options: C.CURRENCIES, help: 'The final cost below is in this currency. Margin is only worked out when bill and pay currency are the same.' }),
     f('pay_rate_basis', 'Pay rate basis', 'select', { options: RATE_BASIS }),
     f('final_cost', 'Final cost (if different from pay rate)', 'number', { help: 'Pay rate plus any burden, fees or vendor mark-up. Margin is worked out on this when filled in.' }),
   ] },
@@ -66,11 +71,11 @@ const SECTIONS = [
     f('employer_phone', 'Company phone', 'phone'),
     f('employer_address', 'Street address', 'text'),
     f('employer_city', 'City', 'text'),
-    f('employer_state', 'State', 'select', { options: US_STATES }),
-    f('employer_zip', 'ZIP', 'text'),
+    f('employer_state', 'State', 'select', { regions: true, options: US_STATES, byCountry: { Canada: { label: 'Province / territory' }, India: { label: 'State / UT' } } }),
+    f('employer_zip', 'ZIP', 'text', { byCountry: { Canada: { label: 'Postal code', help: 'e.g. M5V 2T6' }, India: { label: 'PIN code', help: '6 digits' } } }),
     f('employer_fax', 'Company fax', 'phone'),
     f('employer_incorporated_state', 'Incorporated state / province', 'text'),
-    f('employer_tax_id', 'Federal tax ID (EIN)', 'text', { help: 'Copied (encrypted) to the supplier company when the directory records are created.' }),
+    f('employer_tax_id', 'Federal tax ID (EIN)', 'text', { help: 'Copied (encrypted) to the supplier company when the directory records are created.', byCountry: { Canada: { label: 'Business Number (BN) / GST-HST number' }, India: { label: 'Company PAN / GSTIN' } } }),
     f('signer_name', 'Signing authority: name', 'text'),
     f('signer_designation', 'Signing authority: designation', 'text'),
     f('signer_phone', 'Signing authority: phone', 'phone'),
@@ -81,13 +86,13 @@ const SECTIONS = [
     f('employment_type', 'Employment type', 'select', { options: ['Full-time', 'Part-time'] }),
     f('flsa_status', 'Overtime status', 'select', { options: ['Non-exempt (overtime eligible)', 'Exempt'] }),
     f('pay_frequency', 'Pay frequency', 'select', { options: ['Weekly', 'Bi-weekly', 'Semi-monthly', 'Monthly'] }),
-    f('work_state', 'State of work (for tax withholding)', 'select', { options: US_STATES, required: true }),
+    f('work_state', 'State of work (for tax withholding)', 'select', { regions: true, options: US_STATES, required: true, byCountry: { Canada: { label: 'Province of work (for tax withholding)' }, India: { label: 'State of work (for tax)' } } }),
     f('benefits_eligible', 'Benefits eligible', 'select', { options: YES_NO }),
     f('offer_date', 'Offer letter date', 'date'),
     f('address', 'Home street address', 'text'),
     f('city', 'City', 'text'),
-    f('state', 'State', 'select', { options: US_STATES }),
-    f('zip', 'ZIP', 'text'),
+    f('state', 'State', 'select', { regions: true, options: US_STATES, byCountry: { Canada: { label: 'Province / territory' }, India: { label: 'State / UT' } } }),
+    f('zip', 'ZIP', 'text', { byCountry: { Canada: { label: 'Postal code', help: 'e.g. M5V 2T6' }, India: { label: 'PIN code', help: '6 digits' } } }),
   ] },
   { key: 'contractor', title: 'Contractor details', types: ['1099'], fields: [
     f('business_name', 'Business name / DBA (if any)', 'text'),
@@ -95,8 +100,8 @@ const SECTIONS = [
     f('payment_terms', 'Payment terms', 'select', { options: ['Due on receipt', 'Net 15', 'Net 30', 'Net 45', 'Net 60'] }),
     f('address', 'Street address', 'text'),
     f('city', 'City', 'text'),
-    f('state', 'State', 'select', { options: US_STATES }),
-    f('zip', 'ZIP', 'text'),
+    f('state', 'State', 'select', { regions: true, options: US_STATES, byCountry: { Canada: { label: 'Province / territory' }, India: { label: 'State / UT' } } }),
+    f('zip', 'ZIP', 'text', { byCountry: { Canada: { label: 'Postal code', help: 'e.g. M5V 2T6' }, India: { label: 'PIN code', help: '6 digits' } } }),
   ] },
 ];
 
@@ -112,6 +117,15 @@ const WITHDRAW_REASONS = [
 ];
 const sectionsFor = (type) => SECTIONS.filter((s) => !s.types || s.types.includes(type));
 const fieldsFor = (type) => sectionsFor(type).flatMap((s) => s.fields);
+// A field as it applies to one country: its label / help / options (and region list) swapped for that country's.
+function effective(fld, country) {
+  const out = Object.assign({}, fld, (fld.byCountry || {})[country] || {});
+  if (fld.regions) out.options = REGIONS[country] || US_STATES;
+  delete out.byCountry;
+  return out;
+}
+// The currency a rate is in: what was chosen, else the country's own currency.
+const currencyOf = (d, side) => (d && d[side + '_currency']) || C.CURRENCY[C.countryOf(d)];
 
 // ---------------------------------------------------------------- checklist
 // form: a fillable form in this app (auto-ticks when fully signed)
@@ -141,44 +155,61 @@ const H1B = item('h1b_petition', 'H-1B petition filed', { group: 'Compliance', w
 const CHECKLISTS = {
   W2: [
     item('offer_letter', 'Offer letter sent and signed', { group: 'Paperwork' }),
-    item('w4', 'Form W-4 (federal withholding)', { group: 'Paperwork', form: 'w4', on: 'consultant' }),
-    item('i9', 'Form I-9 (employment eligibility)', { group: 'Paperwork', form: 'i9', on: 'consultant', hint: 'Employee completes Section 1 by day one; the employer completes Section 2 within 3 business days of the start date.' }),
-    item('state_withholding', 'State withholding form', { group: 'Paperwork', hint: 'The state form for the state of work, if it has one.' }),
-    item('direct_deposit', 'Direct deposit details collected', { group: 'Paperwork', form: 'banking', on: 'consultant', formOnly: true, hint: 'The ACH / Wire banking authorization form on the consultant, filled in and signed. Needs the directory records.' }),
+    item('w4', 'Form W-4 (federal withholding)', { group: 'Paperwork', form: 'w4', on: 'consultant', countries: ['United States'] }),
+    item('i9', 'Form I-9 (employment eligibility)', { group: 'Paperwork', form: 'i9', on: 'consultant', countries: ['United States'], hint: 'Employee completes Section 1 by day one; the employer completes Section 2 within 3 business days of the start date.' }),
+    item('state_withholding', 'State withholding form', { group: 'Paperwork', countries: ['United States'], hint: 'The state form for the state of work, if it has one.' }),
+    item('td1', 'Forms TD1 (federal) and TD1 (provincial) signed', { group: 'Paperwork', countries: ['Canada'], hint: 'The consultant’s personal tax credit returns, used for payroll withholding.' }),
+    item('sin', 'SIN collected and verified', { group: 'Compliance', answer: 'yesno', countries: ['Canada'], hint: 'Choose Yes once seen. The number itself is kept in payroll, not stored here.' }),
+    item('work_permit', 'Proof of right to work in Canada', { group: 'Compliance', upload: 'required', countries: ['Canada'], hint: 'Upload the work permit, PR card or citizenship proof; note the expiry date.' }),
+    item('pan', 'PAN collected', { group: 'Compliance', answer: 'yesno', countries: ['India'], hint: 'Choose Yes once seen. The number itself is kept in payroll, not stored here.' }),
+    item('id_proof', 'ID and address proof collected', { group: 'Compliance', upload: 'required', countries: ['India'], hint: 'Upload a government ID and an address proof.' }),
+    item('direct_deposit', 'Direct deposit details collected', { group: 'Paperwork', form: 'banking', on: 'consultant', formOnly: true, countries: ['United States'], hint: 'The ACH / Wire banking authorization form on the consultant, filled in and signed. Needs the directory records.' }),
+    item('bank_ca', 'Bank details collected (void cheque or bank letter)', { group: 'Paperwork', upload: 'required', countries: ['Canada'], hint: 'Institution, transit and account number from a void cheque or bank letter.' }),
+    item('bank_in', 'Bank account details collected (account number and IFSC)', { group: 'Paperwork', upload: 'required', countries: ['India'], hint: 'A cancelled cheque or bank statement page showing the account number and IFSC.' }),
     item('emergency_contact', 'Emergency contact collected', { group: 'Paperwork' }),
     item('handbook', 'Handbook and policies acknowledged', { group: 'Paperwork' }),
     NDA,
-    item('everify', 'E-Verify case created', { group: 'Compliance', hint: 'Only if the company is enrolled.' }),
+    item('everify', 'E-Verify case created', { group: 'Compliance', countries: ['United States'], hint: 'Only if the company is enrolled.' }),
     H1B,
     item('benefits', 'Benefits enrollment offered or waived', { group: 'Setup' }),
     item('payroll_setup', 'Added to payroll', { group: 'Setup' }),
   ].concat(COMMON_TAIL.filter((x) => x.key !== 'rate_confirmation')),
   C2C: [
-    item('company_w9', 'Company Form W-9', { group: 'Paperwork', form: 'w9', on: 'supplier', uploadInstead: true, hint: 'The consultant’s company fills this in; it needs the company to exist as a supplier company (created for you).' }),
+    item('company_gst', 'Company Business Number / GST-HST registration', { group: 'Paperwork', upload: 'required', countries: ['Canada'], hint: 'Upload the CRA registration or a GST/HST number confirmation for the consultant’s company.' }),
+    item('company_pan', 'Company PAN and GSTIN registration', { group: 'Paperwork', upload: 'required', countries: ['India'], hint: 'Upload the company’s PAN card and GST registration certificate.' }),
+    item('company_w9', 'Company Form W-9', { group: 'Paperwork', form: 'w9', on: 'supplier', uploadInstead: true, countries: ['United States'], hint: 'The consultant’s company fills this in; it needs the company to exist as a supplier company (created for you).' }),
     item('vendor_agreement', 'Vendor agreement', { group: 'Paperwork', upload: 'required', future: 'fillable-pdf', hint: 'Upload the signed agreement.' }),
     item('coi', 'Certificate of insurance on file', { group: 'Paperwork', upload: 'required', hint: 'Upload the certificate; record the expiry date in the note so it can be chased.' }),
-    item('employer_work_auth', 'Employer confirms the consultant’s work authorization', { group: 'Compliance', upload: 'required', hint: 'Upload the employer’s confirmation. The consultant’s own company completes the I-9 for its employee.' }),
+    item('employer_work_auth_intl', 'Employer confirms the consultant’s right to work', { group: 'Compliance', upload: 'required', countries: ['Canada', 'India'], hint: 'Upload the employer’s confirmation (work permit or ID proof on file).' }),
+    item('employer_work_auth', 'Employer confirms the consultant’s work authorization', { group: 'Compliance', upload: 'required', countries: ['United States'], hint: 'Upload the employer’s confirmation. The consultant’s own company completes the I-9 for its employee.' }),
     NDA,
-    item('remittance', 'Company banking / remittance details collected', { group: 'Paperwork', form: 'banking', on: 'supplier', uploadInstead: true, formOnly: true, hint: 'The ACH / Wire banking authorization form, filled in and signed. Needs the supplier company (created with the directory records).' }),
+    item('remittance', 'Company banking / remittance details collected', { group: 'Paperwork', form: 'banking', on: 'supplier', uploadInstead: true, formOnly: true, countries: ['United States'], hint: 'The ACH / Wire banking authorization form, filled in and signed. Needs the supplier company (created with the directory records).' }),
+    item('remittance_intl', 'Company bank details collected (void cheque / bank letter, SWIFT or IFSC)', { group: 'Paperwork', upload: 'required', countries: ['Canada', 'India'], hint: 'Bank letter or cancelled cheque for the consultant’s company, with SWIFT / IFSC where it is paid by wire.' }),
     H1B,
   ].concat(COMMON_TAIL),
   '1099': [
     item('contractor_agreement', 'Independent contractor agreement signed', { group: 'Paperwork' }),
-    item('w9', 'Form W-9', { group: 'Paperwork', form: 'w9', on: 'consultant', uploadInstead: true }),
-    item('i9', 'Form I-9 (employment eligibility)', { group: 'Paperwork', form: 'i9', on: 'consultant', uploadInstead: true, hint: 'Kept for contractors as company practice.' }),
+    item('w9', 'Form W-9', { group: 'Paperwork', form: 'w9', on: 'consultant', uploadInstead: true, countries: ['United States'] }),
+    item('sin', 'SIN collected and verified', { group: 'Compliance', answer: 'yesno', countries: ['Canada'], hint: 'Choose Yes once seen. The number itself is kept in payroll, not stored here.' }),
+    item('work_permit', 'Proof of right to work in Canada', { group: 'Compliance', upload: 'required', countries: ['Canada'], hint: 'Upload the work permit, PR card or citizenship proof; note the expiry date.' }),
+    item('pan', 'PAN collected', { group: 'Compliance', answer: 'yesno', countries: ['India'], hint: 'Choose Yes once seen. The number itself is kept in payroll, not stored here.' }),
+    item('id_proof', 'ID and address proof collected', { group: 'Compliance', upload: 'required', countries: ['India'], hint: 'Upload a government ID and an address proof.' }),
+    item('i9', 'Form I-9 (employment eligibility)', { group: 'Paperwork', form: 'i9', on: 'consultant', uploadInstead: true, countries: ['United States'], hint: 'Kept for contractors as company practice.' }),
     NDA,
-    item('payment_details', 'Payment (ACH) details collected', { group: 'Paperwork', form: 'banking', on: 'consultant', uploadInstead: true, formOnly: true, hint: 'The ACH / Wire banking authorization form on the consultant, filled in and signed. Needs the directory records.' }),
+    item('payment_details', 'Payment (ACH) details collected', { group: 'Paperwork', form: 'banking', on: 'consultant', uploadInstead: true, formOnly: true, countries: ['United States'], hint: 'The ACH / Wire banking authorization form on the consultant, filled in and signed. Needs the directory records.' }),
+    item('bank_ca', 'Bank details collected (void cheque or bank letter)', { group: 'Paperwork', upload: 'required', countries: ['Canada'], hint: 'Institution, transit and account number from a void cheque or bank letter.' }),
+    item('bank_in', 'Bank account details collected (account number and IFSC)', { group: 'Paperwork', upload: 'required', countries: ['India'], hint: 'A cancelled cheque or bank statement page showing the account number and IFSC.' }),
     H1B,
   ].concat(COMMON_TAIL),
 };
 
-const checklistFor = (type, data) => (CHECKLISTS[type] || []).filter((c) => !c.when || String((data || {})[c.when.key]) === c.when.value);
+const checklistFor = (type, data) => (CHECKLISTS[type] || []).filter((c) => (!c.when || String((data || {})[c.when.key]) === c.when.value) && (!c.countries || c.countries.includes(C.countryOf(data))));
 
 // -------------------------------------------------------------- e-mail text
 const EMAIL_ROWS = [
   ['Consultant Name', 'consultant_name'], ['Consultant Contact Number', 'phone'], ['Consultant Email', 'email'],
   ['Technical Skill', 'technical_skill'], ['Status (W2/C2C/1099)', '@type'], ['Project Start Date', '@start'],
-  ['Project Duration', 'duration'], ['End Client', 'end_client'], ['Project Location (State and City)', 'location'],
+  ['Project Duration', 'duration'], ['End Client', 'end_client'], ['Project Location (State and City)', 'location'], ['Country', 'country'],
   ['Bill To (Customer – T1/End Client)', 'bill_to'], ['Bill Rate', '@bill'], ['Pay To (Consultant/Vendor)', 'pay_to'],
   ['Pay Rate', '@pay'], ['Final Cost (if different than pay rate)', '@final'], ['Account Manager Name', 'account_manager'],
   ['Delivery Manager', 'delivery_manager'], ['Recruiter Name', 'recruiter'], ['H1B Filing Required', 'h1b_filing_required'],
@@ -186,21 +217,21 @@ const EMAIL_ROWS = [
   ['Timesheet sent along with the invoice (Client, Implementation partners)', 'timesheet_requirement'],
 ];
 const fmtUsDate = (iso) => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso || ''); return m ? `${m[2]}/${m[3]}/${m[1]}` : ''; };
-const rateText = (v, basis) => (v === undefined || v === null || v === '' ? '' : `$${v}/${({ Hourly: 'hr', Daily: 'day', Monthly: 'month', Annual: 'year' })[basis] || 'hr'}`);
+const rateText = (v, basis, cur) => (v === undefined || v === null || v === '' ? '' : `${C.SYMBOL[cur] || '$'}${v}/${({ Hourly: 'hr', Daily: 'day', Monthly: 'month', Annual: 'year' })[basis] || 'hr'}`);
 
 function buildEmail(type, data) {
   const d = data || {};
   const val = (k) => {
     if (k === '@type') return type;
     if (k === '@start') return fmtUsDate(d.start_date);
-    if (k === '@bill') return rateText(d.bill_rate, d.bill_rate_basis);
-    if (k === '@pay') return rateText(d.pay_rate, d.pay_rate_basis);
-    if (k === '@final') return rateText(d.final_cost, d.pay_rate_basis);
+    if (k === '@bill') return rateText(d.bill_rate, d.bill_rate_basis, currencyOf(d, 'bill'));
+    if (k === '@pay') return rateText(d.pay_rate, d.pay_rate_basis, currencyOf(d, 'pay'));
+    if (k === '@final') return rateText(d.final_cost, d.pay_rate_basis, currencyOf(d, 'pay'));
     if (k === '@invoice_to') return [d.invoice_to_email, d.invoice_to_name].filter(Boolean).join(' – ');
     return d[k] === undefined || d[k] === null ? '' : String(d[k]);
   };
   const lines = ['PLACEMENT INFORMATION', ''];
-  EMAIL_ROWS.forEach(([label, k]) => { lines.push(label + ':', val(k), ''); });
+  EMAIL_ROWS.forEach(([label, k]) => { if (k === 'country' && !d.country) return; lines.push(label + ':', val(k), ''); });
   if (type === 'C2C') {
     lines.push('Candidate Employer Details', '');
     [d.employer_name, d.employer_email, d.employer_phone, [d.employer_address, d.employer_city, d.employer_state, d.employer_zip].filter(Boolean).join(', ')]
@@ -214,7 +245,7 @@ function buildEmail(type, data) {
 const LABELS = [
   [/^consultant\s*name/i, 'consultant_name'], [/^(consultant\s*)?contact\s*(number|no)/i, 'phone'], [/^consultant\s*e-?mail/i, 'email'],
   [/^technical\s*skill/i, 'technical_skill'], [/^status\b/i, 'worker_type'], [/^project\s*start/i, 'start_date'],
-  [/^project\s*duration/i, 'duration'], [/^end\s*client/i, 'end_client'], [/^project\s*location/i, 'location'],
+  [/^project\s*duration/i, 'duration'], [/^end\s*client/i, 'end_client'], [/^project\s*location/i, 'location'], [/^country\b/i, 'country'],
   [/^bill\s*to\b/i, 'bill_to'], [/^bill\s*rate/i, 'bill_rate'], [/^pay\s*to\b/i, 'pay_to'], [/^pay\s*rate/i, 'pay_rate'],
   [/^final\s*cost/i, 'final_cost'], [/^account\s*manager/i, 'account_manager'], [/^delivery\s*manager/i, 'delivery_manager'],
   [/^recruiter/i, 'recruiter'], [/^h-?1b\s*filing/i, 'h1b_filing_required'], [/^invoicing\b/i, 'invoicing_method'],
@@ -234,7 +265,8 @@ function parseRate(s) {
   const m = /([\d,]+(?:\.\d+)?)/.exec(String(s || '')); if (!m) return null;
   const t = String(s).toLowerCase();
   const basis = /\/\s*(day)|per day|daily/.test(t) ? 'Daily' : /\/\s*(mo|month)|monthly|per month/.test(t) ? 'Monthly' : /\/\s*(yr|year)|annual|per year|salary/.test(t) ? 'Annual' : 'Hourly';
-  return { value: Number(m[1].replace(/,/g, '')), basis };
+  const currency = /\bCAD\b|\bC\$|\bCA\$/i.test(t) ? 'CAD' : /\bINR\b|₹|\brs\b\.?/i.test(t) ? 'INR' : /\bUSD\b|\bUS\$/i.test(t) ? 'USD' : '';
+  return { value: Number(m[1].replace(/,/g, '')), basis, currency };
 }
 
 function parseEmail(text) {
@@ -261,7 +293,7 @@ function parseEmail(text) {
     if (k === 'bill_rate' || k === 'pay_rate' || k === 'final_cost') {
       const r = parseRate(v); if (!r) return;
       fields[k] = r.value; matched.push(k);
-      if (k === 'bill_rate') fields.bill_rate_basis = r.basis; else if (k === 'pay_rate') fields.pay_rate_basis = r.basis;
+      if (k === 'bill_rate') { fields.bill_rate_basis = r.basis; if (r.currency) fields.bill_currency = r.currency; } else if (k === 'pay_rate') { fields.pay_rate_basis = r.basis; if (r.currency) fields.pay_currency = r.currency; }
       return;
     }
     if (k === 'h1b_filing_required') { fields[k] = /^\s*(y|yes)/i.test(v) ? 'Yes' : /^\s*(n|no)/i.test(v) ? 'No' : ''; if (fields[k]) matched.push(k); return; }
@@ -273,6 +305,7 @@ function parseEmail(text) {
       if (rest && !/^x+$/i.test(rest)) { fields.invoice_to_name = rest; matched.push('invoice_to_name'); }
       return;
     }
+    if (k === 'country') { const cn = C.normalizeCountry(v); if (C.COUNTRIES.includes(cn)) { fields.country = cn; matched.push(k); } return; }
     fields[k] = v; matched.push(k);
   }
   for (const line of lines) {
@@ -291,7 +324,7 @@ function parseEmail(text) {
     if (cur) cur.parts.push(line); else if (!/^placement information$/i.test(line)) unmatched.push(line);
   }
   flush();
-  // a pay rate typed only on the bill-rate row, etc. is left as is; just tidy up
+  if (!fields.country) { const dc = C.detectCountry(String(text || '')); if (dc) { fields.country = dc; matched.push('country'); } }
   return { fields, worker_type: fields.worker_type || '', matched: Array.from(new Set(matched)), unmatched };
 }
 
@@ -303,4 +336,4 @@ function migrateChecklist(stored) {
   return out;
 }
 
-module.exports = { migrateChecklist, RENAMED, REMOVED, WORKER_TYPES, SECTIONS, sectionsFor, fieldsFor, CHECKLISTS, checklistFor, buildEmail, parseEmail, RATE_BASIS, US_STATES, WITHDRAW_REASONS };
+module.exports = { migrateChecklist, RENAMED, REMOVED, WORKER_TYPES, SECTIONS, sectionsFor, fieldsFor, CHECKLISTS, checklistFor, buildEmail, parseEmail, RATE_BASIS, US_STATES, WITHDRAW_REASONS, REGIONS, effective, currencyOf };

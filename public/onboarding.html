@@ -127,7 +127,7 @@
   // -------------------------------------------------------------- routing
   function route() {
     var h = location.hash.replace('#', '');
-    S.msg = null; S.confirm = null; S.errors = {}; S.emailText = null; S.parsed = null;
+    S.msg = null; S.confirm = null; S.errors = {}; S.emailText = null; S.parsed = null; S.countryNote = null;
     if (h === 'new') { startNew(); return; }
     if (/^\d+$/.test(h)) { openOb(h); return; }
     loadList();
@@ -263,9 +263,34 @@
     return isHr() || S.ob.status === 'draft';
   }
 
+  var CUR_SYM = { USD: '$', CAD: 'CA$', INR: '\u20b9' };
+  function countryNow() { var c = S.draft && S.draft.data ? S.draft.data.country : ''; return c && (S.schema.countries || []).indexOf(c) !== -1 ? c : 'United States'; }
+  function curOf(side) { var d = S.draft.data; return d[side + '_currency'] || ((S.schema.countryCurrency || {})[countryNow()] || 'USD'); }
+  // a field as it applies to the chosen country: its label, help and (for states / provinces / work authorization) options
+  function eff(f) {
+    var c = countryNow(), o = (f.byCountry && f.byCountry[c]) || {}, out = {};
+    Object.keys(f).forEach(function (k) { out[k] = f[k]; });
+    Object.keys(o).forEach(function (k) { out[k] = o[k]; });
+    if (f.regions && S.schema.regions) out.options = S.schema.regions[c] || f.options;
+    return out;
+  }
+  function onCountryChange(prev) {
+    var c = countryNow(), d = S.draft.data, cleared = [], cc = S.schema.countryCurrency || {};
+    sectionsFor(S.draft.workerType).forEach(function (s) { s.fields.forEach(function (f) {
+      if (f.kind !== 'select' || !(f.regions || f.byCountry)) return;
+      var e = eff(f), v = d[f.key];
+      if (v && e.options.indexOf(v) === -1) { delete d[f.key]; cleared.push(e.label); }
+    }); });
+    ['bill_currency', 'pay_currency'].forEach(function (k) {
+      if (c === 'United States') { if (d[k] && d[k] === cc[prev]) delete d[k]; }
+      else if (!d[k] || d[k] === cc[prev]) d[k] = cc[c];
+    });
+    S.countryNote = c + ' selected: the address fields and currency follow it now, and the paperwork checklist follows it once you save.' + (cleared.length ? ' Cleared (they do not exist there, choose again): ' + cleared.join(', ') + '.' : '');
+  }
   function sectionsFor(type) { return S.schema.sections.filter(function (s) { return !s.types || s.types.indexOf(type) !== -1; }); }
 
-  function fieldHtml(f, ed) {
+  function fieldHtml(f0, ed) {
+    var f = eff(f0);
     var v = S.draft.data[f.key]; v = v === undefined ? '' : v;
     var id = 'f-' + f.key;
     var inner;
@@ -301,7 +326,8 @@
   function sensitiveHtml(o, ed, hr) {
     if (!ed && !(o && (o.secretsSaved.dob || o.secretsSaved.ssn_last5))) return '';
     var h = '<div class="ob-card"><h2>Sensitive details <span class="ob-muted" style="font-weight:400;font-size:13px">(optional)</span></h2><p class="ob-muted" style="margin:0 0 10px;font-size:12.5px">Stored encrypted and never shown in lists. Only HR can view them again. They are erased if the consultant withdraws. Use the eye to check what you typed.</p><div class="ob-grid">';
-    h += secretRow('dob', 'Date of birth', '', o, ed, hr) + secretRow('ssn_last5', 'SSN (last 4–5 digits only)', 'Only the last digits are kept — never the full number.', o, ed, hr);
+    h += secretRow('dob', 'Date of birth', '', o, ed, hr);
+    if (countryNow() === 'United States' || (o && o.secretsSaved && o.secretsSaved.ssn_last5)) h += secretRow('ssn_last5', 'SSN (last 4–5 digits only)', 'Only the last digits are kept — never the full number.', o, ed, hr);
     h += '</div>';
     if (ed && S.schema && !S.schema.encryptionConfigured) h += '<div class="ob-msg warn" style="margin:8px 0 0">These cannot be saved yet: the server has no encryption key (FIELD_ENCRYPTION_KEY).</div>';
     return h + '</div>';
@@ -351,10 +377,11 @@
     if (!isHr()) return '';
     if (d.bill_rate === undefined || d.bill_rate === '' || (d.pay_rate === undefined && d.final_cost === undefined)) return '';
     if ((d.bill_rate_basis || 'Hourly') !== (d.pay_rate_basis || 'Hourly')) return '';
+    if (curOf('bill') !== curOf('pay')) return '<div id="margin" class="ob-margin">Bill and pay are in different currencies (' + curOf('bill') + ' / ' + curOf('pay') + '), so no margin is worked out.</div>';
     var cost = d.final_cost !== undefined && d.final_cost !== '' ? Number(d.final_cost) : Number(d.pay_rate);
     var per = Number(d.bill_rate) - cost; if (isNaN(per)) return '';
     var pct = Number(d.bill_rate) ? per / Number(d.bill_rate) * 100 : 0;
-    return '<div id="margin" class="ob-margin' + (per < 0 ? ' neg' : '') + '">Margin: $' + money(per) + ' per ' + ({ Hourly: 'hour', Daily: 'day', Monthly: 'month', Annual: 'year' }[d.bill_rate_basis || 'Hourly']) + ' (' + pct.toFixed(1) + '%) on ' + (d.final_cost !== undefined && d.final_cost !== '' ? 'final cost' : 'pay rate') + '</div>';
+    return '<div id="margin" class="ob-margin' + (per < 0 ? ' neg' : '') + '">Margin: ' + (CUR_SYM[curOf('bill')] || '$') + money(per) + ' per ' + ({ Hourly: 'hour', Daily: 'day', Monthly: 'month', Annual: 'year' }[d.bill_rate_basis || 'Hourly']) + ' (' + pct.toFixed(1) + '%) on ' + (d.final_cost !== undefined && d.final_cost !== '' ? 'final cost' : 'pay rate') + '</div>';
   }
 
   function defaultsFromEndClient() {
@@ -403,6 +430,7 @@
     if (o && o.warnings && o.warnings.length || (S.liveWarn && S.liveWarn.length)) {
       h += '<div class="ob-msg warn"><b>Worth a second look</b><ul style="margin:6px 0 0 18px;padding:0">' + (o ? o.warnings : S.liveWarn).map(function (w) { return '<li>' + esc(w.message) + '</li>'; }).join('') + '</ul></div>';
     }
+    if (S.countryNote && ed) h += '<div class="ob-msg" style="background:#E3F1FD;color:var(--pine)">' + esc(S.countryNote) + '</div>';
     sectionsFor(d.workerType).forEach(function (s) {
       h += '<div class="ob-card"><h2>' + esc(s.title) + '</h2><div class="ob-grid">' + s.fields.map(function (f) { return fieldHtml(f, ed); }).join('') + '</div>' + (s.key === 'rates' ? marginHtml() : '') + '</div>';
     });
@@ -455,7 +483,7 @@
       var df = S.recDefaults || (S.recDefaults = defaultsFromEndClient()), dd = S.draft.data;
       h += '<div style="flex:1 1 100%"><b>Create or link these in the Directory?</b><div class="ob-muted" style="margin:6px 0">Existing records with the same name are linked, never duplicated.</div>' +
         '<ul style="margin:0 0 8px 18px;padding:0;font-size:13px"><li>Consultant: <b>' + esc(dd.consultant_name) + '</b></li>' + (S.draft.workerType === 'C2C' && dd.employer_name ? '<li>Supplier company: <b>' + esc(dd.employer_name) + '</b> (the consultant’s company)</li>' : '') +
-        '<li>Billing: <b>' + (dd.bill_rate !== undefined ? '$' + money(dd.bill_rate) : 'not set') + '</b> per ' + ({ Hourly: 'hour', Daily: 'day', Monthly: 'month', Annual: 'year' }[dd.bill_rate_basis || 'Hourly']) + '</li></ul>' +
+        '<li>Billing: <b>' + (dd.bill_rate !== undefined ? (CUR_SYM[curOf('bill')] || '$') + money(dd.bill_rate) : 'not set') + '</b> per ' + ({ Hourly: 'hour', Daily: 'day', Monthly: 'month', Annual: 'year' }[dd.bill_rate_basis || 'Hourly']) + '</li></ul>' +
         '<label class="ob-muted">Client <input type="text" id="rec-client" value="' + esc(df.client) + '"></label> <label class="ob-muted">Vendor <input type="text" id="rec-vendor" value="' + esc(df.vendor) + '" placeholder="(none)"></label></div>' +
         '<button class="ob-btn primary" data-act="records-go">Yes, create</button><button class="ob-btn" data-act="no">Cancel</button>';
     }
@@ -820,12 +848,13 @@
       var txt = document.getElementById('paste-text').value;
       api('POST', '/api/onboarding/parse-email', { text: txt }).then(function (r) {
         if (!r.ok) { S.parsed = esc(r.body.error || 'Could not read that.'); renderDetail(); return; }
-        var f = r.body.fields;
+        var f = r.body.fields, prevC = countryNow();
         if (f.worker_type) S.draft.workerType = f.worker_type;
         Object.keys(f).forEach(function (k) { if (k !== 'worker_type') S.draft.data[k] = f[k]; });
+        if (f.country && countryNow() !== prevC) onCountryChange(prevC);
         if (r.body.secrets) { S.sec.t = Object.assign({}, S.sec.t, r.body.secrets); S.sec.eye = {}; }
         S.dirty = true;
-        S.parsed = 'Filled in ' + r.body.matched.length + ' fields' + (f.worker_type ? ' (worker type ' + f.worker_type + ')' : '') + '.' + (r.body.unmatched.length ? ' Could not place: ' + esc(r.body.unmatched.join(' / ')) : '') +
+        S.parsed = 'Filled in ' + r.body.matched.length + ' fields' + (f.worker_type ? ' (worker type ' + f.worker_type + ')' : '') + (f.country && f.country !== 'United States' ? ', country set to ' + f.country : '') + '.' + (r.body.unmatched.length ? ' Could not place: ' + esc(r.body.unmatched.join(' / ')) : '') +
           (!f.invoicing_method ? ' Invoicing method was not in the e-mail, so please choose it below.' : '');
         liveWarnings();
         renderDetail();
@@ -881,10 +910,12 @@
       return;
     }
     var k = t.getAttribute('data-f'); if (!k) return;
+    var prevCountry = k === 'country' ? countryNow() : null;
     S.draft.data[k] = t.value;
+    if (k === 'country') { onCountryChange(prevCountry); if (!S.dirty) S.dirty = true; renderDetail(); return; }
     if (!S.dirty) { S.dirty = true; var sb = appEl.querySelector('[data-act="save"]'); if (sb) sb.disabled = false; }
     var dn = document.getElementById('dirty-note'); if (dn) dn.textContent = 'You have unsaved changes.';
-    if (['bill_rate', 'pay_rate', 'final_cost', 'bill_rate_basis', 'pay_rate_basis'].indexOf(k) !== -1) {
+    if (['bill_rate', 'pay_rate', 'final_cost', 'bill_rate_basis', 'pay_rate_basis', 'bill_currency', 'pay_currency'].indexOf(k) !== -1) {
       var m = document.getElementById('margin'), nh = marginHtml();
       if (m && nh) m.outerHTML = nh; else if (m && !nh) m.remove(); else if (!m && nh) { var card = t.closest('.ob-card'); if (card) card.insertAdjacentHTML('beforeend', nh); }
     }

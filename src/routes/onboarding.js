@@ -18,6 +18,7 @@ const spec = require('./onboardingSpec');
 const { isConfigured, encrypt, decrypt, encryptBuffer, decryptBuffer } = require('../crypto');
 const ppSpec = require('./prePlacementSpec');
 const { toOnboardingInput } = require('../placementToOnboarding');
+const C = require('../countries');
 const crypto = require('crypto');
 const vendorItems = require('./vendorItems');
 const { flagLikelyDuplicates, similarity, SIMILARITY_THRESHOLD } = require('./directoryDedup');
@@ -74,11 +75,17 @@ spec.SECTIONS.forEach((s) => s.fields.forEach((x) => { FIELD_BY_KEY[x.key] = x; 
 function clean(input, existing) {
   const data = Object.assign({}, existing || {});
   const errors = [];
+  // The country decides which regions / work-authorization options are valid, so settle it first.
+  let countryInput = input && Object.prototype.hasOwnProperty.call(input, 'country') ? input.country : data.country;
+  const cn = C.normalizeCountry(countryInput);
+  if (cn && !C.COUNTRIES.includes(cn)) { errors.push({ key: 'country', message: 'Country: choose United States, Canada or India.' }); countryInput = data.country; }
+  const country = C.countryOf({ country: C.COUNTRIES.includes(cn) ? cn : data.country });
   for (const key of allKeys()) {
     if (!input || !Object.prototype.hasOwnProperty.call(input, key)) continue;
-    const fld = FIELD_BY_KEY[key];
+    const fld = spec.effective(FIELD_BY_KEY[key], country);
     const raw = input[key];
     const s = raw === null || raw === undefined ? '' : String(raw).trim();
+    if (key === 'country' && cn && !C.COUNTRIES.includes(cn)) continue;
     if (s === '') { delete data[key]; continue; }
     const max = fld.kind === 'textarea' ? 2000 : 300;
     if (s.length > max) { errors.push({ key, message: `${fld.label} is too long.` }); continue; }
@@ -93,10 +100,15 @@ function clean(input, existing) {
       if (!EMAIL_RE.test(s)) { errors.push({ key, message: `${fld.label} is not a valid email address.` }); continue; }
       data[key] = s;
     } else if (fld.kind === 'select') {
-      const hit = fld.options.find((o) => o.toLowerCase() === s.toLowerCase());
+      const hit = fld.options.find((o) => o.toLowerCase() === s.toLowerCase()) || (key === 'country' && C.COUNTRIES.includes(cn) ? cn : undefined);
       if (!hit) { errors.push({ key, message: `${fld.label}: choose one of the listed options.` }); continue; }
       data[key] = hit;
     } else data[key] = s;
+  }
+  if (country !== 'United States') {
+    // Outside the US a rate is in the country's own currency unless someone chose otherwise.
+    if (!data.bill_currency && data.bill_rate !== undefined) data.bill_currency = C.CURRENCY[country];
+    if (!data.pay_currency && (data.pay_rate !== undefined || data.final_cost !== undefined)) data.pay_currency = C.CURRENCY[country];
   }
   return { data, errors };
 }
@@ -127,6 +139,7 @@ function warningsFor(type, data) {
     const t = data[k] && emailTypo(data[k]);
     if (t) w.push({ key: k, message: `${FIELD_BY_KEY[k].label}: ${t}.` });
   });
+  if (data.bill_rate !== undefined && (data.pay_rate !== undefined || data.final_cost !== undefined) && spec.currencyOf(data, 'bill') !== spec.currencyOf(data, 'pay')) w.push({ key: 'pay_currency', message: 'Bill and pay are in different currencies (' + spec.currencyOf(data, 'bill') + ' / ' + spec.currencyOf(data, 'pay') + '), so no margin is worked out.' });
   const mg = margin(data);
   if (mg && mg.perHour < 0) w.push({ key: 'pay_rate', message: 'The cost is higher than the bill rate, so this placement loses money.' });
   if (data.start_date) {
@@ -139,6 +152,7 @@ function warningsFor(type, data) {
 
 function margin(d) {
   if (!d || d.bill_rate === undefined || (d.pay_rate === undefined && d.final_cost === undefined)) return null;
+  if (spec.currencyOf(d, 'bill') !== spec.currencyOf(d, 'pay')) return null; // different currencies: no margin without a conversion
   if ((d.bill_rate_basis || 'Hourly') !== (d.pay_rate_basis || 'Hourly')) return null;
   const cost = d.final_cost !== undefined ? d.final_cost : d.pay_rate;
   const per = Math.round((d.bill_rate - cost) * 100) / 100;
@@ -410,7 +424,8 @@ router.get('/schema', async (req, res) => {
     emailConfigured: await mailer.available(req.user),
     workerTypes: spec.WORKER_TYPES, statuses: STATUSES, next: NEXT,
     sections: spec.SECTIONS.map((s) => ({ key: s.key, title: s.title, types: s.types || null, fields: s.fields })),
-    checklists: Object.fromEntries(Object.entries(spec.CHECKLISTS).map(([t, l]) => [t, l.map((c) => ({ key: c.key, label: c.label, group: c.group, when: c.when || null, answer: c.answer || null, upload: c.upload || null, optional: !!c.optional, form: c.form || null }))])),
+    countries: C.COUNTRIES, currencies: C.CURRENCIES, countryCurrency: C.CURRENCY, regions: spec.REGIONS,
+    checklists: Object.fromEntries(Object.entries(spec.CHECKLISTS).map(([t, l]) => [t, l.map((c) => ({ key: c.key, label: c.label, group: c.group, when: c.when || null, countries: c.countries || null, answer: c.answer || null, upload: c.upload || null, optional: !!c.optional, form: c.form || null }))])),
     documents: { maxBytes: DOC_MAX, types: Object.keys(DOC_TYPES) },
     withdrawReasons: spec.WITHDRAW_REASONS, encryptionConfigured: isConfigured(), isHr: isHr(req),
   });
@@ -425,7 +440,7 @@ router.post('/parse-email', (req, res) => {
   const pp = ppSpec.parseText(text);
   if (pp.matched.length > r.matched.length) {
     const eng = onboardingTypes(pp.fields.engagement);
-    const mapped = toOnboardingInput(pp.fields, eng || undefined, undefined);
+    const mapped = toOnboardingInput(pp.fields, eng || undefined, undefined, C.detectCountry(text) || undefined);
     const { data: fields, errors } = clean(mapped, {});
     errors.forEach((e) => { delete fields[e.key]; });
     Object.keys(r.fields).forEach((k) => { if (fields[k] === undefined) fields[k] = r.fields[k]; });
@@ -1127,7 +1142,7 @@ router.post('/:id/create-records', async (req, res, next) => {
         await flagNew(conn, orgId, 'subvendors', supplierId, vnameRec);
       }
       await mergeProfile(conn, orgId, 'subvendors', supplierId, {
-        contact_name: data.employer_contact, city: data.employer_city, state: data.employer_state, postal_code: data.employer_zip,
+        contact_name: data.employer_contact, city: data.employer_city, state: data.employer_state, postal_code: data.employer_zip, country: data.country,
         fax: data.employer_fax, incorporated_state: data.employer_incorporated_state,
         signer_name: data.signer_name, signer_designation: data.signer_designation, signer_phone: data.signer_phone, signer_email: data.signer_email,
       });
@@ -1173,6 +1188,7 @@ router.post('/:id/create-records', async (req, res, next) => {
       worker_type: PROFILE_TYPE[row.worker_type], hire_date: data.start_date, job_title: data.job_title || data.technical_skill,
       skills: data.technical_skill, pay_rate: data.pay_rate, pay_rate_type: data.pay_rate_basis, recruiter: data.recruiter,
       work_authorization: data.work_authorization, supplier_id: supplierId, city: data.city, state: data.state, postal_code: data.zip,
+      country: data.country, currency: data.pay_currency || (data.country ? C.CURRENCY[C.countryOf(data)] : undefined),
       preferred_location: data.location, payment_terms: data.payment_terms,
     });
 

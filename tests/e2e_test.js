@@ -3647,6 +3647,54 @@ async function main() {
         await svOwner.fetch('/api/onboarding/' + bId, { method: 'DELETE' });
         await svOwner.fetch('/api/onboarding/' + eId, { method: 'DELETE' });
 
+        // ---------------- consultants in Canada and India: country-aware form, currency, checklist, Directory filter
+        r = await svOwner.fetch('/api/onboarding/schema');
+        const wa = r.body.sections.flatMap((x) => x.fields).find((x) => x.key === 'work_authorization');
+        check('onboarding: schema offers the three countries, their regions and currencies', r.body.countries.join() === 'United States,Canada,India' && r.body.regions.Canada.includes('ON') && r.body.regions.India.includes('Telangana') && r.body.countryCurrency.India === 'INR' && wa.byCountry.Canada.options.includes('Work permit'), r.body.countries);
+        const caBase = { consultant_name: 'Cara Canuck', country: 'Canada', email: 'cara@ca.test', start_date: '2026-12-01', end_client: 'Shopify', job_title: 'Dev', work_state: 'ON', address: '1 King St', city: 'Toronto', state: 'ON', zip: 'M5V 2T6', work_authorization: 'Work permit', visa_expiry: '2028-01-01', h1b_filing_required: 'No', bill_rate: 80, pay_rate: 60, recruiter: 'Rita', invoicing_method: 'Other' };
+        r = await svOwner.fetch('/api/onboarding', { method: 'POST', body: JSON.stringify({ workerType: 'W2', data: caBase }) });
+        const caId = r.body.id, caKeys = (r.body.checklist || []).map((c) => c.key);
+        check('onboarding (Canada): a province, postal code and work permit are accepted; both rates default to CAD', r.status === 201 && r.body.data.state === 'ON' && r.body.data.zip === 'M5V 2T6' && r.body.data.bill_currency === 'CAD' && r.body.data.pay_currency === 'CAD', r.body.data || r.body);
+        check('onboarding (Canada): the checklist swaps the US forms for TD1, SIN and proof of right to work', ['td1', 'sin', 'work_permit', 'bank_ca'].every((k) => caKeys.includes(k)) && !['w4', 'i9', 'state_withholding', 'direct_deposit', 'everify'].some((k) => caKeys.includes(k)), caKeys);
+        check('onboarding (Canada): margin is worked out in CAD', r.body.margin && r.body.margin.perHour === 20, r.body.margin);
+        r = await svOwner.fetch('/api/onboarding/' + caId, { method: 'PUT', body: JSON.stringify({ data: { state: 'TX' } }) });
+        check('onboarding (Canada): a US state is refused', r.status === 400 && r.body.errors.some((e) => e.key === 'state'), r.body);
+        r = await svOwner.fetch('/api/onboarding', { method: 'POST', body: JSON.stringify({ workerType: 'W2', data: { consultant_name: 'Ugo US', job_title: 'x', work_state: 'TX', state: 'ON', h1b_filing_required: 'No', start_date: '2026-12-01', end_client: 'c', bill_rate: 1, pay_rate: 1, recruiter: 'R', invoicing_method: 'Other' } }) });
+        check('onboarding (US): a Canadian province is refused unless the country is Canada', r.status === 400 && r.body.errors.some((e) => e.key === 'state'), r.body);
+        r = await svOwner.fetch('/api/onboarding', { method: 'POST', body: JSON.stringify({ workerType: 'W2', data: { consultant_name: 'Bad Country', country: 'Mars' } }) });
+        check('onboarding: an unknown country is refused', r.status === 400 && r.body.errors.some((e) => e.key === 'country'), r.body);
+        const inBase = { consultant_name: 'Indu Indian', country: 'India', start_date: '2026-12-01', end_client: 'Acme US', employer_name: 'Indu Tech Pvt Ltd', employer_email: 'ap@indu.test', employer_city: 'Hyderabad', employer_state: 'Telangana', employer_zip: '500081', employer_tax_id: 'AAACI1234A', work_authorization: 'Indian citizen', h1b_filing_required: 'No', bill_rate: 75, bill_currency: 'USD', pay_rate: 4000, pay_rate_basis: 'Hourly', recruiter: 'Rita', invoicing_method: 'Other' };
+        r = await svOwner.fetch('/api/onboarding', { method: 'POST', body: JSON.stringify({ workerType: 'C2C', data: inBase }) });
+        const inId = r.body.id, inKeys = (r.body.checklist || []).map((c) => c.key);
+        check('onboarding (India): a state, PIN code and a USD bill / INR pay split are kept', r.status === 201 && r.body.data.employer_state === 'Telangana' && r.body.data.employer_zip === '500081' && r.body.data.bill_currency === 'USD' && r.body.data.pay_currency === 'INR', r.body.data || r.body);
+        check('onboarding (India): different currencies mean no margin, with a note', r.body.margin === null && r.body.warnings.some((w) => /different currencies/.test(w.message)), [r.body.margin, r.body.warnings]);
+        check('onboarding (India): the C2C checklist asks for the company PAN / GSTIN and bank letter, not the W-9', inKeys.includes('company_pan') && inKeys.includes('remittance_intl') && inKeys.includes('employer_work_auth_intl') && !inKeys.includes('company_w9') && !inKeys.includes('remittance'), inKeys);
+        r = await svOwner.fetch('/api/onboarding', { method: 'POST', body: JSON.stringify({ workerType: 'W2', data: { consultant_name: 'Old Style', job_title: 'x', work_state: 'TX', h1b_filing_required: 'No', start_date: '2026-12-01', end_client: 'c', bill_rate: 1, pay_rate: 1, recruiter: 'R', invoicing_method: 'Other' } }) });
+        const usKeys = (r.body.checklist || []).map((c) => c.key);
+        check('onboarding: a record with no country still gets the original US checklist and no currency is added', r.status === 201 && ['w4', 'i9', 'state_withholding', 'direct_deposit', 'everify'].every((k) => usKeys.includes(k)) && r.body.data.bill_currency === undefined, usKeys);
+        await svOwner.fetch('/api/onboarding/' + r.body.id, { method: 'DELETE' });
+        r = await svOwner.fetch('/api/onboarding/parse-email', { method: 'POST', body: JSON.stringify({ text: 'PLACEMENT INFORMATION\nConsultant Name: Tara Toronto\nProject Start Date: 12/01/2026\nProject Location (State and City): Toronto, ON\nBill Rate: CAD 80/hr\nPay Rate: 60/hr' }) });
+        check('onboarding: pasting an e-mail that mentions Toronto sets Canada and reads the CAD rate', r.status === 200 && r.body.fields.country === 'Canada' && r.body.fields.bill_currency === 'CAD', r.body.fields);
+        r = await svOwner.fetch('/api/onboarding/parse-email', { method: 'POST', body: JSON.stringify({ text: 'PLACEMENT INFORMATION\nConsultant Name: Dan Dallas\nProject Start Date: 12/01/2026\nProject Location (State and City): Dallas, TX\nBill Rate: $80/hr' }) });
+        check('onboarding: a US e-mail sets no country', r.status === 200 && r.body.fields.country === undefined, r.body.fields);
+        r = await svOwner.fetch('/api/onboarding/' + caId + '/email');
+        // the placement e-mail shows the country and the right currency symbol
+        const em = r.body.text || r.body.email || '';
+        check('onboarding: the generated placement e-mail shows the country and CA$ rates', /Country:\s*\nCanada/.test(em) && /CA\$80\/hr/.test(em), em.slice(0, 200));
+        r = await svOwner.fetch('/api/onboarding/' + caId + '/create-records', { method: 'POST', body: JSON.stringify({ clientName: 'Shopify', vendorName: '' }) });
+        const [[caProf]] = await dbConn.query("SELECT p.data FROM record_profiles p JOIN consultants c ON c.id = p.record_id AND p.entity = 'consultants' WHERE c.name = 'Cara Canuck'");
+        const caP = JSON.parse(caProf.data);
+        check('onboarding (Canada): the Directory profile gets the country, province, postal code and CAD', r.status === 200 && caP.country === 'Canada' && caP.state === 'ON' && caP.postal_code === 'M5V 2T6' && caP.currency === 'CAD', caP);
+        r = await svOwner.fetch('/api/directory/consultants');
+        const caRow = r.body.consultants.find((x) => x.name === 'Cara Canuck');
+        await dbConn.query("UPDATE record_profiles SET data = JSON_SET(data, '$.country', 'usa') WHERE entity = 'consultants' AND record_id = ?", [caRow.id]);
+        const r2 = await svOwner.fetch('/api/directory/consultants');
+        check('directory: consultants carry their country (Canada), and free text such as “usa” is read as United States', caRow.country === 'Canada' && r2.body.consultants.find((x) => x.name === 'Cara Canuck').country === 'United States', [caRow.country]);
+        await dbConn.query("UPDATE record_profiles SET data = JSON_SET(data, '$.country', 'Canada') WHERE entity = 'consultants' AND record_id = ?", [caRow.id]);
+        for (const ep of ['subvendors', 'clients', 'programs']) { const q = await svOwner.fetch('/api/directory/' + ep); check('directory: ' + ep + ' rows carry a country field', q.status === 200 && (q.body[ep] || []).every((x) => typeof x.country === 'string'), q.status); }
+        await svOwner.fetch('/api/onboarding/' + caId, { method: 'DELETE' });
+        await svOwner.fetch('/api/onboarding/' + inId, { method: 'DELETE' });
+
         // resume (optional)
         const pdfB64 = Buffer.from('%PDF-1.4\n1 0 obj<<>>endobj\ntrailer<<>>\n%%EOF\n').toString('base64');
         r = await svOwner.fetch('/api/pre-placement/' + ppId);

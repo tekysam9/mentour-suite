@@ -316,6 +316,15 @@
     return v ? escapeHtml(v) : '<span class="dir-empty-cell">—</span>';
   }
 
+  // Country filter with a count per country for the current tab (Country comes from each record's profile).
+  function countrySelect(list) {
+    var n = { 'United States': 0, Canada: 0, India: 0, other: 0, none: 0 };
+    list.forEach(function (r) { if (!r.country) n.none += 1; else if (n[r.country] !== undefined) n[r.country] += 1; else n.other += 1; });
+    var cf = state.countryFilter || 'all';
+    function o(v, label, c) { return '<option value="' + v + '"' + (cf === v ? ' selected' : '') + '>' + label + (c === undefined ? '' : ' (' + c + ')') + '</option>'; }
+    return '<select data-filter="country" aria-label="Country">' + o('all', 'All countries') + o('United States', 'United States', n['United States']) + o('Canada', 'Canada', n.Canada) + o('India', 'India', n.India) + o('none', 'Country not set', n.none) + '</select>';
+  }
+
   function renderTable(tab, allRecords) {
     // A search looks through everyone, whatever their status; otherwise the status filter applies.
     var q = state.search.trim().toLowerCase();
@@ -326,9 +335,12 @@
       : allRecords.filter(function (r) {
         return state.statusFilter === 'none' ? (r.status !== 'active' && r.status !== 'inactive') : r.status === state.statusFilter;
       });
-    var hiddenNote = (!q && state.statusFilter !== 'all' && allRecords.length > records.length)
+    var beforeCountry = records.length;
+    var cf = state.countryFilter || 'all';
+    if (cf !== 'all') records = records.filter(function (r) { return cf === 'none' ? !r.country : r.country === cf; });
+    var hiddenNote = (!q && state.statusFilter !== 'all' && allRecords.length > beforeCountry)
       ? '<div class="dir-hidden-note" style="margin:0 0 10px;padding:9px 14px;background:#FFF8E6;border:1px solid #F2D58A;border-radius:8px;font-size:13px;color:#7A4A00">' +
-        (allRecords.length - records.length) + ' more ' + tab.label.toLowerCase() + ' are not shown because they are inactive or have no status set. ' +
+        (allRecords.length - beforeCountry) + ' more ' + tab.label.toLowerCase() + ' are not shown because they are inactive or have no status set. ' +
         '<a href="#" data-action="dir-show-all" style="color:var(--pine);font-weight:600">Show all</a></div>' : '';
 
     if (!allRecords.length) {
@@ -372,6 +384,7 @@
       var mainRow = '<tr>' +
         nameCell +
         billingCols +
+        '<td>' + (r.country ? escapeHtml(r.country) : '<span class="dir-empty-cell">—</span>') + '</td>' +
         '<td>' + ((editing && tab.key === 'consultants' && isHrUser()) ? statusEditor(r) : statusBadge(r.status)) + '</td>' +
         '<td>' + contactCell(r, 'email') + '</td>' +
         '<td>' + contactCell(r, 'phone') + '</td>' +
@@ -393,7 +406,7 @@
     var swapBar = tab.key === 'programs'
       ? '<div class="dir-muted" style="margin:0 0 8px">Name and Client the wrong way round? Use <b>Swap</b> on a row, or <a href="#" data-action="swap-vendor-all" style="color:var(--pine);font-weight:600">swap all ' + records.length + ' shown</a>. Placements, Margin rows and invoices move with it.</div>' : '';
     return hiddenNote + swapBar + '<div class="dir-table-wrap"><table class="dir-table"><thead><tr>' +
-      '<th>Name</th>' + extraCol + '<th>Status</th><th>Email</th><th>Phone</th><th>Address</th><th>Seen in</th><th></th>' +
+      '<th>Name</th>' + extraCol + '<th>Country</th><th>Status</th><th>Email</th><th>Phone</th><th>Address</th><th>Seen in</th><th></th>' +
       '</tr></thead><tbody>' + rows + '</tbody></table></div>';
   }
 
@@ -612,7 +625,7 @@
           '<option value="active"' + (state.statusFilter === 'active' ? ' selected' : '') + '>Active</option>' +
           '<option value="inactive"' + (state.statusFilter === 'inactive' ? ' selected' : '') + '>Inactive</option>' +
           '<option value="none"' + (state.statusFilter === 'none' ? ' selected' : '') + '>Not set (Ledger only)</option>' +
-        '</select></div>';
+        '</select> ' + countrySelect(state.cache[activeTab.key] || []) + '</div>';
     }
 
     appEl.innerHTML =
@@ -1070,6 +1083,8 @@
   appEl.addEventListener('change', function (e) {
     var cSel = e.target.closest('[data-assign-client]');
     if (cSel) { var pSel = cSel.closest('tr').querySelector('[data-assign-program]'); if (pSel) pSel.innerHTML = vendorOptions(cSel.value, null); return; }
+    var countrySel = e.target.closest('[data-filter="country"]');
+    if (countrySel) { state.countryFilter = countrySel.value; render(); return; }
     var statusSelect = e.target.closest('[data-filter="status"]');
     if (statusSelect) {
       state.statusFilter = statusSelect.value;

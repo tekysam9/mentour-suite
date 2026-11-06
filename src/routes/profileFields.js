@@ -13,6 +13,9 @@
 
 const WORKER_TYPES = ['W2', '1099', 'Subvendor', 'Corp-to-Corp', 'Other'];
 const US_STATES = ['AL','AK','AZ','AR','CA','CO','CT','DE','DC','FL','GA','HI','ID','IL','IN','IA','KS','KY','LA','ME','MD','MA','MI','MN','MS','MO','MT','NE','NV','NH','NJ','NM','NY','NC','ND','OH','OK','OR','PA','RI','SC','SD','TN','TX','UT','VT','VA','WA','WV','WI','WY','PR'];
+const { CA_PROVINCES, IN_STATES } = require('../countries');
+// state / province / UT: US two-letter codes, Canadian province codes, Indian state names (no overlaps)
+const ALL_REGIONS = US_STATES.concat(CA_PROVINCES, IN_STATES);
 const PAY_TERMS = ['Due on receipt', 'Net 15', 'Net 30', 'Net 45', 'Net 60', 'Net 90', 'Other'];
 const f = (key, label, kind, extra) => Object.assign({ key, label, kind }, extra || {});
 
@@ -38,9 +41,9 @@ const SPEC = {
       { title: 'Address', fields: [
         f('address', 'Street address', 'text', { core: true }),
         f('city', 'City', 'text'),
-        f('state', 'State', 'select', { options: US_STATES }),
+        f('state', 'State / province', 'select', { options: ALL_REGIONS }),
         f('postal_code', 'ZIP / postal code', 'text'),
-        f('country', 'Country', 'text'),
+        f('country', 'Country', 'text', { help: 'United States, Canada or India. Used to filter the Directory by country.' }),
       ] },
       { title: 'Professional profile', fields: [
         f('job_title', 'Job title / role', 'text'),
@@ -114,9 +117,9 @@ const SPEC = {
       { title: 'Address', fields: [
         f('address', 'Street address', 'text', { core: true }),
         f('city', 'City', 'text'),
-        f('state', 'State', 'select', { options: US_STATES }),
+        f('state', 'State / province', 'select', { options: ALL_REGIONS }),
         f('postal_code', 'ZIP / postal code', 'text'),
-        f('country', 'Country', 'text'),
+        f('country', 'Country', 'text', { help: 'United States, Canada or India. Used to filter the Directory by country.' }),
       ] },
       { title: 'Billing & accounts payable', fields: [
         f('billing_contact', 'Billing contact', 'text'),
@@ -129,7 +132,7 @@ const SPEC = {
         f('po_required', 'PO number required', 'bool'),
         f('timesheet_approver', 'Timesheet approver', 'text'),
         f('tax_exempt', 'Tax exempt', 'bool'),
-        f('tax_id', 'Tax ID (EIN)', 'secret', { secretKind: 'taxid', help: 'Encrypted. Only the last 4 characters are ever shown.' }),
+        f('tax_id', 'Tax ID (EIN / BN / GSTIN / PAN)', 'secret', { secretKind: 'taxid', help: 'Encrypted. Only the last 4 characters are ever shown.' }),
       ] },
       { title: 'Contract', fields: [
         f('contract_type', 'Contract vehicle', 'select', { options: ['MSA', 'Master contract', 'PO only', 'Task order', 'Other'] }),
@@ -163,16 +166,16 @@ const SPEC = {
       { title: 'Address', fields: [
         f('address', 'Street address', 'text', { core: true }),
         f('city', 'City', 'text'),
-        f('state', 'State', 'select', { options: US_STATES }),
+        f('state', 'State / province', 'select', { options: ALL_REGIONS }),
         f('postal_code', 'ZIP / postal code', 'text'),
-        f('country', 'Country', 'text'),
+        f('country', 'Country', 'text', { help: 'United States, Canada or India. Used to filter the Directory by country.' }),
       ] },
       { title: 'Billing & payment', fields: [
         f('billing_email', 'Invoice delivery email', 'email'),
         f('payment_terms', 'Payment terms', 'select', { options: PAY_TERMS }),
         f('currency', 'Currency', 'select', { options: ['USD', 'CAD', 'INR', 'EUR', 'GBP'] }),
         f('po_number', 'PO / reference number', 'text'),
-        f('tax_id', 'Tax ID (EIN)', 'secret', { secretKind: 'taxid', help: 'Encrypted. Only the last 4 characters are ever shown.' }),
+        f('tax_id', 'Tax ID (EIN / BN / GSTIN / PAN)', 'secret', { secretKind: 'taxid', help: 'Encrypted. Only the last 4 characters are ever shown.' }),
         f('bank_name', 'Bank name', 'text'),
         f('bank_routing', 'Routing number', 'secret', { secretKind: 'routing', help: 'Encrypted. Only the last 4 digits are ever shown.' }),
         f('bank_account', 'Account number', 'secret', { secretKind: 'account', help: 'Encrypted. Only the last 4 digits are ever shown.' }),
@@ -218,9 +221,9 @@ const SPEC = {
       { title: 'Address', fields: [
         f('address', 'Street address', 'text', { core: true }),
         f('city', 'City', 'text'),
-        f('state', 'State', 'select', { options: US_STATES }),
+        f('state', 'State / province', 'select', { options: ALL_REGIONS }),
         f('postal_code', 'ZIP / postal code', 'text'),
-        f('country', 'Country', 'text'),
+        f('country', 'Country', 'text', { help: 'United States, Canada or India. Used to filter the Directory by country.' }),
       ] },
       { title: 'Billing & payment', fields: [
         f('billing_contact', 'Accounts receivable contact', 'text'),
@@ -228,7 +231,7 @@ const SPEC = {
         f('payment_terms', 'Payment terms', 'select', { options: PAY_TERMS }),
         f('currency', 'Currency', 'select', { options: ['USD', 'CAD', 'INR', 'EUR', 'GBP'] }),
         f('payment_method', 'Payment method', 'select', { options: ['ACH', 'Wire', 'Check', 'Other'] }),
-        f('tax_id', 'Tax ID (EIN)', 'secret', { secretKind: 'taxid', help: 'Encrypted. Only the last 4 characters are ever shown.' }),
+        f('tax_id', 'Tax ID (EIN / BN / GSTIN / PAN)', 'secret', { secretKind: 'taxid', help: 'Encrypted. Only the last 4 characters are ever shown.' }),
         f('bank_name', 'Bank name', 'text'),
         f('bank_routing', 'Routing number', 'secret', { secretKind: 'routing', help: 'Encrypted. Only the last 4 digits are ever shown.' }),
         f('bank_account', 'Account number', 'secret', { secretKind: 'account', help: 'Encrypted. Only the last 4 digits are ever shown.' }),

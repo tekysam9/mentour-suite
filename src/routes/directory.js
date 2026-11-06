@@ -16,6 +16,7 @@ const { TABLES: DIRECTORY_TABLES, scanDuplicates } = require('./directoryDedup')
 const { upsertAssignmentBilling } = require('./assignmentUpsert');
 const { findOrCreateDirectoryRecord, normalizeName } = require('./directoryUpsert');
 const { checkSupplierRule, repointMarginRows, defaultsFor, syncConsultantStatus, isHrUser, EMPLOYMENT_BY_PROFILE, KIND_BY_EMPLOYMENT } = require('../placementRules');
+const { normalizeCountry } = require('../countries');
 const { aliasKey, splitClientText, isMissingTable, SCHEMA_NEEDED_MESSAGE } = require('./clientAliases');
 
 // Profile form data follows the surviving record when two records are merged:
@@ -195,6 +196,17 @@ async function updateContactFields(tableName, req, res, next) {
 
 // --- Consultants (shared between Ledger and Margin) ---
 
+// The country on each record's profile (free text there: "USA", "ca" ...), as United States / Canada / India, else as typed, else ''.
+async function addCountry(orgId, entity, rows) {
+  try {
+    const [p] = await pool.query(`SELECT record_id, data FROM record_profiles WHERE organization_id = ? AND entity = ?`, [orgId, entity]);
+    const m = new Map();
+    p.forEach((r) => { try { const c = normalizeCountry(JSON.parse(r.data).country); if (c) m.set(r.record_id, c); } catch (e) { /* unreadable profile: no country */ } });
+    rows.forEach((r) => { r.country = m.get(r.id) || ''; });
+  } catch (e) { rows.forEach((r) => { r.country = ''; }); }
+  return rows;
+}
+
 router.get('/consultants', async (req, res, next) => {
   try {
     const [rows] = await pool.query(
@@ -228,6 +240,7 @@ router.get('/consultants', async (req, res, next) => {
     }
     for (const c of rows) c.assignments = byConsultant.get(c.id) || [];
 
+    await addCountry(req.user.organization_id, 'consultants', rows);
     res.json({ consultants: rows });
   } catch (err) {
     next(err);
@@ -721,6 +734,7 @@ router.get('/subvendors', async (req, res, next) => {
        FROM subvendors s WHERE s.organization_id = ? ORDER BY s.name`,
       [req.user.organization_id]
     );
+    await addCountry(req.user.organization_id, 'subvendors', rows);
     res.json({ subvendors: rows });
   } catch (err) {
     next(err);
@@ -740,6 +754,7 @@ router.get('/clients', async (req, res, next) => {
        FROM clients c WHERE c.organization_id = ? ORDER BY c.name`,
       [req.user.organization_id]
     );
+    await addCountry(req.user.organization_id, 'clients', rows);
     res.json({ clients: rows });
   } catch (err) {
     next(err);
@@ -759,6 +774,7 @@ router.get('/programs', async (req, res, next) => {
        WHERE p.organization_id = ? ORDER BY c.name, p.name`,
       [req.user.organization_id]
     );
+    await addCountry(req.user.organization_id, 'programs', rows);
     res.json({ programs: rows });
   } catch (err) {
     next(err);

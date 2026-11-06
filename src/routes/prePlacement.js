@@ -485,7 +485,7 @@ router.post('/:id/send-to-onboarding', async (req, res, next) => {
     const d = parse(row.data, {});
     const workerType = String((req.body || {}).workerType || d.engagement || '');
     if (!onboarding.helpers.TYPES.includes(workerType)) return res.status(400).json({ error: 'Choose how the person is engaged (W2, C2C or 1099) to send them to onboarding.' });
-    const input = toOnboardingInput(d, workerType, who(req));
+    const input = toOnboardingInput(d, workerType, who(req), require('../countries').detectCountry([d.work_location, d.vendor_address, d.laptop_address, d.bill_currency, d.pay_currency].join(' ')) || undefined);
     const { data: obData, errors } = onboarding.helpers.clean(input, {});
     const dropped = errors.map((e) => e.key);
     errors.forEach((e) => { delete obData[e.key]; });
