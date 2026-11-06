@@ -253,7 +253,7 @@
     },
     sv: {
       loading: false, loaded: false, invoices: [], subvendors: [], ledgerFile: null,
-      periodFilter: '', subvendorFilter: '', kindFilter: 'all', paymentFilter: 'all', search: '', page: 0, pageSize: 50,
+      monthFrom: '', monthTo: '', paidFrom: '', paidTo: '', subvendorFilter: '', kindFilter: 'all', paymentFilter: 'all', search: '', page: 0, pageSize: 50,
       generateForm: { periodMonth: '', netTerms: 'NET30', issueDate: '', includeInactive: false },
       generationStart: null, savedId: null,
       generating: false, generateResult: null,
@@ -667,6 +667,24 @@
   }
 
   // rows read from a payments file are paid by definition; generated / hand-entered ones carry a status
+  function svMatch(i, q) {
+    return (String(i.consultant_name || '') + ' ' + String(i.subvendor_name || '') + ' ' + String(i.invoice_number || '') + ' ' + String(i.notes || '')).toLowerCase().indexOf(q) !== -1;
+  }
+  function svFiltersActive() {
+    var sv = state.sv;
+    return !!(sv.monthFrom || sv.monthTo || sv.paidFrom || sv.paidTo || sv.subvendorFilter || sv.kindFilter !== 'all' || sv.paymentFilter !== 'all' || String(sv.search || '').trim());
+  }
+  function svFilterNote(shownCount, undated) {
+    var sv = state.sv, bits = [];
+    if (sv.monthFrom || sv.monthTo) bits.push('invoice month ' + (sv.monthFrom ? monthLabel(sv.monthFrom + '-01') : 'any') + (sv.monthTo && sv.monthTo !== sv.monthFrom ? ' to ' + monthLabel(sv.monthTo + '-01') : (sv.monthFrom ? '' : ' to ' + monthLabel(sv.monthTo + '-01'))));
+    if (sv.paidFrom || sv.paidTo) bits.push('paid ' + (sv.paidFrom || 'any date') + ' to ' + (sv.paidTo || 'any date'));
+    var sel = document.getElementById('svfilter-subvendor');
+    if (sv.subvendorFilter) { var f = (sv.subvendors || []).filter(function (x) { return String(x.id) === String(sv.subvendorFilter); })[0]; bits.push('supplier ' + (f ? f.name : '')); }
+    if (sv.paymentFilter !== 'all') bits.push(({ unpaid: 'unpaid only', paid: 'paid only', partial: 'part-paid only', 'void': 'voided only' })[sv.paymentFilter]);
+    if (String(sv.search || '').trim()) bits.push('matching \u201c' + String(sv.search).trim() + '\u201d');
+    return '<div style="font-size:12px;color:#5E6A75;margin:0 0 8px">' + (bits.length ? 'Filters: ' + escapeHtml(bits.join(' \u00b7 ')) + '.' : 'No filters \u2014 showing every supplier payment.') +
+      (undated ? ' <strong>' + undated + ' paid row' + (undated === 1 ? ' has' : 's have') + ' no payment date recorded, so they cannot be matched by \u201cPaid between\u201d.</strong>' : '') + '</div>';
+  }
   function svIsPaid(i) { return i.kind === 'paid' || i.payment_status === 'paid'; }
 
   function svTable() {
@@ -678,12 +696,22 @@
         : 'No supplier payments yet. Generate them for a month (from each placement\u2019s supplier and pay rate) or add one by hand.') + '</div>';
     }
     var q = String(sv.search || '').trim().toLowerCase();
+    var undated = 0;
     var shown = sv.invoices.filter(function (i) {
+      var im = String(i.period_month || '').slice(0, 7);
+      if (sv.monthFrom && im < sv.monthFrom) return false;
+      if (sv.monthTo && im > sv.monthTo) return false;
+      if (sv.paidFrom || sv.paidTo) {
+        var pd = svIsPaid(i) && !i.voided ? String(i.paid_date || '').slice(0, 10) : '';
+        if (!pd) { if (svIsPaid(i) && !i.voided) undated += 1; return false; }
+        if (sv.paidFrom && pd < sv.paidFrom) return false;
+        if (sv.paidTo && pd > sv.paidTo) return false;
+      }
+      if (sv.paymentFilter === 'partial') return !i.voided && i.payment_state === 'partial' && (!q || svMatch(i, q));
       if (i.voided) { if (!(sv.paymentFilter === 'all' || sv.paymentFilter === 'void')) return false; }
       else if (sv.paymentFilter === 'void') return false;
       else if (!(sv.paymentFilter === 'all' || (sv.paymentFilter === 'paid') === svIsPaid(i))) return false;
-      if (!q) return true;
-      return (String(i.consultant_name || '') + ' ' + String(i.subvendor_name || '') + ' ' + String(i.invoice_number || '') + ' ' + String(i.notes || '')).toLowerCase().indexOf(q) !== -1;
+      return !q || svMatch(i, q);
     });
     var total = 0, paid = 0, unpaid = 0, nPaid = 0, nUnpaid = 0, nPart = 0;
     var nVoid = 0;
@@ -694,7 +722,7 @@
       else if (i.payment_state === 'partial') { nPart += 1; var pp = Number(i.paid_extra) || 0, bal = Number(i.balance) || 0; total += pp + bal; paid += pp; unpaid += bal; nUnpaid += 1; /* the already-paid part is its own payments-file row, so it is not added twice */ }
       else { unpaid += a; nUnpaid += 1; }
     });
-    if (!shown.length) return paySummaryStrip('Supplier payments shown:', 0, 0, 0, 0, 0) + '<div class="fin-empty-state">No supplier payments match this payment filter.</div>';
+    if (!shown.length) return paySummaryStrip('Supplier payments shown:', 0, 0, 0, 0, 0) + svFilterNote(0, undated) + '<div class="fin-empty-state">No supplier payments match these filters. ' + (svFiltersActive() ? '<button type="button" class="fin-btn" data-svq="clear">Clear all filters</button>' : '') + '</div>';
     // Only one page of rows is drawn at a time: thousands of rows (13+ cells each) make every click slow.
     var size = Number(sv.pageSize) || 50, pages = Math.max(1, Math.ceil(shown.length / size));
     if (sv.page >= pages) sv.page = pages - 1; if (sv.page < 0) sv.page = 0;
@@ -709,7 +737,7 @@
         '<label>Rows per page <select id="svfilter-size">' + [50, 100, 250, 500].map(function (n) { return '<option value="' + n + '"' + (n === size ? ' selected' : '') + '>' + n + '</option>'; }).join('') + '</select></label>' +
       '</div>';
     return (
-      paySummaryStrip('Supplier payments shown:', total, paid, unpaid, nPaid, nUnpaid) +
+      paySummaryStrip('Supplier payments shown:', total, paid, unpaid, nPaid, nUnpaid) + svFilterNote(shown.length, undated) +
       (nVoid ? '<div style="font-size:12px;color:#5E6A75;margin:-4px 0 6px">' + nVoid + ' voided invoice' + (nVoid === 1 ? '' : 's') + ' shown greyed and not counted in Total, Paid or Unpaid.</div>' : '') +
       (nPart ? '<div style="font-size:12px;color:#5E6A75;margin:-4px 0 10px">' + nPart + ' invoice' + (nPart === 1 ? ' is' : 's are') + ' part-paid: the amount already paid is counted under Paid and only the balance still due is counted under Unpaid.</div>' : '') +
       '<div id="sv-top"></div>' + pager +
@@ -775,25 +803,40 @@
             '</button>') +
       '</div>' +
       svGenerateResult() +
-      '<div class="fin-controls">' +
-        '<input type="month" id="svfilter-period" value="' + escapeHtml(sv.periodFilter) + '">' +
-        '<select id="svfilter-subvendor"><option value="">All subvendors</option>' +
+      '<div class="fin-filter-panel" style="border:1px solid var(--line);border-radius:8px;padding:12px 14px;margin:0 0 12px;background:#fff">' +
+        '<div style="display:flex;gap:18px;flex-wrap:wrap;align-items:flex-end">' +
+          '<fieldset style="border:0;padding:0;margin:0"><legend style="font-size:12px;color:#5E6A75">Invoice month <span title="The month the hours were worked">(hours month)</span></legend>' +
+            'From <input type="month" id="svf-mfrom" value="' + escapeHtml(sv.monthFrom) + '"> to <input type="month" id="svf-mto" value="' + escapeHtml(sv.monthTo) + '"></fieldset>' +
+          '<fieldset style="border:0;padding:0;margin:0"><legend style="font-size:12px;color:#5E6A75">Paid between <span title="The date the payment was made">(payment date)</span></legend>' +
+            '<input type="date" id="svf-pfrom" value="' + escapeHtml(sv.paidFrom) + '"> and <input type="date" id="svf-pto" value="' + escapeHtml(sv.paidTo) + '"></fieldset>' +
+          '<div style="display:flex;gap:6px;flex-wrap:wrap">' +
+            '<button type="button" class="fin-btn" data-svq="paid-this">Paid this month</button>' +
+            '<button type="button" class="fin-btn" data-svq="paid-last">Paid last month</button>' +
+            '<button type="button" class="fin-btn" data-svq="inv-this">Invoices for this month</button>' +
+            '<button type="button" class="fin-btn" data-svq="unpaid">Unpaid only</button>' +
+            '<button type="button" class="fin-btn" data-svq="clear"' + (svFiltersActive() ? '' : ' disabled') + '>Clear all filters</button>' +
+          '</div>' +
+        '</div>' +
+        '<div class="fin-controls" style="margin-top:10px">' +
+        '<label style="font-size:12px;color:#5E6A75">Supplier<br><select id="svfilter-subvendor"><option value="">All suppliers</option>' +
           sv.subvendors.map(function (x) {
             return '<option value="' + x.id + '"' + (String(sv.subvendorFilter) === String(x.id) ? ' selected' : '') + '>' + escapeHtml(x.name) + '</option>';
           }).join('') +
-        '</select>' +
-        '<input type="search" id="svfilter-search" placeholder="Search consultant, supplier or invoice…" value="' + escapeHtml(sv.search || '') + '" style="min-width:240px" autocomplete="off">' +
-        '<select id="svfilter-payment">' +
-          '<option value="all"' + (sv.paymentFilter === 'all' ? ' selected' : '') + '>Paid and unpaid</option>' +
-          '<option value="unpaid"' + (sv.paymentFilter === 'unpaid' ? ' selected' : '') + '>Unpaid only</option>' +
-          '<option value="paid"' + (sv.paymentFilter === 'paid' ? ' selected' : '') + '>Paid only</option>' +
-          '<option value="void"' + (sv.paymentFilter === 'void' ? ' selected' : '') + '>Voided only</option>' +
-        '</select>' +
-        '<select id="svfilter-kind">' +
+        '</select></label>' +
+        '<label style="font-size:12px;color:#5E6A75">Search<br><input type="search" id="svfilter-search" placeholder="Consultant, supplier, invoice # or note" value="' + escapeHtml(sv.search || '') + '" style="min-width:260px" autocomplete="off"></label>' +
+        '<label style="font-size:12px;color:#5E6A75">Payment status<br><select id="svfilter-payment">' +
+          '<option value="all"' + (sv.paymentFilter === 'all' ? ' selected' : '') + '>All</option>' +
+          '<option value="paid"' + (sv.paymentFilter === 'paid' ? ' selected' : '') + '>Paid</option>' +
+          '<option value="unpaid"' + (sv.paymentFilter === 'unpaid' ? ' selected' : '') + '>Unpaid</option>' +
+          '<option value="partial"' + (sv.paymentFilter === 'partial' ? ' selected' : '') + '>Part-paid</option>' +
+          '<option value="void"' + (sv.paymentFilter === 'void' ? ' selected' : '') + '>Voided</option>' +
+        '</select></label>' +
+        '<label style="font-size:12px;color:#5E6A75">Source<br><select id="svfilter-kind">' +
           '<option value="all"' + (sv.kindFilter === 'all' ? ' selected' : '') + '>All</option>' +
-          '<option value="paid"' + (sv.kindFilter === 'paid' ? ' selected' : '') + '>From payments file (read-only)</option>' +
+          '<option value="paid"' + (sv.kindFilter === 'paid' ? ' selected' : '') + '>Payments file (read-only)</option>' +
           '<option value="generated"' + (sv.kindFilter === 'generated' ? ' selected' : '') + '>Generated invoices</option>' +
-        '</select>' +
+        '</select></label>' +
+        '</div>' +
       '</div>' +
       svTable()
     );
@@ -1051,7 +1094,6 @@
     sv.loading = true;
     render();
     var params = new URLSearchParams();
-    if (sv.periodFilter) params.set('periodMonth', sv.periodFilter);
     if (sv.subvendorFilter) params.set('subvendorId', sv.subvendorFilter);
     if (sv.kindFilter !== 'all') params.set('kind', sv.kindFilter);
     fetch('/api/subvendor-invoices?' + params.toString()).then(function (res) {
@@ -1174,6 +1216,20 @@
   }
 
   appEl.addEventListener('click', function (e) {
+    var svQ = e.target.closest('[data-svq]');
+    if (svQ) {
+      var sv1 = state.sv, act = svQ.getAttribute('data-svq'), now = new Date();
+      var ym = function (d) { return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0'); };
+      var ymd = function (d) { return ym(d) + '-' + String(d.getDate()).padStart(2, '0'); };
+      var first = function (y, m) { return new Date(y, m, 1); }, last = function (y, m) { return new Date(y, m + 1, 0); };
+      if (act === 'clear') { sv1.monthFrom = sv1.monthTo = sv1.paidFrom = sv1.paidTo = ''; sv1.search = ''; sv1.paymentFilter = 'all'; var reload = sv1.subvendorFilter || sv1.kindFilter !== 'all'; sv1.subvendorFilter = ''; sv1.kindFilter = 'all'; sv1.page = 0; if (reload) loadSubvendor(); else render(); return; }
+      sv1.monthFrom = sv1.monthTo = sv1.paidFrom = sv1.paidTo = ''; sv1.page = 0;
+      if (act === 'paid-this') { sv1.paidFrom = ymd(first(now.getFullYear(), now.getMonth())); sv1.paidTo = ymd(last(now.getFullYear(), now.getMonth())); sv1.paymentFilter = 'paid'; }
+      else if (act === 'paid-last') { sv1.paidFrom = ymd(first(now.getFullYear(), now.getMonth() - 1)); sv1.paidTo = ymd(last(now.getFullYear(), now.getMonth() - 1)); sv1.paymentFilter = 'paid'; }
+      else if (act === 'inv-this') { sv1.monthFrom = sv1.monthTo = ym(now); sv1.paymentFilter = 'all'; }
+      else if (act === 'unpaid') { sv1.paymentFilter = 'unpaid'; }
+      render(); return;
+    }
     var svPg = e.target.closest('[data-svpage]');
     if (svPg) {
       var dir = svPg.getAttribute('data-svpage'), sv0 = state.sv;
@@ -1561,8 +1617,11 @@
       patchSv(fid, fpatch);
       return;
     }
-    var svPeriod = e.target.closest('#svfilter-period');
-    if (svPeriod) { state.sv.periodFilter = svPeriod.value; state.sv.page = 0; loadSubvendor(); return; }
+    var svRange = e.target.closest('#svf-mfrom, #svf-mto, #svf-pfrom, #svf-pto');
+    if (svRange) {
+      var rk = { 'svf-mfrom': 'monthFrom', 'svf-mto': 'monthTo', 'svf-pfrom': 'paidFrom', 'svf-pto': 'paidTo' }[svRange.id];
+      state.sv[rk] = svRange.value; state.sv.page = 0; render(); return;
+    }
     var svSub = e.target.closest('#svfilter-subvendor');
     if (svSub) { state.sv.subvendorFilter = svSub.value; state.sv.page = 0; loadSubvendor(); return; }
     var svPay = e.target.closest('#svfilter-payment');

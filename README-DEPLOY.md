@@ -557,3 +557,7 @@ Pre-placement is retired from the menu and home page (old records and `/pre-plac
 - **Withdrawn** (consultant backed out) sits beside Cancelled (we stopped). A reason from a list is required ("Other" needs an explanation). Withdrawing erases date of birth and SSN; everything else is kept until HR deletes the record on request. HR can optionally mark Directory records *that onboarding created* inactive. HR can restore a withdrawn record to draft. Completed onboardings cannot be withdrawn.
 - Recruiters still see only the onboardings they created.
 - Deploy: push `main`, run `db/schema.sql` once (status ENUM, `secrets`, `withdrawn_reason`, `withdrawn_at`), keep `FIELD_ENCRYPTION_KEY` set.
+
+## Supplier payments: clearer filters
+
+The filter bar is now labelled: **Invoice month** (the hours month) from/to, **Paid between** (the payment date), Supplier, Search, Payment status (All / Paid / Unpaid / Part-paid / Voided) and Source. Quick buttons: *Paid this month*, *Paid last month*, *Invoices for this month*, *Unpaid only*, *Clear all filters*. A line under the totals states the active filters. Paid rows with no recorded payment date can't be matched by "Paid between"; the page says how many. Front-end only, no database change.

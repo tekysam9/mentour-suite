@@ -155,6 +155,9 @@ async function main() {
     check('pre-placement page has the Add vendor to Directory button', ppHtml.includes('data-act="add-vendor"') && ppHtml.includes('Add vendor to Directory'));
     check('pre-placement list offers to add the missing vendors', ppHtml.includes('data-act="sync-vendors"'));
     check('pre-placement page has the optional Resume card', ppHtml.includes('data-act="resume-up"') && ppHtml.includes('(optional)') && ppHtml.includes('resume-del') && ppHtml.includes('Upload a different version'));
+    const invF = await (await fetch(BASE + '/invoices.html')).text();
+    check('Supplier payments filters: invoice-month range, paid-between dates, quick buttons, clear-all, status incl. part-paid',
+      ['svf-mfrom', 'svf-mto', 'svf-pfrom', 'svf-pto', 'data-svq="paid-this"', 'data-svq="paid-last"', 'data-svq="clear"', 'value="partial"', 'no payment date recorded'].every((x) => invF.includes(x)) && !invF.includes('svfilter-period'));
     check('home page no longer lists Pre-placement as a separate module', !fs.readFileSync(path.join(pubDir, 'index.html'), 'utf8').includes('href="/pre-placement.html"'));
     const obHtml = await (await fetch(BASE + '/onboarding.html')).text();
     check('onboarding page: sensitive details with eye, Resume box with versions, Withdrawn status and reason picker, pull-back wording',
