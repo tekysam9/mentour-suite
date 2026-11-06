@@ -163,6 +163,9 @@ async function main() {
       ['function eff(', 'function onCountryChange', 'CUR_SYM', 'countryNote', 'different currencies'].every((x) => obHtml0.includes(x)));
     const dirHtml0 = await (await fetch(BASE + '/directory.html')).text();
     check('Directory lists have a Country filter (with counts) and a Country column', dirHtml0.includes('data-filter="country"') && dirHtml0.includes('Country not set') && dirHtml0.includes('<th>Country</th>'));
+    const curJs = await fetch(BASE + '/currency.js');
+    check('Fin-Module shows each amount in its own currency and keeps totals per currency',
+      curJs.status === 200 && ['curMoney(inv.rate, inv.currency)', 'curSum(total)', 'data-field="currency"', 'data-svfield="currency"'].every((x) => invF.includes(x)) && (await (await fetch(BASE + '/fin-history.js')).text()).includes('histCurCard') && dirHtml0.includes('data-assign-bcur') && dirHtml0.includes('/currency.js'));
     check('home page no longer lists Pre-placement as a separate module', !fs.readFileSync(path.join(pubDir, 'index.html'), 'utf8').includes('href="/pre-placement.html"'));
     const obHtml = await (await fetch(BASE + '/onboarding.html')).text();
     check('onboarding page: sensitive details with eye, Resume box with versions, Withdrawn status and reason picker, pull-back wording',

@@ -223,7 +223,7 @@ router.get('/consultants', async (req, res, next) => {
     // Client/Program and Billing column without a fetch per row — one
     // extra query here instead of N later.
     const [assignmentRows] = await pool.query(
-      `SELECT a.id, a.consultant_id, a.billing, a.pay_rate, a.source, a.status, a.left_date, a.client_id, a.program_id,
+      `SELECT a.id, a.consultant_id, a.billing, a.pay_rate, a.billing_currency, a.pay_currency, a.source, a.status, a.left_date, a.client_id, a.program_id,
          a.employment_type, a.supplier_id, cl.name AS client_name, p.name AS program_name, sv.name AS supplier_name
        FROM consultant_assignments a
        LEFT JOIN clients cl ON cl.id = a.client_id
@@ -269,7 +269,7 @@ router.get('/consultants/:id/assignments', async (req, res, next) => {
     if (!consultant) return res.status(404).json({ error: 'Not found.' });
 
     const [rows] = await pool.query(
-      `SELECT a.id, a.billing, a.pay_rate, a.source, a.status, a.left_date, a.client_id, a.program_id,
+      `SELECT a.id, a.billing, a.pay_rate, a.billing_currency, a.pay_currency, a.source, a.status, a.left_date, a.client_id, a.program_id,
          a.employment_type, a.supplier_id, cl.name AS client_name, p.name AS program_name, sv.name AS supplier_name
        FROM consultant_assignments a
        LEFT JOIN clients cl ON cl.id = a.client_id
@@ -321,11 +321,13 @@ router.post('/consultants/:id/assignments', async (req, res, next) => {
       organizationId: req.user.organization_id, consultantId: Number(req.params.id),
       clientId, programId, billing, payRate, source: 'manual', status: 'active',
     });
+    { const CURm = require('../currency'); const bc = CURm.norm(body.billing_currency), pc = CURm.norm(body.pay_currency);
+      if (bc || pc) await pool.query('UPDATE consultant_assignments SET billing_currency = COALESCE(?, billing_currency), pay_currency = COALESCE(?, pay_currency) WHERE id = ?', [bc, pc, assignmentId]); }
     const dflt = await defaultsFor(pool, req.user.organization_id, Number(req.params.id));
     await pool.query('UPDATE consultant_assignments SET employment_type = COALESCE(employment_type, ?), supplier_id = COALESCE(supplier_id, ?) WHERE id = ?', [dflt.employmentType, dflt.supplierId, assignmentId]);
 
     const [rows] = await pool.query(
-      `SELECT a.id, a.billing, a.pay_rate, a.source, a.status, a.left_date, a.client_id, a.program_id,
+      `SELECT a.id, a.billing, a.pay_rate, a.billing_currency, a.pay_currency, a.source, a.status, a.left_date, a.client_id, a.program_id,
          a.employment_type, a.supplier_id, cl.name AS client_name, p.name AS program_name, sv.name AS supplier_name
        FROM consultant_assignments a
        LEFT JOIN clients cl ON cl.id = a.client_id
@@ -340,7 +342,7 @@ router.post('/consultants/:id/assignments', async (req, res, next) => {
   }
 });
 
-const ASSIGN_ONE = `SELECT a.id, a.consultant_id, a.billing, a.pay_rate, a.source, a.status, a.left_date, a.client_id, a.program_id,
+const ASSIGN_ONE = `SELECT a.id, a.consultant_id, a.billing, a.pay_rate, a.billing_currency, a.pay_currency, a.source, a.status, a.left_date, a.client_id, a.program_id,
     a.employment_type, a.supplier_id, cl.name AS client_name, p.name AS program_name, sv.name AS supplier_name
   FROM consultant_assignments a
   LEFT JOIN clients cl ON cl.id = a.client_id
@@ -360,6 +362,12 @@ router.patch('/assignments/:id', async (req, res, next) => {
     if (!curRows.length) return res.status(404).json({ error: 'Not found.' });
     const cur = curRows[0];
     const sets = []; const params = [];
+    for (const key of ['billing_currency', 'pay_currency']) {
+      if (body[key] === undefined) continue;
+      const cv = body[key] === null || body[key] === '' ? null : require('../currency').norm(body[key]);
+      if (body[key] !== null && body[key] !== '' && !cv) return res.status(400).json({ error: 'Currency must be USD, CAD or INR.' });
+      sets.push(key + ' = ?'); params.push(cv);
+    }
     for (const [key, col, label] of [['billing', 'billing', 'Billing'], ['pay_rate', 'pay_rate', 'Pay rate']]) {
       if (body[key] === undefined) continue;
       const v = num(body[key]);
@@ -570,7 +578,7 @@ router.post('/consultants/:id/assignments/bulk', async (req, res, next) => {
     }
     await conn.commit();
     const [assignments] = await pool.query(
-      `SELECT a.id, a.billing, a.pay_rate, a.source, a.status, a.left_date, a.client_id, a.program_id,
+      `SELECT a.id, a.billing, a.pay_rate, a.billing_currency, a.pay_currency, a.source, a.status, a.left_date, a.client_id, a.program_id,
          a.employment_type, a.supplier_id, cl.name AS client_name, p.name AS program_name, sv.name AS supplier_name
        FROM consultant_assignments a
        LEFT JOIN clients cl ON cl.id = a.client_id
@@ -636,7 +644,7 @@ router.post('/consultants/:id/assignments/from-text', async (req, res, next) => 
     if (existed && payRate !== undefined) await conn.query('UPDATE consultant_assignments SET pay_rate = COALESCE(pay_rate, ?) WHERE id = ?', [payRate, assignmentId]);
     await conn.commit();
     const [rows] = await pool.query(
-      `SELECT a.id, a.billing, a.pay_rate, a.source, a.status, a.left_date, a.client_id, a.program_id,
+      `SELECT a.id, a.billing, a.pay_rate, a.billing_currency, a.pay_currency, a.source, a.status, a.left_date, a.client_id, a.program_id,
          a.employment_type, a.supplier_id, cl.name AS client_name, p.name AS program_name, sv.name AS supplier_name
        FROM consultant_assignments a
        LEFT JOIN clients cl ON cl.id = a.client_id

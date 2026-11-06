@@ -47,6 +47,18 @@ function histLoad(keepFocusId) {
     .catch(function (err) { h.loading = false; h.error = err.message; render(); });
 }
 
+// Billed / Paid / Unpaid for the summary, split by currency (a total is never added across currencies).
+function histCurCard(s, which) {
+  if (!s.amounts) return histMoney(which === 'billed' ? s.amount : which === 'paid' ? s.amount - s.unpaidAmount : s.unpaidAmount);
+  var m = {};
+  Object.keys(s.amounts).forEach(function (k) { m[k] = which === 'billed' ? s.amounts[k] : which === 'paid' ? s.amounts[k] - (s.unpaidAmounts[k] || 0) : (s.unpaidAmounts[k] || 0); });
+  return curSum(m);
+}
+function histOnePct(s, which) {
+  if (!s.amounts || Object.keys(s.amounts).length !== 1) return '';
+  var k = Object.keys(s.amounts)[0], b = s.amounts[k], u = s.unpaidAmounts[k] || 0;
+  return b ? Math.round((which === 'paid' ? b - u : u) / b * 100) + '% of billed' : '';
+}
 function histCard(label, value, sub) {
   return '<div class="hist-card"><div class="hist-card-label">' + label + '</div><div class="hist-card-value">' + value + '</div>' +
     (sub ? '<div class="hist-card-sub">' + sub + '</div>' : '') + '</div>';
@@ -90,7 +102,7 @@ function renderHistoryTab() {
     d.years.map(function (y) {
       var on = String(y.year) === String(h.year);
       return '<button type="button" class="hist-chip' + (on ? ' on' : '') + '" aria-pressed="' + on + '" data-hist-year="' + y.year + '">' + y.year +
-        '<span>' + histFmt(y.invoices) + ' · ' + histShort(y.amount) + '</span></button>';
+        '<span>' + histFmt(y.invoices) + ' · ' + (y.amounts ? curSum(y.amounts, true) : histShort(y.amount)) + '</span></button>';
     }).join('') + '</div>';
 
   // Month tiles
@@ -103,7 +115,7 @@ function renderHistoryTab() {
     HIST_MONTHS.map(function (name, i) {
       var m = byMonth[i + 1], on = String(h.month) === String(i + 1);
       return '<button type="button" class="hist-month' + (on ? ' on' : '') + (m ? '' : ' empty') + '" aria-pressed="' + on + '" data-hist-month="' + (i + 1) + '">' +
-        '<b>' + name.slice(0, 3) + '</b>' + (m ? '<span>' + histFmt(m.invoices) + ' · ' + histShort(m.amount) + '</span>' : '<span>none</span>') + '</button>';
+        '<b>' + name.slice(0, 3) + '</b>' + (m ? '<span>' + histFmt(m.invoices) + ' · ' + (m.amounts ? curSum(m.amounts, true) : histShort(m.amount)) + '</span>' : '<span>none</span>') + '</button>';
     }).join('') + '</div>';
 
   // Filters
@@ -125,9 +137,9 @@ function renderHistoryTab() {
     histCard('Invoices', histFmt(s.invoices), escapeHtml(scope)) +
     histCard('Consultants', histFmt(s.consultants), 'with an invoice') +
     histCard('Hours', histFmt(Math.round(s.hours * 100) / 100), '') +
-    histCard('Billed', histMoney(s.amount), '') +
-    histCard('Paid', histMoney(s.amount - s.unpaidAmount), s.amount ? Math.round((s.amount - s.unpaidAmount) / s.amount * 100) + '% of billed' : '') +
-    histCard('Unpaid', histMoney(s.unpaidAmount), s.amount ? Math.round(s.unpaidAmount / s.amount * 100) + '% of billed' : '') +
+    histCard('Billed', histCurCard(s, 'billed'), '') +
+    histCard('Paid', histCurCard(s, 'paid'), histOnePct(s, 'paid')) +
+    histCard('Unpaid', histCurCard(s, 'unpaid'), histOnePct(s, 'unpaid')) +
   '</div>';
 
   // Actions
@@ -161,8 +173,8 @@ function renderHistoryTab() {
         '<td>' + (cp ? escapeHtml(cp) : '<span class="fin-muted">—</span>') + '</td>' +
         '<td>' + histCategoryTag(inv) + '</td>' +
         '<td class="fin-num">' + (inv.hours === null ? '<span class="fin-muted">—</span>' : Number(inv.hours)) + '</td>' +
-        '<td class="fin-num">' + (inv.rate === null ? '<span class="hist-norate" title="' + escapeHtml(inv.notes || 'No billing rate yet') + '">no rate</span>' : '$' + money(inv.rate)) + '</td>' +
-        '<td class="fin-num">' + (inv.amount === null ? '<span class="fin-muted">—</span>' : '$' + money(inv.amount)) + '</td>' +
+        '<td class="fin-num">' + (inv.rate === null ? '<span class="hist-norate" title="' + escapeHtml(inv.notes || 'No billing rate yet') + '">no rate</span>' : curMoney(inv.rate, inv.currency)) + '</td>' +
+        '<td class="fin-num">' + (inv.amount === null ? '<span class="fin-muted">—</span>' : curMoney(inv.amount, inv.currency)) + '</td>' +
         '<td><button type="button" class="fin-status-badge fin-status-' + inv.payment_status + '" data-hist-toggle aria-label="' + inv.payment_status + ' — click to mark ' + (inv.payment_status === 'paid' ? 'unpaid' : 'paid') + '">' +
           (inv.payment_status === 'paid' ? 'Paid' : 'Unpaid') + '</button></td></tr>';
     }).join('') + '</tbody></table></div>';

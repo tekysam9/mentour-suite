@@ -3695,6 +3695,54 @@ async function main() {
         await svOwner.fetch('/api/onboarding/' + caId, { method: 'DELETE' });
         await svOwner.fetch('/api/onboarding/' + inId, { method: 'DELETE' });
 
+        // ---------------- currency in Fin-Module (CAD / INR placements)
+        r = await svOwner.fetch('/api/onboarding', { method: 'POST', body: JSON.stringify({ workerType: 'W2', data: { consultant_name: 'Cy Cad', country: 'Canada', job_title: 'Dev', work_state: 'ON', h1b_filing_required: 'No', start_date: '2026-12-01', end_client: 'CurClient', bill_rate: 80, pay_rate: 60, recruiter: 'R', invoicing_method: 'Other' } }) });
+        const curOb = r.body.id;
+        r = await svOwner.fetch('/api/onboarding/' + curOb + '/create-records', { method: 'POST', body: JSON.stringify({ clientName: 'CurClient', vendorName: '' }) });
+        const [[curA]] = await dbConn.query("SELECT a.id, a.consultant_id, a.billing_currency, a.pay_currency FROM consultant_assignments a JOIN consultants c ON c.id = a.consultant_id WHERE c.name = 'Cy Cad'");
+        check('currency: creating directory records stores the placement’s CAD billing and pay currency', r.status === 200 && curA.billing_currency === 'CAD' && curA.pay_currency === 'CAD', curA);
+        r = await svOwner.fetch('/api/directory/consultants/' + curA.consultant_id + '/assignments');
+        check('currency: the placement list returns both currencies', r.body.assignments[0].billing_currency === 'CAD' && r.body.assignments[0].pay_currency === 'CAD', r.body.assignments[0]);
+        r = await svOwner.fetch('/api/directory/assignments/' + curA.id, { method: 'PATCH', body: JSON.stringify({ billing_currency: 'USD', pay_currency: 'INR' }) });
+        check('currency: a placement’s currencies can be changed (USD bill, INR pay)', r.status === 200 && r.body.assignment.billing_currency === 'USD' && r.body.assignment.pay_currency === 'INR', r.body);
+        r = await svOwner.fetch('/api/directory/assignments/' + curA.id, { method: 'PATCH', body: JSON.stringify({ pay_currency: 'EUR' }) });
+        check('currency: an unsupported currency is refused (400)', r.status === 400, r.body);
+        await svOwner.fetch('/api/directory/assignments/' + curA.id, { method: 'PATCH', body: JSON.stringify({ billing_currency: 'CAD', pay_currency: 'CAD' }) });
+        // client invoice follows the placement; a row can be overridden
+        r = await svOwner.fetch('/api/invoices/generate', { method: 'POST', body: JSON.stringify({ periodMonth: '2026-11', netTerms: 'NET30' }) });
+        r = await svOwner.fetch('/api/invoices?months=2026-11&includeInactive=1');
+        const curInv = r.body.invoices.find((x) => x.consultant_name === 'Cy Cad');
+        check('currency: a generated client invoice shows the placement’s currency (CAD) and the totals are split by currency', curInv && curInv.currency === 'CAD' && r.body.totals.byCurrency.CAD !== undefined, [curInv && curInv.currency, r.body.totals.byCurrency]);
+        r = await svOwner.fetch('/api/invoices/' + curInv.id, { method: 'PATCH', body: JSON.stringify({ currency: 'USD' }) });
+        check('currency: one invoice can be set to a different currency and the row comes back with it', r.status === 200 && r.body.invoice.currency === 'USD', r.body.invoice);
+        r = await svOwner.fetch('/api/invoices/' + curInv.id, { method: 'PATCH', body: JSON.stringify({ currency: 'GBP' }) });
+        check('currency: an unsupported invoice currency is refused (400)', r.status === 400, r.body);
+        r = await svOwner.fetch('/api/invoices/' + curInv.id, { method: 'PATCH', body: JSON.stringify({ currency: '' }) });
+        check('currency: clearing it makes the invoice follow the placement again', r.status === 200 && r.body.invoice.currency === 'CAD', r.body.invoice);
+        r = await svOwner.fetch('/api/invoices/history?year=2026');
+        const hi = r.body.invoices.find((x) => x.consultant_name === 'Cy Cad');
+        check('currency: the year / month view rows carry their currency and the summary is split by currency', hi && hi.currency === 'CAD' && r.body.summary.amounts && typeof r.body.summary.amounts === 'object' && Array.isArray(r.body.months), [hi && hi.currency, r.body.summary.amounts]);
+        r = await svOwner.raw('/api/invoices/history/export?year=2026');
+        check('currency: the CSV export has a currency column', r.status === 200 && /,"?currency"?,/.test(r.buf.toString('utf8').split('\n')[0]), r.buf.toString('utf8').split('\n')[0]);
+        // supplier payments follow the placement's pay currency
+        const [[curSv]] = await dbConn.query("INSERT INTO subvendors (organization_id, name, status) SELECT organization_id, 'Cur Supplier Inc', 'active' FROM consultants WHERE id = ?", [curA.consultant_id]).then(async () => dbConn.query("SELECT id FROM subvendors WHERE name = 'Cur Supplier Inc'"));
+        await dbConn.query("UPDATE consultant_assignments SET supplier_id = ?, pay_currency = 'INR' WHERE id = ?", [curSv.id, curA.id]);
+        r = await svOwner.fetch('/api/subvendor-invoices', { method: 'POST', body: JSON.stringify({ subvendorId: curSv.id, consultantId: curA.consultant_id, periodMonth: '2026-11', rate: 4000, hours: 10, netTerms: 'NET30' }) });
+        const svId2 = r.body.id;
+        r = await svOwner.fetch('/api/subvendor-invoices?periodMonth=2026-11');
+        const svRow = r.body.invoices.find((x) => x.id === svId2);
+        check('currency: a supplier payment shows the placement’s pay currency (INR)', svRow && svRow.currency === 'INR', svRow && svRow.currency);
+        r = await svOwner.fetch('/api/subvendor-invoices/' + svId2, { method: 'PATCH', body: JSON.stringify({ currency: 'USD' }) });
+        const r3 = await svOwner.fetch('/api/subvendor-invoices?periodMonth=2026-11');
+        check('currency: a supplier payment’s currency can be overridden', r.status === 200 && r3.body.invoices.find((x) => x.id === svId2).currency === 'USD', r.body);
+        r = await svOwner.fetch('/api/subvendor-invoices/' + svId2, { method: 'PATCH', body: JSON.stringify({ currency: 'XXX' }) });
+        check('currency: an unsupported supplier-payment currency is refused (400)', r.status === 400, r.body);
+        // a consultant with no currency set is untouched (USD)
+        r = await svOwner.fetch('/api/invoices?includeInactive=1');
+        check('currency: invoices on placements with no currency set are USD', r.body.invoices.filter((x) => !['Cy Cad', 'Cara Canuck'].includes(x.consultant_name)).every((x) => x.currency === 'USD'), [...new Set(r.body.invoices.map((x) => x.currency))]);
+        await svOwner.fetch('/api/subvendor-invoices/' + svId2, { method: 'DELETE' });
+        await svOwner.fetch('/api/onboarding/' + curOb, { method: 'DELETE' });
+
         // resume (optional)
         const pdfB64 = Buffer.from('%PDF-1.4\n1 0 obj<<>>endobj\ntrailer<<>>\n%%EOF\n').toString('base64');
         r = await svOwner.fetch('/api/pre-placement/' + ppId);

@@ -53,6 +53,13 @@ const router = express.Router();
 router.use(requireAuth);
 
 const NET_TERMS_RE = /^NET\d{1,3}$/i;
+const CUR = require('../currency');
+// the currency symbol an error message should use for this invoice
+async function symFor(req, inv) {
+  if (CUR.norm(inv.currency)) return CUR.sym(inv.currency);
+  const resolve = await CUR.payCurrencyResolver(pool, req.user.organization_id);
+  return CUR.sym(resolve(inv.consultant_id, inv.subvendor_id));
+}
 const MONTHS = { jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12 };
 
 function isTruthyFlag(value) {
@@ -324,7 +331,7 @@ router.get('/', async (req, res, next) => {
         period_month: dateStr(g.period_month),
         subvendor_id: g.subvendor_id, subvendor_name: g.subvendor_name,
         consultant_id: g.consultant_id, consultant_name: g.consultant_name, consultant_status: g.consultant_status,
-        rate: Number(g.rate), hours: Number(g.hours), amount: Number(g.amount),
+        rate: Number(g.rate), hours: Number(g.hours), amount: Number(g.amount), currency: g.currency,
         rate_source: g.rate_source, net_terms: g.net_terms,
         issue_date: dateStr(g.issue_date), due_date: dateStr(g.due_date),
         paid_date: g.paid_date ? dateStr(g.paid_date) : null, overrides_ledger: !!g.overrides_ledger,
@@ -336,6 +343,9 @@ router.get('/', async (req, res, next) => {
       .filter((g) => g.overrides_ledger || g.voided || g.payment_state === 'partial' || !paidKeys.has(keyOf(g.subvendor_id, g.consultant_id, g.period_month)));
 
     let invoices = paid.concat(generated);
+    // Each row shows its own currency (set on the row, else the placement's pay currency, else USD).
+    const payCur = await CUR.payCurrencyResolver(pool, organizationId);
+    invoices.forEach((i) => { i.currency = CUR.norm(i.currency) || payCur(i.consultant_id, i.subvendor_id); });
     if (periodMonth) invoices = invoices.filter((i) => i.period_month === periodMonth);
     if (subvendorId) invoices = invoices.filter((i) => i.subvendor_id === subvendorId);
     if (req.query.kind) invoices = invoices.filter((i) => i.kind === req.query.kind);
@@ -584,7 +594,7 @@ router.patch('/:id', async (req, res, next) => {
       const grossNow = has('amount') ? toNullableNumber(body.amount) : (existing.amount === null ? null : Number(existing.amount));
       // What is owed = invoice amount minus its deductions.
       const total = grossNow === null ? null : r2(Math.max(0, grossNow - dedTotal((await loadDeductions(req.user.organization_id, existing.id)).get(existing.id), grossNow)));
-      if (ap !== null && total !== null && ap > total + 0.005) return res.status(400).json({ error: 'Paid so far cannot be more than the amount owed after deductions ($' + total.toFixed(2) + ').' });
+      if (ap !== null && total !== null && ap > total + 0.005) return res.status(400).json({ error: 'Paid so far cannot be more than the amount owed after deductions (' + (await symFor(req, existing)) + total.toFixed(2) + ').' });
       if (ap !== null && total !== null && ap >= total - 0.005 && ap > 0 && !has('paymentStatus')) {
         // fully paid: mark it paid
         sets.push('amount_paid = ?'); params.push(total);
@@ -599,6 +609,11 @@ router.patch('/:id', async (req, res, next) => {
       if (!['yes', 'no'].includes(body.timesheetSubmitted)) return res.status(400).json({ error: 'timesheetSubmitted must be yes or no.' });
       sets.push('timesheet_submitted = ?'); params.push(body.timesheetSubmitted);
     }
+    if (has('currency')) {
+      const cur = body.currency === null || body.currency === '' ? null : CUR.norm(body.currency);
+      if (body.currency !== null && body.currency !== '' && !cur) return res.status(400).json({ error: 'currency must be USD, CAD or INR.' });
+      sets.push('currency = ?'); params.push(cur);
+    }
     if (has('notes')) {
       sets.push('notes = ?');
       params.push(body.notes === null || body.notes === undefined ? null : String(body.notes).slice(0, 1000));
@@ -609,7 +624,7 @@ router.patch('/:id', async (req, res, next) => {
       const newGross = Number(params[amtIdx]);
       const dl = (await loadDeductions(req.user.organization_id, existing.id)).get(existing.id);
       const dt = dedTotal(dl, newGross);
-      if (dt > newGross + 0.005) return res.status(400).json({ error: 'That amount is less than the deductions already on this invoice ($' + dt.toFixed(2) + '). Remove a deduction first.' });
+      if (dt > newGross + 0.005) return res.status(400).json({ error: 'That amount is less than the deductions already on this invoice (' + (await symFor(req, existing)) + dt.toFixed(2) + '). Remove a deduction first.' });
       const paidTyped = sets.indexOf('amount_paid = ?') !== -1 ? Number(params[sets.indexOf('amount_paid = ?')]) || 0 : Number(existing.amount_paid) || 0;
       if (paidTyped > r2(newGross - dt) + 0.005) return res.status(400).json({ error: 'That amount is less than what is already paid plus deductions. Lower Paid so far first.' });
     }
@@ -679,6 +694,7 @@ router.post('/', async (req, res, next) => {
     }
     await pool.query('UPDATE subvendor_invoices SET invoice_number = ? WHERE id = ?',
       ['SVI-' + periodMonth.slice(0, 7).replace('-', '') + '-' + String(result.insertId).padStart(5, '0'), result.insertId]);
+    if (CUR.norm(b.currency)) await pool.query('UPDATE subvendor_invoices SET currency = ? WHERE id = ?', [CUR.norm(b.currency), result.insertId]);
     res.status(201).json({ id: result.insertId });
   } catch (err) { next(err); }
 });
@@ -748,9 +764,9 @@ router.post('/:id/deductions', async (req, res, next) => {
     const existingList = (await loadDeductions(req.user.organization_id, inv.id)).get(inv.id) || [];
     const adding = dedAmount({ kind, value }, gross);
     const after = r2(dedTotal(existingList, gross) + adding);
-    if (after > gross + 0.005) return res.status(400).json({ error: 'Deductions would be more than the invoice amount ($' + gross.toFixed(2) + ').' });
+    if (after > gross + 0.005) return res.status(400).json({ error: 'Deductions would be more than the invoice amount (' + (await symFor(req, inv)) + gross.toFixed(2) + ').' });
     const paid = Number(inv.amount_paid) || 0;
-    if (paid > r2(gross - after) + 0.005) return res.status(400).json({ error: 'That deduction leaves less owed than is already paid ($' + paid.toFixed(2) + '). Lower Paid so far first.' });
+    if (paid > r2(gross - after) + 0.005) return res.status(400).json({ error: 'That deduction leaves less owed than is already paid (' + (await symFor(req, inv)) + paid.toFixed(2) + '). Lower Paid so far first.' });
     if (inv.payment_status === 'paid') return res.status(409).json({ error: 'This invoice is already marked Paid. Set it back to Unpaid before adding a deduction.' });
     try {
       const [r] = await pool.query(

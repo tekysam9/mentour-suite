@@ -191,6 +191,7 @@
 </style>
 <script src="/lib/xlsx.full.min.js"></script>
 <script src="/import-hours.js"></script>
+<script src="/currency.js"></script>
 <link rel="stylesheet" href="/theme.css">
 </head>
 <body>
@@ -286,7 +287,7 @@
         '<td>' + clientProgramCell(inv) + '</td>' +
         '<td>' + (invMonthKey(inv) ? escapeHtml(ImportHours.monthKeyLabel(invMonthKey(inv))) : '') + '</td>' +
         '<td class="fin-muted">' + (invMonthKey(inv) ? escapeHtml(ImportHours.monthKeyLabel(ImportHours.hoursMonthKey(invMonthKey(inv)))) : '') + '</td>' +
-        '<td>' + (inv.rate !== null ? '$' + money(inv.rate) + '/hr' : '<span class="fin-muted">—</span>') + '</td>' +
+        '<td>' + (inv.rate !== null ? curMoney(inv.rate, inv.currency) + '/hr' : '<span class="fin-muted">—</span>') + '<div>' + curSelectHtml('data-field="currency"', inv.currency) + '</div></td>' +
         '<td><input class="fin-num-input" type="number" step="0.25" data-field="hours" value="' + (inv.hours !== null && inv.hours !== undefined ? inv.hours : '') + '" placeholder="—"></td>' +
         '<td><input class="fin-num-input" type="number" step="0.01" data-field="amount" value="' + (inv.amount !== null && inv.amount !== undefined ? inv.amount : '') + '" placeholder="—"></td>' +
         '<td>' +
@@ -314,10 +315,10 @@
 
   // Total / Paid / Unpaid for the rows being shown
   function paySummaryStrip(label, total, paid, unpaid, nPaid, nUnpaid) {
-    var chip = function (l, v, n, color) { return '<span style="display:inline-flex;gap:6px;align-items:baseline;margin-right:26px"><span style="color:#5E6A75;font-size:12px">' + l + (n !== null ? ' (' + n + ')' : '') + '</span><b style="font-size:17px;color:' + color + '">$' + money(v) + '</b></span>'; };
+    var chip = function (l, v, n, color) { return '<span style="display:inline-flex;gap:6px;align-items:baseline;margin-right:26px"><span style="color:#5E6A75;font-size:12px">' + l + (n !== null ? ' (' + n + ')' : '') + '</span><b style="font-size:17px;color:' + color + '">' + ((v && typeof v === 'object') ? curSum(v) : '$' + money(v)) + '</b></span>'; };
     return '<div class="fin-pay-summary" style="display:flex;flex-wrap:wrap;align-items:baseline;gap:4px;padding:10px 16px;margin:0 0 10px;background:#F7FAFE;border:1px solid var(--line);border-radius:8px">' +
       '<span style="font-size:12px;color:#5E6A75;margin-right:18px">' + label + '</span>' +
-      chip('Total', total, nPaid + nUnpaid, 'var(--ink)') + chip('Paid', paid, nPaid, '#1B7A3A') + chip('Unpaid', unpaid, nUnpaid, unpaid ? '#B3261E' : 'var(--ink)') + '</div>';
+      chip('Total', total, nPaid + nUnpaid, 'var(--ink)') + chip('Paid', paid, nPaid, '#1B7A3A') + chip('Unpaid', unpaid, nUnpaid, ((unpaid && typeof unpaid === 'object') ? Object.keys(unpaid).some(function (k) { return Math.abs(unpaid[k]) > 0.004; }) : unpaid) ? '#B3261E' : 'var(--ink)') + '</div>';
   }
 
   // All shown invoices grouped by invoice month (newest first): a month header
@@ -339,20 +340,21 @@
       byKey[k].rows.push(inv);
     });
     groups.sort(function (a, b) { return b.key.localeCompare(a.key); });
-    var sno = 0, gHours = 0, gAmount = 0, gPaid = 0, gUnpaid = 0, gNPaid = 0, gNUnpaid = 0;
+    var sno = 0, gHours = 0, gAmount = {}, gPaid = {}, gUnpaid = {}, gNPaid = 0, gNUnpaid = 0;
+    var anyAmt = function (m) { return Object.keys(m).some(function (k) { return Math.abs(m[k]) > 0.004; }); };
     var sumCells = function (label, hours, amount, cls, paid, unpaid) {
       return '<tr class="' + cls + '"><td colspan="7" style="text-align:right">' + label + '</td>' +
-        '<td class="fin-num">' + fmtHours(hours) + ' h</td><td class="fin-num">$' + money(amount) + '</td><td colspan="' + (COLS - 9) + '" style="font-weight:600;font-size:12px">' +
-        '<span style="color:#1B7A3A">Paid $' + money(paid) + '</span> · <span style="color:' + (unpaid ? '#B3261E' : 'inherit') + '">Unpaid $' + money(unpaid) + '</span></td></tr>';
+        '<td class="fin-num">' + fmtHours(hours) + ' h</td><td class="fin-num">' + curSum(amount) + '</td><td colspan="' + (COLS - 9) + '" style="font-weight:600;font-size:12px">' +
+        '<span style="color:#1B7A3A">Paid ' + curSum(paid) + '</span> · <span style="color:' + (anyAmt(unpaid) ? '#B3261E' : 'inherit') + '">Unpaid ' + curSum(unpaid) + '</span></td></tr>';
     };
     var body = groups.map(function (g) {
-      var h = 0, a = 0, gp = 0, gu = 0;
+      var h = 0, a = {}, gp = {}, gu = {};
       var rows = g.rows.map(function (inv) {
-        h += Number(inv.hours) || 0; a += Number(inv.amount) || 0;
-        if (inv.payment_status === 'paid') { gp += Number(inv.amount) || 0; gNPaid += 1; } else { gu += Number(inv.amount) || 0; gNUnpaid += 1; }
+        h += Number(inv.hours) || 0; curAdd(a, inv.currency, inv.amount);
+        if (inv.payment_status === 'paid') { curAdd(gp, inv.currency, inv.amount); gNPaid += 1; } else { curAdd(gu, inv.currency, inv.amount); gNUnpaid += 1; }
         return renderRow(inv, sno++);
       }).join('');
-      gHours += h; gAmount += a; gPaid += gp; gUnpaid += gu;
+      gHours += h; Object.keys(a).forEach(function (k) { curAdd(gAmount, k, a[k]); }); Object.keys(gp).forEach(function (k) { curAdd(gPaid, k, gp[k]); }); Object.keys(gu).forEach(function (k) { curAdd(gUnpaid, k, gu[k]); });
       return '<tr class="fin-month-row"><td colspan="' + COLS + '">' + escapeHtml(ImportHours.monthKeyLabel(g.key)) +
           '<span class="fin-src">Hours for ' + escapeHtml(ImportHours.monthKeyLabel(ImportHours.hoursMonthKey(g.key))) + ' · ' + g.rows.length + ' invoice' + (g.rows.length === 1 ? '' : 's') + '</span></td></tr>' +
         rows + sumCells('Subtotal ' + escapeHtml(ImportHours.monthKeyLabel(g.key)), h, a, 'fin-subtotal-row', gp, gu);
@@ -532,11 +534,11 @@
   function svDeductionBlock(inv) {
     var open = state.sv.dedOpen === inv.id, can = inv.payment_status !== 'paid' && !inv.voided, draft = state.sv.dedDraft || {};
     var list = (inv.deductions || []).map(function (d) {
-      var what = d.kind === 'percent' ? (d.value + '% of $' + money(inv.gross_amount)) : 'fixed';
-      return '<div style="font-size:11.5px;color:#8A4B00;white-space:nowrap" title="' + escapeHtml(d.reason) + (d.created_by ? ' — added by ' + escapeHtml(d.created_by) : '') + '">− $' + money(d.amount) + ' <span style="color:#5E6A75">(' + escapeHtml(what) + ')</span> ' + escapeHtml(d.reason) +
+      var what = d.kind === 'percent' ? (d.value + '% of ' + curMoney(inv.gross_amount, inv.currency)) : 'fixed';
+      return '<div style="font-size:11.5px;color:#8A4B00;white-space:nowrap" title="' + escapeHtml(d.reason) + (d.created_by ? ' — added by ' + escapeHtml(d.created_by) : '') + '">− ' + curMoney(d.amount, inv.currency) + ' <span style="color:#5E6A75">(' + escapeHtml(what) + ')</span> ' + escapeHtml(d.reason) +
         (can ? ' <button type="button" data-action="sv-ded-remove" data-did="' + d.id + '" class="fin-btn fin-btn-small" style="padding:0 5px" title="Remove this deduction" aria-label="Remove deduction">✕</button>' : '') + '</div>';
     }).join('');
-    var owed = (inv.deductions || []).length ? '<div style="font-size:12px;font-weight:700">Owed after deductions $' + money(inv.net_amount) + '</div>' : '';
+    var owed = (inv.deductions || []).length ? '<div style="font-size:12px;font-weight:700">Owed after deductions ' + curMoney(inv.net_amount, inv.currency) + '</div>' : '';
     var form = '';
     if (can && open) {
       form = '<div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:4px;font-size:12px;max-width:260px">' +
@@ -562,7 +564,8 @@
       '<td class="fin-consultant">' + escapeHtml(inv.subvendor_name) + '</td>' +
       '<td>' + escapeHtml(inv.consultant_name) + '</td>' +
       '<td' + (inv.label ? ' title="' + escapeHtml(inv.label) + '"' : '') + '>' + escapeHtml(monthLabel(inv.period_month)) + '</td>' +
-      '<td class="fin-num">' + (inv.rate !== null && inv.rate !== undefined ? '$' + money(inv.rate) + '/hr' : '<span class="fin-muted">—</span>') + '</td>';
+      '<td class="fin-num">' + (inv.rate !== null && inv.rate !== undefined ? curMoney(inv.rate, inv.currency) + '/hr' : '<span class="fin-muted">—</span>') +
+        ((inv.kind !== 'paid' || (inv.subvendor_id && inv.consultant_id)) ? '<div>' + curSelectHtml('data-svfield="currency"', inv.currency) + '</div>' : '') + '</td>';
     var isFile = inv.kind === 'paid' && !!(inv.subvendor_id && inv.consultant_id);
     if (inv.kind !== 'paid' || isFile) {
       head =
@@ -574,7 +577,7 @@
         '</select></td>' +
         '<td>' + escapeHtml(inv.consultant_name) + (inv.project ? '<div style="font-size:11.5px;color:var(--text-muted)">' + escapeHtml(inv.project) + '</div>' : '') + '</td>' +
         '<td><input class="fin-date-input" type="month" data-svfield="periodMonth" value="' + escapeHtml(String(inv.period_month).slice(0, 7)) + '" aria-label="Month"></td>' +
-        '<td><input class="fin-num-input" type="number" step="0.01" min="0" data-svfield="rate" value="' + (inv.rate !== null && inv.rate !== undefined ? inv.rate : '') + '" aria-label="Rate per hour"></td>';
+        '<td><input class="fin-num-input" type="number" step="0.01" min="0" data-svfield="rate" value="' + (inv.rate !== null && inv.rate !== undefined ? inv.rate : '') + '" aria-label="Rate per hour"><div>' + curSelectHtml('data-svfield="currency"', inv.currency) + '</div></td>';
     }
 
     if (inv.kind === 'paid' && !isFile) {
@@ -582,7 +585,7 @@
       return (
         '<tr>' + head +
           '<td class="fin-num">' + (inv.hours !== null && inv.hours !== undefined ? money(inv.hours) : '<span class="fin-muted">—</span>') + '</td>' +
-          '<td class="fin-num">' + (inv.amount !== null && inv.amount !== undefined ? '$' + money(inv.amount) : '<span class="fin-muted">—</span>') + '</td>' +
+          '<td class="fin-num">' + (inv.amount !== null && inv.amount !== undefined ? curMoney(inv.amount, inv.currency) : '<span class="fin-muted">—</span>') + '</td>' +
           '<td><span class="fin-muted">—</span></td><td><span class="fin-muted">—</span></td>' +
           '<td><span class="fin-status-badge fin-badge-static fin-status-paid">Paid' + (inv.paid_date ? ' ' + escapeHtml(fmtDate(inv.paid_date)) : '') + '</span></td>' +
           '<td><span class="fin-muted">—</span></td><td><span class="fin-muted">—</span></td>' +
@@ -614,8 +617,8 @@
           (isFile || inv.payment_status === 'paid' ? '' :
             '<div style="margin-top:4px;font-size:11.5px;white-space:nowrap">Paid so far <input class="fin-num-input" style="width:84px" type="number" step="0.01" min="0" data-svfield="amountPaid" value="' + (Number(inv.paid_amount) > 0 ? inv.paid_amount : '') + '" placeholder="0.00" aria-label="Paid so far">' +
             (inv.payment_state === 'partial'
-              ? '<div style="color:#1B7A3A">Paid $' + money(inv.paid_amount) + ' of $' + money(inv.net_amount) + '</div><div style="color:#B3261E;font-weight:700">Still due $' + money(inv.balance) + '</div>'
-              : (Number(inv.net_amount) > 0 ? '<div style="color:#B3261E">Still due $' + money(inv.net_amount) + '</div>' : '')) + '</div>') + '</td>' +
+              ? '<div style="color:#1B7A3A">Paid ' + curMoney(inv.paid_amount, inv.currency) + ' of ' + curMoney(inv.net_amount, inv.currency) + '</div><div style="color:#B3261E;font-weight:700">Still due ' + curMoney(inv.balance, inv.currency) + '</div>'
+              : (Number(inv.net_amount) > 0 ? '<div style="color:#B3261E">Still due ' + curMoney(inv.net_amount, inv.currency) + '</div>' : '')) + '</div>') + '</td>' +
         '<td><input class="fin-date-input" type="date" data-svfield="paidDate" value="' + (inv.paid_date ? String(inv.paid_date).slice(0, 10) : '') + '" aria-label="Paid on"></td>' +
         '<td><button type="button" class="fin-status-badge fin-status-' + inv.timesheet_submitted + '" data-action="sv-toggle-timesheet">' + (inv.timesheet_submitted === 'yes' ? 'Submitted' : 'Not yet') + '</button></td>' +
         '<td><input class="fin-notes-input" type="text" data-svfield="notes" value="' + escapeHtml(inv.notes || '') + '" placeholder="Notes"></td>' +
@@ -713,16 +716,16 @@
       else if (!(sv.paymentFilter === 'all' || (sv.paymentFilter === 'paid') === svIsPaid(i))) return false;
       return !q || svMatch(i, q);
     });
-    var total = 0, paid = 0, unpaid = 0, nPaid = 0, nUnpaid = 0, nPart = 0;
+    var total = {}, paid = {}, unpaid = {}, nPaid = 0, nUnpaid = 0, nPart = 0;
     var nVoid = 0;
     shown.forEach(function (i) {
       if (i.voided) { nVoid += 1; return; } // voided invoices stay on the list but are in no total
-      var a = (i.net_amount !== undefined && i.net_amount !== null ? Number(i.net_amount) : Number(i.amount)) || 0; if (i.payment_state !== 'partial') total += a;
-      if (svIsPaid(i)) { paid += a; nPaid += 1; }
-      else if (i.payment_state === 'partial') { nPart += 1; var pp = Number(i.paid_extra) || 0, bal = Number(i.balance) || 0; total += pp + bal; paid += pp; unpaid += bal; nUnpaid += 1; /* the already-paid part is its own payments-file row, so it is not added twice */ }
-      else { unpaid += a; nUnpaid += 1; }
+      var a = (i.net_amount !== undefined && i.net_amount !== null ? Number(i.net_amount) : Number(i.amount)) || 0; if (i.payment_state !== 'partial') curAdd(total, i.currency, a);
+      if (svIsPaid(i)) { curAdd(paid, i.currency, a); nPaid += 1; }
+      else if (i.payment_state === 'partial') { nPart += 1; var pp = Number(i.paid_extra) || 0, bal = Number(i.balance) || 0; curAdd(total, i.currency, pp + bal); curAdd(paid, i.currency, pp); curAdd(unpaid, i.currency, bal); nUnpaid += 1; /* the already-paid part is its own payments-file row, so it is not added twice */ }
+      else { curAdd(unpaid, i.currency, a); nUnpaid += 1; }
     });
-    if (!shown.length) return paySummaryStrip('Supplier payments shown:', 0, 0, 0, 0, 0) + svFilterNote(0, undated) + '<div class="fin-empty-state">No supplier payments match these filters. ' + (svFiltersActive() ? '<button type="button" class="fin-btn" data-svq="clear">Clear all filters</button>' : '') + '</div>';
+    if (!shown.length) return paySummaryStrip('Supplier payments shown:', {}, {}, {}, 0, 0) + svFilterNote(0, undated) + '<div class="fin-empty-state">No supplier payments match these filters. ' + (svFiltersActive() ? '<button type="button" class="fin-btn" data-svq="clear">Clear all filters</button>' : '') + '</div>';
     // Only one page of rows is drawn at a time: thousands of rows (13+ cells each) make every click slow.
     var size = Number(sv.pageSize) || 50, pages = Math.max(1, Math.ceil(shown.length / size));
     if (sv.page >= pages) sv.page = pages - 1; if (sv.page < 0) sv.page = 0;
@@ -746,7 +749,7 @@
         '<th>Hours</th><th>Amount</th><th>Net terms</th><th>Issue date</th><th>Due date</th><th>Payment</th><th>Paid on</th><th>Timesheet</th><th>Notes</th><th>Source</th><th></th>' +
       '</tr></thead><tbody>' +
       pageRows.map(function (inv, i) { return svRow(inv, from + i); }).join('') +
-      '<tr class="fin-total-row"><td colspan="7">Total (' + shown.length + ')</td><td class="fin-num">$' + money(total) + '</td><td colspan="7" style="font-size:12px"><span style="color:#1B7A3A">Paid $' + money(paid) + '</span> · <span style="color:' + (unpaid ? '#B3261E' : 'inherit') + '">Unpaid $' + money(unpaid) + '</span></td></tr>' +
+      '<tr class="fin-total-row"><td colspan="7">Total (' + shown.length + ')</td><td class="fin-num">' + curSum(total) + '</td><td colspan="7" style="font-size:12px"><span style="color:#1B7A3A">Paid ' + curSum(paid) + '</span> · <span style="color:' + (Object.keys(unpaid).some(function (k) { return Math.abs(unpaid[k]) > 0.004; }) ? '#B3261E' : 'inherit') + '">Unpaid ' + curSum(unpaid) + '</span></td></tr>' +
       '</tbody></table></div>' + pager
     );
   }
@@ -864,7 +867,7 @@
     return state.imp.parsed ? ImportHours.resolveHoursImport(state.imp.parsed, state.imp.year) : null;
   }
 
-  function impMoney(n) { return '$' + Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+  function impMoney(n, c) { return curMoney(n, c); }
 
   function impPostBody(apply) {
     var imp = state.imp;
@@ -912,7 +915,7 @@
   }
 
   function impPairingLabel(pr) {
-    return (pr.client || '—') + (pr.program ? ' / ' + pr.program : '') + (pr.billing !== null && pr.billing !== undefined ? ' ($' + money(pr.billing) + '/hr)' : ' (no rate)') + (pr.status === 'left' ? ' — left' : '');
+    return (pr.client || '—') + (pr.program ? ' / ' + pr.program : '') + (pr.billing !== null && pr.billing !== undefined ? ' (' + curMoney(pr.billing, pr.currency) + '/hr)' : ' (no rate)') + (pr.status === 'left' ? ' — left' : '');
   }
 
   // Merge into one of the consultant's pairings, or add the text as a new pairing.
@@ -1003,20 +1006,20 @@
       out += '<div class="fin-readonly-note">' + (imp.result
         ? '<strong>Done — ' + imp.result.created + ' invoice(s) created, ' + (imp.result.filled || 0) + ' filled in.</strong> '
         : 'Preview only — nothing has been created yet. ') +
-        sm.willCreate + ' to create, ' + sm.willFill + ' existing 0-hour invoice(s) to fill in (' + impMoney(sm.totalAmount) + ' total), ' + sm.skippedExisting + ' already have hours (left untouched), ' + (sm.unmatched + impSkipped.length) + ' not matched or skipped.</div>';
+        sm.willCreate + ' to create, ' + sm.willFill + ' existing 0-hour invoice(s) to fill in (' + (sm.totalByCurrency ? curSum(sm.totalByCurrency) : impMoney(sm.totalAmount)) + ' total), ' + sm.skippedExisting + ' already have hours (left untouched), ' + (sm.unmatched + impSkipped.length) + ' not matched or skipped.</div>';
       if (imp.preview && (sm.willCreate || sm.willFill)) {
         out += '<div class="fin-controls" style="justify-content:flex-start"><button type="button" class="fin-btn fin-btn-primary" data-action="imp-apply"' + (imp.busy ? ' disabled' : '') + '>Apply: create ' + sm.willCreate + ', fill in ' + sm.willFill + '</button></div>';
       }
       if (imp.preview) {
         out += impTable('Will be created', ['Consultant', 'Client / Vendor', 'Invoice month', 'Hours for', 'Hours', 'Rate', 'Amount'], p.willCreate.map(function (w) {
           return '<tr><td>' + escapeHtml(w.consultant) + '</td><td>' + escapeHtml(w.program ? w.client + ' / ' + w.program : w.client) + '</td><td>' + escapeHtml(monthLabel(w.periodMonth + '-01')) + '</td><td>' + escapeHtml(ImportHours.monthKeyLabel(w.hoursMonth || ImportHours.hoursMonthKey(w.periodMonth))) +
-            '</td><td class="fin-num">' + w.hours + '</td><td class="fin-num">' + impMoney(w.rate) + '</td><td class="fin-num">' + impMoney(w.amount) + '</td></tr>';
+            '</td><td class="fin-num">' + w.hours + '</td><td class="fin-num">' + impMoney(w.rate, w.currency) + '</td><td class="fin-num">' + impMoney(w.amount, w.currency) + '</td></tr>';
         }));
       }
       if (imp.preview) {
         out += impTable('Existing invoices at 0 hours — will be filled in', ['Consultant', 'Client / Vendor', 'Invoice month', 'Hours for', 'Hours', 'Rate', 'Amount'], p.willFill.map(function (w) {
           return '<tr><td>' + escapeHtml(w.consultant) + '</td><td>' + escapeHtml(w.program ? w.client + ' / ' + w.program : w.client) + '</td><td>' + escapeHtml(monthLabel(w.periodMonth + '-01')) + '</td><td>' + escapeHtml(ImportHours.monthKeyLabel(w.hoursMonth || ImportHours.hoursMonthKey(w.periodMonth))) +
-            '</td><td class="fin-num">' + w.hours + '</td><td class="fin-num">' + impMoney(w.rate) + '</td><td class="fin-num">' + impMoney(w.amount) + '</td></tr>';
+            '</td><td class="fin-num">' + w.hours + '</td><td class="fin-num">' + impMoney(w.rate, w.currency) + '</td><td class="fin-num">' + impMoney(w.amount, w.currency) + '</td></tr>';
         }));
       }
       out += impTable('Already have hours — left as is', ['Consultant', 'Client / Vendor', 'Invoice month', 'Hours for', 'File hours', 'Invoice hours'], p.skippedExisting.map(function (w) {
@@ -1203,6 +1206,7 @@
           net_terms: inv.net_terms, due_date: String(inv.due_date).slice(0, 10), issue_date: String(inv.issue_date).slice(0, 10),
           payment_status: inv.payment_status, status: inv.payment_status,
           timesheet_submitted: inv.timesheet_submitted, notes: inv.notes,
+          currency: (patch && patch.currency) ? patch.currency : sv.invoices[idx].currency,
         });
       }
       sv.savedId = id;
@@ -1331,7 +1335,7 @@
             var a = b.assignment || {};
             im2.fix[fixRow].addOpen = false;
             impAfterFix((b.existed ? 'Pairing already existed: ' : 'Added pairing: ') + u.consultantName + ' on ' + (a.client_name || '') + (a.program_name ? ' / ' + a.program_name : '') +
-              (a.billing !== null && a.billing !== undefined ? ' at $' + money(a.billing) + '/hr' : '') + '. Check the preview, then Apply.');
+              (a.billing !== null && a.billing !== undefined ? ' at ' + curMoney(a.billing, a.currency || a.billing_currency) + '/hr' : '') + '. Check the preview, then Apply.');
           })
           .catch(function (err) { im2.fixBusy = false; im2.error = err.message; render(); });
         return;

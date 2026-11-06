@@ -570,3 +570,11 @@ The filter bar is now labelled: **Invoice month** (the hours month) from/to, **P
 - **Pasted e-mails** that mention Canada, a province, Toronto etc. (or India, a PIN code, Hyderabad etc.) or a CAD / INR rate set the country and currency automatically; the recruiter can change them.
 - **Directory.** Consultants, clients, vendors and supplier companies have a **Country** column and a **Country filter** (with counts, plus "Country not set"). The country comes from each record's profile (free text such as "usa" or "CA" is read correctly). Create-directory-records now writes country, currency, province and postal code to the profile. The profile State list now accepts Canadian provinces and Indian states.
 - No database change. **Not yet country-aware:** Fin-Module invoices and totals still display `$`; the ACH banking *form* (US routing numbers) is not used for Canada / India (a document upload is).
+
+## Currency in Fin-Module (CAD / INR)
+
+- **Run `db/schema.sql` once** (adds `billing_currency` / `pay_currency` on placements and `currency` on client invoices and supplier payments). Nothing existing changes: a blank currency means USD.
+- **Where it comes from.** Create-directory-records stores the onboarding's bill / pay currency on the placement (Directory → consultant → placements, now editable there). A client invoice follows its placement's billing currency; a supplier payment follows the placement's pay currency (the placement with that supplier, else the consultant's, else USD). Any single invoice or supplier payment can be set to another currency from the small selector under its rate. Clearing/changing a placement's currency changes every row that follows it.
+- **Totals are never added across currencies.** Summary strips, subtotals, the Year & month tiles and Billed / Paid / Unpaid cards show one figure per currency (`$1,200.00 · CA$500.00 · ₹20,000.00`). Import previews and the CSV export carry the currency too.
+- **No conversion** between currencies is done anywhere; a margin is only worked out when bill and pay currency match.
+- Still USD-only: the Ledger and Margin dashboards, which are built from your uploaded files.

@@ -189,7 +189,7 @@ function renderHxTab() {
       : '<strong>Preview only — nothing has been created yet.</strong> ') +
       'Check the numbers below, then apply.</div>';
     out += '<div class="hist-cards">' +
-      hxCard('Invoices to create', hxNum(sm.willCreate), hxMoney(sm.totalAmount) + ' · ' + hxNum(sm.totalHours) + ' hrs') +
+      hxCard('Invoices to create', hxNum(sm.willCreate), (sm.totalByCurrency ? curSum(sm.totalByCurrency) : hxMoney(sm.totalAmount)) + ' · ' + hxNum(sm.totalHours) + ' hrs') +
       hxCard('0-hour invoices to fill', hxNum(sm.willFill), 'existing, no hours yet') +
       hxCard('Already have hours', hxNum(sm.skippedExisting), 'left untouched') +
       hxCard('Not invoiced', hxNum(sm.issues), 'see the lists below') +
@@ -207,7 +207,7 @@ function renderHxTab() {
     }
 
     out += hxDetails('Invoices to create, by invoice year', p.byYear.length, ['Year', 'Invoices', 'Hours', 'Amount'], p.byYear.map(function (y) {
-      return '<tr><td>' + y.year + '</td><td class="fin-num">' + hxNum(y.invoices) + '</td><td class="fin-num">' + hxNum(y.hours) + '</td><td class="fin-num">' + hxMoney(y.amount) + '</td></tr>';
+      return '<tr><td>' + y.year + '</td><td class="fin-num">' + hxNum(y.invoices) + '</td><td class="fin-num">' + hxNum(y.hours) + '</td><td class="fin-num">' + (y.amounts ? curSum(y.amounts) : hxMoney(y.amount)) + '</td></tr>';
     }).join(''), true);
 
     var notes = p.notes;
@@ -234,8 +234,8 @@ function renderHxTab() {
     function invRows(list) {
       return list.map(function (w) {
         return '<tr><td>' + escapeHtml(w.consultant) + '</td><td>' + hxPairLabel(w) + '</td><td>' + hxPeriodLabel(w.periodMonth) + '</td><td class="fin-muted">' + hxPeriodLabel(w.hoursMonth) +
-          '</td><td class="fin-num">' + w.hours + '</td><td class="fin-num">' + (w.rate === null ? '<span class="fin-muted">no rate</span>' : hxMoney(w.rate)) +
-          '</td><td class="fin-num">' + hxMoney(w.amount) + '</td><td>' + escapeHtml(w.terms || '') + '</td></tr>';
+          '</td><td class="fin-num">' + w.hours + '</td><td class="fin-num">' + (w.rate === null ? '<span class="fin-muted">no rate</span>' : curMoney(w.rate, w.currency)) +
+          '</td><td class="fin-num">' + curMoney(w.amount, w.currency) + '</td><td>' + escapeHtml(w.terms || '') + '</td></tr>';
       }).join('');
     }
     out += hxDetails('First ' + Math.min(cap, sm.willCreate) + ' of the invoices to create', Math.min(cap, sm.willCreate), invHead, invRows(p.willCreate), false);

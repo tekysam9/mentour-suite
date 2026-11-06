@@ -1182,6 +1182,11 @@ router.post('/:id/create-records', async (req, res, next) => {
         [orgId, consultantId, clientId, programId, billing, payRateVal, empType, supplierId, data.recruiter || null, joinedText]);
       assignmentId = r.insertId; assignmentMade = true; made.push('added the billing pairing');
     }
+    { // the placement's currencies: what was chosen, else the country's own currency (a US placement with none chosen stays USD)
+      const nonUs = C.countryOf(data) !== 'United States', own = C.CURRENCY[C.countryOf(data)];
+      const bc = data.bill_currency || (nonUs ? own : null), pc = data.pay_currency || (nonUs ? own : null);
+      if (bc || pc) await conn.query('UPDATE consultant_assignments SET billing_currency = COALESCE(?, billing_currency), pay_currency = COALESCE(?, pay_currency) WHERE id = ?', [bc, pc, assignmentId]);
+    }
 
     // Profile details
     await mergeProfile(conn, orgId, 'consultants', consultantId, {

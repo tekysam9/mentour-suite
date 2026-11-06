@@ -2,7 +2,7 @@
 // connection. Network first (so a deploy is picked up as soon as you are
 // online) with a short timeout, falling back to the last copy seen. Account
 // data (/api/...) is never stored here: it always comes live from the server.
-var VERSION = 'ms-static-v2';
+var VERSION = 'ms-static-v3';
 var SLOW_MS = 4000;
 
 self.addEventListener('install', function () { self.skipWaiting(); });

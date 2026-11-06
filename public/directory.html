@@ -122,6 +122,7 @@
 </head>
 <body>
 <div id="app"></div>
+<script src="/currency.js"></script>
 <script src="/shell.js"></script>
 <script>
   function escapeHtml(s) {
@@ -170,10 +171,10 @@
       (active ? 'Active' : 'Inactive') + '</span>';
   }
 
-  function fmtMoney(v) {
+  function fmtMoney(v, cur) {
     if (v === null || v === undefined || v === '') return '—';
     var n = Number(v);
-    return Number.isFinite(n) ? '$' + n.toFixed(2) + '/hr' : '—';
+    return Number.isFinite(n) ? curMoney(n, cur) + '/hr' : '—';
   }
 
   // "Seen in" used to be a bare count badge ("2 Margin"); it's now a
@@ -297,7 +298,7 @@
     return {
       client: list.map(function (a) { return line(a, a.client_name ? escapeHtml(a.client_name) : dash); }).join('<br>'),
       program: list.map(function (a) { return line(a, a.program_name ? escapeHtml(a.program_name) : dash); }).join('<br>'),
-      billing: list.map(function (a) { return line(a, fmtMoney(a.billing) + (a.pay_rate !== null && a.pay_rate !== undefined ? ' <span class="dir-assign-source">(pay ' + fmtMoney(a.pay_rate) + ')</span>' : '') + (a.status === 'left' ? ' · left' + (a.left_date ? ' ' + escapeHtml(String(a.left_date).slice(0, 10)) : '') : '')); }).join('<br>'),
+      billing: list.map(function (a) { return line(a, fmtMoney(a.billing, a.billing_currency) + (a.pay_rate !== null && a.pay_rate !== undefined ? ' <span class="dir-assign-source">(pay ' + fmtMoney(a.pay_rate, a.pay_currency) + ')</span>' : '') + (a.status === 'left' ? ' · left' + (a.left_date ? ' ' + escapeHtml(String(a.left_date).slice(0, 10)) : '') : '')); }).join('<br>'),
     };
   }
 
@@ -525,11 +526,11 @@
           ? '<span class="dir-assign-left">Left' + (a.left_date ? ' ' + escapeHtml(String(a.left_date).slice(0, 10)) : '') + ' — not invoiced</span>'
           : 'Active';
         var billingCell = editing
-          ? '<input type="number" step="0.01" class="dir-field-input" data-assign-billing value="' + escapeHtml(a.billing === null ? '' : a.billing) + '" style="width:90px">'
-          : fmtMoney(a.billing);
+          ? '<input type="number" step="0.01" class="dir-field-input" data-assign-billing value="' + escapeHtml(a.billing === null ? '' : a.billing) + '" style="width:90px"> ' + curSelectHtml('data-assign-bcur', a.billing_currency)
+          : fmtMoney(a.billing, a.billing_currency);
         var payCell = editing
-          ? '<input type="number" step="0.01" class="dir-field-input" data-assign-pay value="' + escapeHtml(a.pay_rate === null || a.pay_rate === undefined ? '' : a.pay_rate) + '" style="width:90px">'
-          : fmtMoney(a.pay_rate === undefined ? null : a.pay_rate);
+          ? '<input type="number" step="0.01" class="dir-field-input" data-assign-pay value="' + escapeHtml(a.pay_rate === null || a.pay_rate === undefined ? '' : a.pay_rate) + '" style="width:90px"> ' + curSelectHtml('data-assign-pcur', a.pay_currency)
+          : fmtMoney(a.pay_rate === undefined ? null : a.pay_rate, a.pay_currency);
         var actions = editing
           ? '<button class="dir-btn dir-btn-small dir-btn-primary" data-action="assign-save" data-assignment-id="' + a.id + '">Save</button>' +
             '<button class="dir-btn dir-btn-small" data-action="assign-cancel">Cancel</button>'
@@ -548,7 +549,7 @@
           '<td>' + actions + (state.assignmentStatus === 'error' && editing ? ' <span class="dir-btn-save-status" style="color:#C62F25">' + escapeHtml(state.assignError || 'Couldn’t save') + '</span>' : '') + '</td>' +
         '</tr>';
       }).join('');
-      body = '<table class="dir-assign-table"><thead><tr><th>Client</th><th>Vendor</th><th>Worker type</th><th>Supplier</th><th>Status</th><th>Billing $/hr</th><th>Pay rate $/hr</th><th></th><th></th></tr></thead><tbody>' + rows + '</tbody></table>' +
+      body = '<table class="dir-assign-table"><thead><tr><th>Client</th><th>Vendor</th><th>Worker type</th><th>Supplier</th><th>Status</th><th>Billing rate (per hr)</th><th>Pay rate (per hr)</th><th></th><th></th></tr></thead><tbody>' + rows + '</tbody></table>' +
         renderAssignAddRow(consultant.id);
     }
     return '<tr class="dir-assign-row"><td colspan="' + rowColspan(tab) + '">' + body + '</td></tr>';
@@ -963,6 +964,9 @@
       var consultantIdForSave = state.expandedAssignmentsId;
       state.assignmentStatus = 'saving'; state.assignError = '';
       var payload = { billing: billingVal, pay_rate: payVal };
+      var bcurEl = assignSaveBtn.closest('tr').querySelector('[data-assign-bcur]'), pcurEl = assignSaveBtn.closest('tr').querySelector('[data-assign-pcur]');
+      if (bcurEl) payload.billing_currency = bcurEl.value;
+      if (pcurEl) payload.pay_currency = pcurEl.value;
       var rowEl = assignSaveBtn.closest('tr');
       if (isHrUser() && rowEl.querySelector('[data-assign-client]')) {
         payload.client_id = rowEl.querySelector('[data-assign-client]').value || null;

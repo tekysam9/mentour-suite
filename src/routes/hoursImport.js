@@ -138,7 +138,7 @@ async function planImport(conn, organizationId, body) {
   const programByKey = new Map(programRows.map((p) => [p.client_id + '|' + nameKey(p.name), p]));
   const programById = new Map(programRows.map((p) => [p.id, p]));
   const [assignRows] = await conn.query(
-    `SELECT id, consultant_id, client_id, program_id, billing FROM consultant_assignments WHERE organization_id = ?`, [organizationId]);
+    `SELECT id, consultant_id, client_id, program_id, billing, billing_currency FROM consultant_assignments WHERE organization_id = ?`, [organizationId]);
   const assignsByConsultant = new Map();
   for (const a of assignRows) {
     if (!assignsByConsultant.has(a.consultant_id)) assignsByConsultant.set(a.consultant_id, []);
@@ -333,6 +333,7 @@ async function planImport(conn, organizationId, body) {
       consultant: res.cons ? res.cons.name : r.nameText, client: res.a ? (clientById.get(res.a.client_id) || {}).name : res.client,
       program: res.a ? (res.a.program_id ? (programById.get(res.a.program_id) || {}).name : null) : res.program,
       periodMonth: ym, hoursMonth: hym, hours: r.hours, category: r.terms.category, terms: r.terms.text,
+      currency: require('../currency').norm(res.a && res.a.billing_currency) || 'USD',
     };
     const existing = ids.consultantId && !ids.clientMissing && !ids.programMissing
       ? invByKey.get(ids.consultantId + '|' + (ids.clientId || 0) + '|' + (ids.programId || 0) + '|' + ym) : null;
@@ -408,8 +409,8 @@ async function planImport(conn, organizationId, body) {
   const byYear = new Map();
   for (const w of willCreate) {
     const y = w.periodMonth.slice(0, 4);
-    const e = byYear.get(y) || { year: Number(y), invoices: 0, hours: 0, amount: 0 };
-    e.invoices++; e.hours = round2(e.hours + w.hours); e.amount = round2(e.amount + w.amount);
+    const e = byYear.get(y) || { year: Number(y), invoices: 0, hours: 0, amount: 0, amounts: {} };
+    e.invoices++; e.hours = round2(e.hours + w.hours); e.amount = round2(e.amount + w.amount); e.amounts[w.currency] = round2((e.amounts[w.currency] || 0) + w.amount);
     byYear.set(y, e);
   }
   const used = new Set(); // pairings that actually get an invoice are the only ones created
@@ -437,6 +438,7 @@ async function planImport(conn, organizationId, body) {
     willCreate: willCreate.length, willFill: willFill.length, skippedExisting: skippedExisting.length,
     totalHours: round2(willCreate.concat(willFill).reduce((t, w) => t + w.hours, 0)),
     totalAmount: round2(willCreate.concat(willFill).reduce((t, w) => t + w.amount, 0)),
+    totalByCurrency: Object.fromEntries(Object.entries(willCreate.concat(willFill).reduce((m, w) => { m[w.currency] = (m[w.currency] || 0) + w.amount; return m; }, {})).map(([k, v]) => [k, round2(v)])),
     noRate, noHours,
     issues: issues.length, issueCounts,
     newConsultants: newConsFinal.size, newClients: newClientFinal.size, newPrograms: newProgFinal.size,

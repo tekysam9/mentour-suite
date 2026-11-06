@@ -840,3 +840,9 @@ ALTER TABLE onboardings ADD COLUMN IF NOT EXISTS secrets TEXT NULL;
 ALTER TABLE onboardings ADD COLUMN IF NOT EXISTS withdrawn_reason VARCHAR(40) NULL;
 ALTER TABLE onboardings ADD COLUMN IF NOT EXISTS withdrawn_at TIMESTAMP NULL DEFAULT NULL;
 
+
+-- Currency on Fin-Module rows (USD / CAD / INR). NULL = follow the placement; nothing is converted.
+ALTER TABLE consultant_assignments ADD COLUMN IF NOT EXISTS billing_currency CHAR(3) NULL;
+ALTER TABLE consultant_assignments ADD COLUMN IF NOT EXISTS pay_currency CHAR(3) NULL;
+ALTER TABLE invoices ADD COLUMN IF NOT EXISTS currency CHAR(3) NULL;
+ALTER TABLE subvendor_invoices ADD COLUMN IF NOT EXISTS currency CHAR(3) NULL;

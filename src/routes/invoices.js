@@ -179,7 +179,7 @@ router.post('/generate', async (req, res, next) => {
     const defaultHours = 0;
 
     const [assignments] = await conn.query(
-      `SELECT a.id AS assignment_id, a.consultant_id, a.client_id, a.program_id, a.billing, a.status AS assignment_status, a.left_date,
+      `SELECT a.id AS assignment_id, a.consultant_id, a.client_id, a.program_id, a.billing, a.billing_currency, a.status AS assignment_status, a.left_date,
          c.name AS consultant_name, c.status AS consultant_status,
          cl.name AS client_name, cl.email AS client_email, cl.phone AS client_phone, cl.address AS client_address,
          p.name AS program_name, p.email AS program_email, p.phone AS program_phone, p.address AS program_address
@@ -344,7 +344,7 @@ router.post('/import-hours', async (req, res, next) => {
       byName.set(k, byName.has(k) ? null : c); // null = two consultants share the name -> ambiguous
     }
     const [assignments] = await conn.query(
-      `SELECT a.id AS assignment_id, a.consultant_id, a.client_id, a.program_id, a.billing, a.status AS assignment_status,
+      `SELECT a.id AS assignment_id, a.consultant_id, a.client_id, a.program_id, a.billing, a.billing_currency, a.status AS assignment_status,
          cl.name AS client_name, cl.email AS client_email, cl.phone AS client_phone, cl.address AS client_address,
          p.name AS program_name, p.email AS program_email, p.phone AS program_phone, p.address AS program_address
        FROM consultant_assignments a
@@ -369,7 +369,7 @@ router.post('/import-hours', async (req, res, next) => {
         parsedClient: sp.clientName, parsedProgram: sp.programName,
         pairings: mine.map((a) => ({
           assignmentId: a.assignment_id, client: a.client_name, program: a.program_name,
-          billing: a.billing === null || a.billing === undefined ? null : Number(a.billing), status: a.assignment_status,
+          billing: a.billing === null || a.billing === undefined ? null : Number(a.billing), currency: CUR.norm(a.billing_currency) || 'USD', status: a.assignment_status,
         })),
       };
     };
@@ -465,9 +465,9 @@ router.post('/import-hours', async (req, res, next) => {
       const existingHours = existing.length && existing[0].hours !== null ? Number(existing[0].hours) : null;
       // An invoice generated with no hours yet (0 / blank) is a placeholder: fill it from the file.
       // One that already has hours is never changed.
-      if (existing.length && !(existingHours > 0)) willFill.push({ ...label, invoiceId: existing[0].id, rate: Number(existing[0].rate), amount: Math.round(Number(existing[0].rate) * item.hours * 100) / 100 });
+      if (existing.length && !(existingHours > 0)) willFill.push({ ...label, currency: CUR.norm(item.a.billing_currency) || 'USD', invoiceId: existing[0].id, rate: Number(existing[0].rate), amount: Math.round(Number(existing[0].rate) * item.hours * 100) / 100 });
       else if (existing.length) skippedExisting.push({ ...label, invoiceId: existing[0].id, existingHours });
-      else willCreate.push({ ...label, rate: Number(item.a.billing), amount: Math.round(Number(item.a.billing) * item.hours * 100) / 100, _item: item, _period: periodMonth });
+      else willCreate.push({ ...label, currency: CUR.norm(item.a.billing_currency) || 'USD', rate: Number(item.a.billing), amount: Math.round(Number(item.a.billing) * item.hours * 100) / 100, _item: item, _period: periodMonth });
     }
     willCreate.sort((x, y) => x.periodMonth.localeCompare(y.periodMonth) || x.consultant.localeCompare(y.consultant));
 
@@ -476,6 +476,7 @@ router.post('/import-hours', async (req, res, next) => {
       unmatched: unmatched.length + noRate.length,
       skippedFuture: unmatched.filter((u) => u.reason === FUTURE_MONTH_REASON).length,
       totalAmount: Math.round(willCreate.concat(willFill).reduce((t, w) => t + w.amount, 0) * 100) / 100,
+      totalByCurrency: Object.fromEntries(Object.entries(willCreate.concat(willFill).reduce((m, w) => { m[w.currency] = (m[w.currency] || 0) + w.amount; return m; }, {})).map(([k, v]) => [k, Math.round(v * 100) / 100])),
     };
     const clean = (w) => { const { _item, _period, ...rest } = w; return rest; };
 
@@ -586,7 +587,8 @@ const HISTORY_FROM = `FROM invoices i
   JOIN consultants c ON c.id = i.consultant_id
   LEFT JOIN clients cl ON cl.id = i.client_id
   LEFT JOIN programs p ON p.id = i.program_id
-  LEFT JOIN subvendors sv ON sv.id = i.subvendor_id`;
+  LEFT JOIN subvendors sv ON sv.id = i.subvendor_id
+  LEFT JOIN consultant_assignments ca ON ca.id = i.assignment_id`;
 
 function yearMonthWhere(src) {
   const sql = []; const params = [];
@@ -604,6 +606,10 @@ router.get('/history', async (req, res, next) => {
     const ym = yearMonthWhere(req.query);
     const sums = 'COUNT(*) AS invoices, COALESCE(SUM(i.hours),0) AS hours, COALESCE(SUM(i.amount),0) AS amount, ' +
       "COALESCE(SUM(CASE WHEN i.payment_status='unpaid' THEN i.amount ELSE 0 END),0) AS unpaid_amount, COUNT(DISTINCT i.consultant_id) AS consultants";
+    // The same figures split by currency (a total is never added across currencies).
+    const CURX = "COALESCE(i.currency, ca.billing_currency, 'USD')";
+    const curSums = `${CURX} AS cur, COUNT(*) AS invoices, COALESCE(SUM(i.amount),0) AS amount, COALESCE(SUM(CASE WHEN i.payment_status='unpaid' THEN i.amount ELSE 0 END),0) AS unpaid_amount`;
+    const fold = (rows, keyOf) => { const m = new Map(); rows.forEach((r) => { const k = keyOf(r); const o = m.get(k) || { amounts: {}, unpaidAmounts: {} }; o.amounts[r.cur] = Number(r.amount); o.unpaidAmounts[r.cur] = Number(r.unpaid_amount); m.set(k, o); }); return m; };
 
     // Year chips ignore the year/month choice; month tiles honour the year only.
     const [years] = await pool.query(
@@ -615,6 +621,10 @@ router.get('/history', async (req, res, next) => {
     const allWhere = base.where.concat(ym.sql).join(' AND ');
     const allParams = base.params.concat(ym.params);
     const [[summary]] = await pool.query(`SELECT ${sums} ${HISTORY_FROM} WHERE ${allWhere}`, allParams);
+    const [yCur] = await pool.query(`SELECT YEAR(i.period_month) AS k, ${curSums} ${HISTORY_FROM} WHERE ${base.where.join(' AND ')} GROUP BY YEAR(i.period_month), cur`, base.params);
+    const [mCur] = await pool.query(`SELECT MONTH(i.period_month) AS k, ${curSums} ${HISTORY_FROM} WHERE ${base.where.concat(yOnly.sql).join(' AND ')} GROUP BY MONTH(i.period_month), cur`, base.params.concat(yOnly.params));
+    const [sCur] = await pool.query(`SELECT ${curSums} ${HISTORY_FROM} WHERE ${allWhere} GROUP BY cur`, allParams);
+    const yearCur = fold(yCur, (r) => r.k), monthCur = fold(mCur, (r) => r.k), sumCur = fold(sCur, () => 'all');
 
     const sortMap = {
       period: 'i.period_month', consultant: 'c.name', client: 'cl.name', hours: 'i.hours', rate: 'i.rate',
@@ -627,7 +637,8 @@ router.get('/history', async (req, res, next) => {
     const [invoices] = await pool.query(
       `SELECT i.id, i.invoice_number, i.period_month, i.consultant_id, c.name AS consultant_name, c.status AS consultant_status,
               cl.name AS client_name, p.name AS program_name, i.hours, i.rate, i.amount, i.payment_status,
-              i.payment_category, i.payment_terms, sv.name AS subvendor_name, i.net_terms, i.issue_date, i.due_date, i.notes, i.source
+              i.payment_category, i.payment_terms, sv.name AS subvendor_name, i.net_terms, i.issue_date, i.due_date, i.notes, i.source,
+              COALESCE(i.currency, ca.billing_currency, 'USD') AS currency
        ${HISTORY_FROM} WHERE ${allWhere}
        ORDER BY ${sortCol} ${dir}, i.period_month DESC, c.name ASC, i.id ASC LIMIT ? OFFSET ?`,
       allParams.concat([pageSize, (page - 1) * pageSize]));
@@ -635,10 +646,11 @@ router.get('/history', async (req, res, next) => {
     const [clients] = await pool.query(
       `SELECT DISTINCT cl.id, cl.name FROM invoices i JOIN clients cl ON cl.id = i.client_id WHERE i.organization_id = ? ORDER BY cl.name`, [org]);
     const num = (r) => ({ invoices: Number(r.invoices), consultants: Number(r.consultants), hours: Number(r.hours), amount: Number(r.amount), unpaidAmount: Number(r.unpaid_amount) });
+    const withCur = (o, m, k) => Object.assign(o, m.get(k) || { amounts: {}, unpaidAmounts: {} });
     res.json({
-      summary: num(summary),
-      years: years.map((r) => Object.assign({ year: r.year }, num(r))),
-      months: months.map((r) => Object.assign({ month: r.month }, num(r))),
+      summary: withCur(num(summary), sumCur, 'all'),
+      years: years.map((r) => withCur(Object.assign({ year: r.year }, num(r)), yearCur, r.year)),
+      months: months.map((r) => withCur(Object.assign({ month: r.month }, num(r)), monthCur, r.month)),
       invoices, total: Number(summary.invoices), page, pageSize, clients,
     });
   } catch (err) {
@@ -655,10 +667,10 @@ router.get('/history/export', async (req, res, next) => {
     const [rows] = await pool.query(
       `SELECT i.invoice_number, DATE_FORMAT(i.period_month, '%Y-%m') AS month, c.name AS consultant, cl.name AS client, p.name AS program,
               i.payment_category, i.payment_terms, sv.name AS subvendor, i.hours, i.rate, i.amount, i.payment_status, i.net_terms,
-              DATE_FORMAT(i.due_date, '%Y-%m-%d') AS due_date, i.notes
+              DATE_FORMAT(i.due_date, '%Y-%m-%d') AS due_date, i.notes, COALESCE(i.currency, ca.billing_currency, 'USD') AS currency
        ${HISTORY_FROM} WHERE ${base.where.concat(ym.sql).join(' AND ')}
        ORDER BY i.period_month, c.name, cl.name LIMIT 100000`, base.params.concat(ym.params));
-    const cols = ['invoice_number', 'month', 'consultant', 'client', 'program', 'payment_category', 'payment_terms', 'subvendor', 'hours', 'rate', 'amount', 'payment_status', 'net_terms', 'due_date', 'notes'];
+    const cols = ['invoice_number', 'month', 'consultant', 'client', 'program', 'payment_category', 'payment_terms', 'subvendor', 'hours', 'rate', 'amount', 'currency', 'payment_status', 'net_terms', 'due_date', 'notes'];
     // A leading = + - @ would be run as a formula by Excel; prefix such text with a quote.
     const q = (v) => {
       let t = v === null || v === undefined ? '' : String(v);
@@ -721,20 +733,25 @@ router.post('/fill-rates', async (req, res, next) => {
 // which also lists Inactive and not-yet-set (NULL) consultants' invoices and
 // unpaid invoices left over on client/program pairings the consultant has left.
 // Count / hours / amount over a list of invoice rows, overall and per invoice month (newest first).
+const CUR = require('../currency');
 function invoiceTotals(rows) {
   const r2 = (n) => Math.round(n * 100) / 100;
   const byMonth = new Map();
-  let hours = 0, amount = 0;
+  let hours = 0, amount = 0; const byCurrency = {};
+  const add = (map, cur, a) => { map[cur] = (map[cur] || 0) + a; };
   for (const row of rows) {
     const k = row.period_key; // DATE_FORMAT(period_month, '%Y-%m') -- no time-zone shifts
-    if (!byMonth.has(k)) byMonth.set(k, { month: k, count: 0, hours: 0, amount: 0 });
+    if (!byMonth.has(k)) byMonth.set(k, { month: k, count: 0, hours: 0, amount: 0, byCurrency: {} });
     const m = byMonth.get(k);
-    const h = Number(row.hours) || 0, a = Number(row.amount) || 0;
+    const h = Number(row.hours) || 0, a = Number(row.amount) || 0, cur = CUR.norm(row.currency) || 'USD';
     m.count++; m.hours += h; m.amount += a; hours += h; amount += a;
+    add(m.byCurrency, cur, a); add(byCurrency, cur, a);
   }
+  const roundMap = (o) => Object.fromEntries(Object.entries(o).map(([k, v]) => [k, r2(v)]));
+  // `amount` is a plain sum, only meaningful when everything is in one currency; `byCurrency` is the safe breakdown.
   return {
-    count: rows.length, hours: r2(hours), amount: r2(amount),
-    byMonth: [...byMonth.values()].sort((x, y) => y.month.localeCompare(x.month)).map((m) => ({ ...m, hours: r2(m.hours), amount: r2(m.amount) })),
+    count: rows.length, hours: r2(hours), amount: r2(amount), byCurrency: roundMap(byCurrency),
+    byMonth: [...byMonth.values()].sort((x, y) => y.month.localeCompare(x.month)).map((m) => ({ ...m, hours: r2(m.hours), amount: r2(m.amount), byCurrency: roundMap(m.byCurrency) })),
   };
 }
 
@@ -781,7 +798,7 @@ router.get('/', async (req, res, next) => {
 
     const [rows] = await pool.query(
       `SELECT i.*, c.name AS consultant_name, c.status AS consultant_status, cl.name AS client_name, p.name AS program_name,
-         DATE_FORMAT(i.period_month, '%Y-%m') AS period_key
+         DATE_FORMAT(i.period_month, '%Y-%m') AS period_key, COALESCE(i.currency, a.billing_currency, 'USD') AS currency
        FROM invoices i
        JOIN consultants c ON c.id = i.consultant_id
        LEFT JOIN clients cl ON cl.id = i.client_id
@@ -827,11 +844,13 @@ router.get('/months', async (req, res, next) => {
 router.get('/:id', async (req, res, next) => {
   try {
     const [rows] = await pool.query(
-      `SELECT i.*, c.name AS consultant_name, c.status AS consultant_status, cl.name AS client_name, p.name AS program_name
+      `SELECT i.*, c.name AS consultant_name, c.status AS consultant_status, cl.name AS client_name, p.name AS program_name,
+         COALESCE(i.currency, a.billing_currency, 'USD') AS currency
        FROM invoices i
        JOIN consultants c ON c.id = i.consultant_id
        LEFT JOIN clients cl ON cl.id = i.client_id
        LEFT JOIN programs p ON p.id = i.program_id
+       LEFT JOIN consultant_assignments a ON a.id = i.assignment_id
        WHERE i.id = ? AND i.organization_id = ?`,
       [req.params.id, req.user.organization_id]
     );
@@ -916,12 +935,19 @@ router.patch('/:id', async (req, res, next) => {
       params.push(body.notes === null || body.notes === undefined ? null : String(body.notes).slice(0, 1000));
     }
 
+    if (Object.prototype.hasOwnProperty.call(body, 'currency')) {
+      const cur = body.currency === null || body.currency === '' ? null : CUR.norm(body.currency);
+      if (body.currency !== null && body.currency !== '' && !cur) return res.status(400).json({ error: 'currency must be USD, CAD or INR.' });
+      sets.push('currency = ?');
+      params.push(cur);
+    }
+
     if (!sets.length) return res.json({ invoice: existing });
 
     params.push(req.params.id, req.user.organization_id);
     await pool.query(`UPDATE invoices SET ${sets.join(', ')} WHERE id = ? AND organization_id = ?`, params);
 
-    const [rows] = await pool.query('SELECT * FROM invoices WHERE id = ?', [req.params.id]);
+    const [rows] = await pool.query("SELECT i.*, COALESCE(i.currency, a.billing_currency, 'USD') AS currency FROM invoices i LEFT JOIN consultant_assignments a ON a.id = i.assignment_id WHERE i.id = ?", [req.params.id]);
     res.json({ invoice: rows[0] });
   } catch (err) {
     next(err);
