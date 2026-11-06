@@ -547,3 +547,13 @@ Do these in Hostinger (they cannot be done from the code):
 
 - **Catch-up for older pre-placements.** If any saved pre-placement has a vendor that is not in the Directory, the owner / HR see a banner on the Pre-placement list with **Add the missing vendors to the Directory** (one click; same rules as above, candidates who were not selected are skipped, repeated runs change nothing).
 - **Resume (optional, with versions).** Each pre-placement can carry resumes (PDF or Word, up to 10 MB each), stored encrypted in the database. A candidate can send a different resume later: every upload is kept as a new **version** (the newest is the current one; the same file twice is refused; up to 20 versions; older ones stay viewable until removed). Anyone who can see the candidate can open them; only the recruiter who added the candidate, HR or the owner can add or remove. **When the candidate is sent to onboarding, the current resume is copied to the onboarding's new optional "Resume" checklist item** (it never blocks completing the onboarding). Not mandatory for now; to make it mandatory (a candidate cannot move to interviewing without one) set `PREPLACEMENT_RESUME_REQUIRED=1` and restart. Run `db/schema.sql` once (adds `pre_placement_resume_files` and moves any earlier single resume into it); resumes need `FIELD_ENCRYPTION_KEY`.
+
+## Pre-placement merged into Onboarding
+
+Pre-placement is retired from the menu and home page (old records and `/pre-placement.html` still work, with a banner). Onboarding now does it all, started once a consultant is selected:
+
+- **Paste** a pre-placement or placement e-mail; vendor, signer, visa and laptop details are read, and date of birth / SSN go to the sensitive box (encrypted, shown only behind an eye icon, reveal for owner/HR is logged).
+- **Resume** with versions (PDF/Word, 10 MB, up to 20), optional.
+- **Withdrawn** (consultant backed out) sits beside Cancelled (we stopped). A reason from a list is required ("Other" needs an explanation). Withdrawing erases date of birth and SSN; everything else is kept until HR deletes the record on request. HR can optionally mark Directory records *that onboarding created* inactive. HR can restore a withdrawn record to draft. Completed onboardings cannot be withdrawn.
+- Recruiters still see only the onboardings they created.
+- Deploy: push `main`, run `db/schema.sql` once (status ENUM, `secrets`, `withdrawn_reason`, `withdrawn_at`), keep `FIELD_ENCRYPTION_KEY` set.

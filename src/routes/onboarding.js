@@ -10,11 +10,14 @@ const express = require('express');
 const pool = require('../db');
 const { requireAuth, hashPassword, validateSignupInput } = require('../auth');
 const forms = require('./forms');
+const profilesMod = require('./profiles');
 const { FORMS } = require('./formSpecs');
 const { splitClientText } = require('./clientAliases');
 const mailer = require('../mailer');
 const spec = require('./onboardingSpec');
-const { isConfigured, encryptBuffer, decryptBuffer } = require('../crypto');
+const { isConfigured, encrypt, decrypt, encryptBuffer, decryptBuffer } = require('../crypto');
+const ppSpec = require('./prePlacementSpec');
+const { toOnboardingInput } = require('../placementToOnboarding');
 const crypto = require('crypto');
 const vendorItems = require('./vendorItems');
 const { flagLikelyDuplicates, similarity, SIMILARITY_THRESHOLD } = require('./directoryDedup');
@@ -25,18 +28,22 @@ router.use(requireAuth);
 
 const SCHEMA_MSG = 'Onboarding needs the latest database update. Run db/schema.sql on the database, then try again.';
 const TYPES = ['W2', 'C2C', '1099'];
-const STATUSES = ['draft', 'submitted', 'in_progress', 'complete', 'cancelled'];
+const STATUSES = ['draft', 'submitted', 'in_progress', 'complete', 'cancelled', 'withdrawn'];
 const NEXT = {
-  draft: ['submitted', 'in_progress', 'cancelled'],
-  submitted: ['draft', 'in_progress', 'cancelled'],
-  in_progress: ['complete', 'draft', 'cancelled'],
+  draft: ['submitted', 'in_progress', 'cancelled', 'withdrawn'],
+  submitted: ['draft', 'in_progress', 'cancelled', 'withdrawn'],
+  in_progress: ['complete', 'draft', 'cancelled', 'withdrawn'],
   complete: ['in_progress'],
   cancelled: ['draft'],
+  withdrawn: ['draft'],
 };
+// The only values that are not stored in `data`: encrypted, never returned by the API, revealed on request by the owner / HR.
+const NO_KEY_MSG = 'Date of birth and SSN digits cannot be saved yet: the server has no encryption key. Set FIELD_ENCRYPTION_KEY (see README-DEPLOY.md). Everything else can still be saved.';
 const { EMPLOYMENT_BY_WORKER } = require('../placementRules');
 const PROFILE_TYPE = { W2: 'W2', C2C: 'Subvendor', '1099': '1099' };
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const onboardingTypes = (t) => (TYPES.includes(String(t || '').toUpperCase()) ? String(t).toUpperCase() : '');
 const missingTable = (e) => e && e.code === 'ER_NO_SUCH_TABLE';
 const parse = (t, fallback) => { try { const v = t && JSON.parse(t); return v === null || v === undefined ? fallback : v; } catch (e) { return fallback; } };
 const pad2 = (n) => String(n).padStart(2, '0');
@@ -219,6 +226,8 @@ async function present(row, extra, req) {
     startDate: dateStr(row.start_date),
     consultantId: row.consultant_id, supplierId: row.supplier_id, data: pub, meta: data._meta || {},
     checklist: items, progress: progress(items), margin: hide ? null : margin(data), warnings: warningsFor(row.worker_type, data),
+    secretsSaved: secretFlags(row), canReveal: !!req && isHr(req),
+    withdrawn: row.status === 'withdrawn' ? { reason: row.withdrawn_reason || null, label: ((spec.WITHDRAW_REASONS.find((x) => x.key === row.withdrawn_reason) || {}).label) || null, at: row.withdrawn_at || null } : null,
     hiddenFields: hide ? Object.fromEntries(SENSITIVE.filter((k) => full[k] !== undefined).map((k) => [k, true])) : {},
     vendorCheck: hide ? undefined : await vendorCheck(row, full),
     log: parse(row.log, []).slice(-60).reverse(), createdBy: row.created_by,
@@ -240,6 +249,31 @@ async function save(row, fields) {
   const cols = []; const params = [];
   Object.entries(fields).forEach(([k, v]) => { cols.push(`${k} = ?`); params.push(v); });
   await pool.query(`UPDATE onboardings SET ${cols.join(', ')} WHERE id = ? AND organization_id = ?`, params.concat([row.id, row.organization_id]));
+}
+// ---------------------------------------------------------------- sensitive details (date of birth, SSN last digits)
+function secretFlags(row) {
+  const flags = { dob: false, ssn_last5: false };
+  if (!row.secrets) return flags;
+  if (isConfigured()) { try { const s = JSON.parse(decrypt(row.secrets)); flags.dob = !!s.dob; flags.ssn_last5 = !!s.ssn_last5; return flags; } catch (e) { /* fall through */ } }
+  flags.dob = flags.ssn_last5 = true; // sealed, just not readable right now
+  return flags;
+}
+// incoming: { dob, ssn_last5 } (only keys present are touched; '' clears). Returns { sealed, changed, error }.
+function applySecrets(row, incoming) {
+  const pick = {};
+  ['dob', 'ssn_last5'].forEach((k) => { if (incoming && Object.prototype.hasOwnProperty.call(incoming, k)) pick[k] = incoming[k]; });
+  if (!Object.keys(pick).length) return { sealed: row ? row.secrets : null, changed: [] };
+  const { secrets, errors } = ppSpec.clean(pick);
+  if (errors.length) return { error: errors[0].message, status: 400 };
+  const adding = Object.values(secrets).some((v) => v !== '');
+  if (adding && !isConfigured()) return { error: NO_KEY_MSG, status: 400 };
+  let cur = {};
+  if (row && row.secrets) {
+    if (!isConfigured()) return { error: 'The saved sensitive details cannot be read with the current encryption key, so they cannot be changed.', status: 409 };
+    try { cur = JSON.parse(decrypt(row.secrets)); } catch (e) { return { error: 'The saved sensitive details cannot be read with the current encryption key, so they cannot be changed.', status: 409 }; }
+  }
+  Object.entries(secrets).forEach(([k, v]) => { if (v === '') delete cur[k]; else cur[k] = v; });
+  return { sealed: Object.keys(cur).length ? encrypt(JSON.stringify(cur)) : null, changed: Object.keys(secrets) };
 }
 async function directoryMatch(orgId, name) {
   const [r] = await pool.query(`SELECT id, status FROM consultants WHERE organization_id = ? AND LOWER(name) = LOWER(?) LIMIT 1`, [orgId, name]);
@@ -378,6 +412,7 @@ router.get('/schema', async (req, res) => {
     sections: spec.SECTIONS.map((s) => ({ key: s.key, title: s.title, types: s.types || null, fields: s.fields })),
     checklists: Object.fromEntries(Object.entries(spec.CHECKLISTS).map(([t, l]) => [t, l.map((c) => ({ key: c.key, label: c.label, group: c.group, when: c.when || null, answer: c.answer || null, upload: c.upload || null, optional: !!c.optional, form: c.form || null }))])),
     documents: { maxBytes: DOC_MAX, types: Object.keys(DOC_TYPES) },
+    withdrawReasons: spec.WITHDRAW_REASONS, encryptionConfigured: isConfigured(), isHr: isHr(req),
   });
 });
 
@@ -385,8 +420,36 @@ router.post('/parse-email', (req, res) => {
   const text = req.body && typeof req.body.text === 'string' ? req.body.text.slice(0, 20000) : '';
   if (!text.trim()) return res.status(400).json({ error: 'Paste the placement e-mail first.' });
   const r = spec.parseEmail(text);
+  // The newer "PRE-PLACEMENT INFORMATION" table (vendor, signing authority, consultant details ...) is read too; whichever format
+  // the text really is gives more fields, and the other one only fills what is still blank.
+  const pp = ppSpec.parseText(text);
+  if (pp.matched.length > r.matched.length) {
+    const eng = onboardingTypes(pp.fields.engagement);
+    const mapped = toOnboardingInput(pp.fields, eng || undefined, undefined);
+    const { data: fields, errors } = clean(mapped, {});
+    errors.forEach((e) => { delete fields[e.key]; });
+    Object.keys(r.fields).forEach((k) => { if (fields[k] === undefined) fields[k] = r.fields[k]; });
+    if (eng) fields.worker_type = eng;
+    const secrets = {}; ['dob', 'ssn_last5'].forEach((k) => { if (pp.fields[k]) secrets[k] = pp.fields[k]; });
+    const matched = Object.keys(fields).filter((k) => k !== 'worker_type').concat(Object.keys(secrets));
+    return res.json({ fields, secrets, matched, unmatched: pp.unmatched.slice(0, 10), warnings: pp.warnings.concat(errors.map((e) => e.message)), format: 'pre-placement' });
+  }
   if (!r.matched.length) return res.status(422).json({ error: 'Could not find any placement fields in that text.', unmatched: r.unmatched.slice(0, 10) });
   res.json(r);
+});
+
+// Owner / HR only. A POST so the Activity log records every reveal.
+router.post('/:id/reveal', async (req, res, next) => {
+  try {
+    if (!isHr(req)) return res.status(403).json({ error: 'Only the account owner or an HR admin can reveal a date of birth or SSN digits.' });
+    const row = await load(req, res); if (!row) return;
+    if (!row.secrets) return res.json({ dob: '', ssn_last5: '' });
+    if (!isConfigured()) return res.status(503).json({ error: NO_KEY_MSG });
+    let sv;
+    try { sv = JSON.parse(decrypt(row.secrets)); } catch (e) { return res.status(409).json({ error: 'These details cannot be read with the current encryption key.' }); }
+    res.locals.auditNote = 'Revealed date of birth / SSN digits of onboarding #' + row.id;
+    res.json({ dob: sv.dob || '', ssn_last5: sv.ssn_last5 || '' });
+  } catch (err) { if (missingTable(err) || (err && err.code === 'ER_BAD_FIELD_ERROR')) return res.status(503).json({ error: SCHEMA_MSG }); next(err); }
 });
 
 router.get('/', async (req, res, next) => {
@@ -426,11 +489,13 @@ router.post('/', async (req, res, next) => {
     const { data, errors } = clean(body.data || {}, {});
     if (errors.length) return res.status(400).json({ error: errors[0].message, errors });
     if (!data.consultant_name) return res.status(400).json({ error: 'Consultant name is required.' });
+    const sec = applySecrets(null, body.secrets);
+    if (sec.error) return res.status(sec.status).json({ error: sec.error });
     const row = { organization_id: req.user.organization_id, log: '[]' };
-    addLog(row, req, 'Created as a draft.');
+    addLog(row, req, 'Created as a draft.' + (sec.changed.length && sec.sealed ? ' Sensitive details saved (encrypted).' : ''));
     const [r] = await pool.query(
-      `INSERT INTO onboardings (organization_id, worker_type, status, consultant_name, start_date, data, checklist, log, created_by, created_by_id) VALUES (?, ?, 'draft', ?, ?, ?, '{}', ?, ?, ?)`,
-      [req.user.organization_id, body.workerType, data.consultant_name, data.start_date || null, JSON.stringify(data), row.log, who(req), req.user.id]);
+      `INSERT INTO onboardings (organization_id, worker_type, status, consultant_name, start_date, data, secrets, checklist, log, created_by, created_by_id) VALUES (?, ?, 'draft', ?, ?, ?, ?, '{}', ?, ?, ?)`,
+      [req.user.organization_id, body.workerType, data.consultant_name, data.start_date || null, JSON.stringify(data), sec.sealed || null, row.log, who(req), req.user.id]);
     const [rows] = await pool.query(`SELECT * FROM onboardings WHERE id = ?`, [r.insertId]);
     res.status(201).json(await present(rows[0], { directoryMatch: await directoryMatch(req.user.organization_id, data.consultant_name) }, req));
   } catch (err) { if (missingTable(err)) return res.status(503).json({ error: SCHEMA_MSG }); next(err); }
@@ -447,6 +512,7 @@ router.put('/:id', async (req, res, next) => {
   try {
     const row = await load(req, res); if (!row) return;
     if (row.status === 'complete') return res.status(409).json({ error: 'This onboarding is complete. An HR admin must reopen it before the placement can change.' });
+    if (row.status === 'withdrawn') return res.status(409).json({ error: 'The consultant withdrew from this onboarding. Restore it as a draft first if you need to change it.' });
     if (!isHr(req) && row.status !== 'draft') return res.status(403).json({ error: 'This request is with HR. Withdraw it first if you need to change it, or ask the HR admin to edit it.' });
     const body = req.body || {};
     let type = row.worker_type;
@@ -460,6 +526,8 @@ router.put('/:id', async (req, res, next) => {
     const { data, errors } = clean(input, old);
     if (errors.length) return res.status(400).json({ error: errors[0].message, errors });
     if (!data.consultant_name) return res.status(400).json({ error: 'Consultant name is required.' });
+    const sec = applySecrets(row, body.secrets);
+    if (sec.error) return res.status(sec.status).json({ error: sec.error });
     const changed = Object.keys(data).filter((k) => k !== '_meta' && String(data[k]) !== String(old[k] === undefined ? '' : old[k]))
       .concat(Object.keys(old).filter((k) => k !== '_meta' && data[k] === undefined));
     if (type !== row.worker_type) changed.unshift('worker type');
@@ -470,7 +538,10 @@ router.put('/:id', async (req, res, next) => {
       });
       addLog(row, req, (isHr(req) && row.created_by_id !== req.user.id ? 'Edited by HR: ' : 'Placement edited after it was sent: ') + bits.join('; '));
     }
-    await save(row, { worker_type: type, consultant_name: data.consultant_name, start_date: data.start_date || null, data: JSON.stringify(data), log: row.log });
+    if (sec.changed.length && row.status !== 'draft') addLog(row, req, 'Sensitive details changed (encrypted).');
+    const upd = { worker_type: type, consultant_name: data.consultant_name, start_date: data.start_date || null, data: JSON.stringify(data), log: row.log };
+    if (sec.changed.length) upd.secrets = sec.sealed;
+    await save(row, upd);
     const [rows] = await pool.query(`SELECT * FROM onboardings WHERE id = ?`, [row.id]);
     res.json(await present(rows[0], { directoryMatch: await directoryMatch(row.organization_id, data.consultant_name), allowedNext: NEXT[rows[0].status] }, req));
   } catch (err) { if (missingTable(err)) return res.status(503).json({ error: SCHEMA_MSG }); next(err); }
@@ -480,7 +551,7 @@ router.delete('/:id', async (req, res, next) => {
   try {
     const row = await load(req, res); if (!row) return;
     if (!isHr(req) && row.status !== 'draft') return res.status(403).json({ error: 'You can only delete your own drafts.' });
-    if (!['draft', 'cancelled'].includes(row.status)) return res.status(409).json({ error: 'Only a draft or cancelled onboarding can be deleted. Cancel it first.' });
+    if (!['draft', 'cancelled', 'withdrawn'].includes(row.status)) return res.status(409).json({ error: 'Only a draft, cancelled or withdrawn onboarding can be deleted. Cancel or withdraw it first.' });
     await pool.query(`DELETE FROM onboardings WHERE id = ? AND organization_id = ?`, [row.id, row.organization_id]);
     res.json({ ok: true });
   } catch (err) { next(err); }
@@ -490,7 +561,7 @@ router.post('/:id/checklist', async (req, res, next) => {
   try {
     if (!isHr(req)) return denyHr(res);
     const row = await load(req, res); if (!row) return;
-    if (row.status === 'complete' || row.status === 'cancelled') return res.status(409).json({ error: 'Reopen this onboarding before changing the checklist.' });
+    if (['complete', 'cancelled', 'withdrawn'].includes(row.status)) return res.status(409).json({ error: 'Reopen this onboarding before changing the checklist.' });
     if (row.status === 'submitted') return res.status(409).json({ error: 'Approve the request (Start onboarding) before working the checklist.' });
     const b = req.body || {};
     const data = parse(row.data, {});
@@ -526,13 +597,22 @@ router.post('/:id/status', async (req, res, next) => {
     const row = await load(req, res); if (!row) return;
     const to = req.body && req.body.status;
     if (!isHr(req)) {
-      const ok = (row.status === 'draft' && ['submitted', 'cancelled'].includes(to)) || (row.status === 'submitted' && to === 'draft');
+      const ok = (row.status === 'draft' && ['submitted', 'cancelled', 'withdrawn'].includes(to)) || (row.status === 'submitted' && ['draft', 'withdrawn'].includes(to));
       if (!ok) return res.status(403).json({ error: 'Only an HR admin can do that. You can send a draft to HR, or withdraw a request that is still waiting.' });
     }
     if (row.status === 'submitted' && to === 'draft' && isHr(req) && !(req.body && String(req.body.reason || '').trim())) return res.status(422).json({ error: 'Say what the recruiter should fix, so they know why it came back.' });
     if (!STATUSES.includes(to) || !NEXT[row.status].includes(to)) return res.status(409).json({ error: `An onboarding that is ${row.status.replace('_', ' ')} cannot move to ${String(to).replace('_', ' ')}.` });
     const data = parse(row.data, {});
     const f = { status: to };
+    let withdrawNote = '';
+    if (to === 'withdrawn') {
+      const rs = spec.WITHDRAW_REASONS.find((x) => x.key === (req.body || {}).reasonCode);
+      if (!rs) return res.status(422).json({ error: 'Choose why the consultant backed out.' });
+      const note = String((req.body || {}).reason || '').trim().slice(0, 300);
+      if (rs.key === 'other' && !note) return res.status(422).json({ error: 'Explain the reason for withdrawing.' });
+      f.withdrawn_reason = rs.key; f.withdrawn_at = new Date(); f.secrets = null;
+      withdrawNote = ' Reason: ' + rs.label + (note ? ' — ' + note : '') + '.' + (row.secrets ? ' Date of birth and SSN digits were erased.' : '');
+    } else if (row.status === 'withdrawn') { f.withdrawn_reason = null; f.withdrawn_at = null; }
     if (['submitted', 'in_progress'].includes(to) && row.status === 'draft') {
       const miss = missingRequired(row.worker_type, data);
       if (miss.length) return res.status(422).json({ error: 'Fill in these before sending: ' + miss.join(', ') + '.', missing: miss });
@@ -546,15 +626,45 @@ router.post('/:id/status', async (req, res, next) => {
       f.completed_at = new Date();
     }
     if (row.status === 'complete') f.completed_at = null;
-    const reason = req.body && req.body.reason ? ` Reason: ${String(req.body.reason).slice(0, 300)}` : '';
-    const label = { draft: row.status === 'cancelled' ? 'Restored as a draft' : (isHr(req) ? 'Returned to the recruiter for changes' : 'Withdrawn by the recruiter'), submitted: 'Sent to HR for approval', in_progress: row.status === 'complete' ? 'Reopened' : row.status === 'submitted' ? 'Approved by HR; onboarding started' : 'HR started onboarding', complete: 'Marked complete', cancelled: 'Cancelled' }[to];
+    const reason = to === 'withdrawn' ? withdrawNote : (req.body && req.body.reason ? ` Reason: ${String(req.body.reason).slice(0, 300)}` : '');
+    const label = { draft: ['cancelled', 'withdrawn'].includes(row.status) ? 'Restored as a draft' : (isHr(req) ? 'Returned to the recruiter for changes' : 'Pulled back by the recruiter to edit'), submitted: 'Sent to HR for approval', in_progress: row.status === 'complete' ? 'Reopened' : row.status === 'submitted' ? 'Approved by HR; onboarding started' : 'HR started onboarding', complete: 'Marked complete', cancelled: 'Cancelled', withdrawn: 'Withdrawn: the consultant backed out' }[to];
     addLog(row, req, label + '.' + reason);
     f.log = row.log;
+    let cleanup = null;
+    if (to === 'withdrawn') {
+      // Only the Directory records THIS onboarding created, and only when HR ticked the box: marked inactive, never deleted.
+      if (isHr(req) && (req.body || {}).markDirectoryInactive) {
+        try { cleanup = await inactivateCreatedRecords(row, data); } catch (e) { cleanup = null; }
+        if (cleanup && cleanup.length) { addLog(row, req, 'Directory records marked inactive: ' + cleanup.join('; ') + '.'); f.log = row.log; }
+      }
+      // supplier request links for this onboarding stop working
+      try { await pool.query('UPDATE vendor_requests SET revoked_at = NOW() WHERE onboarding_id = ? AND organization_id = ? AND revoked_at IS NULL', [row.id, row.organization_id]); } catch (e) { if (!(e && (e.code === 'ER_NO_SUCH_TABLE' || e.code === 'ER_BAD_FIELD_ERROR'))) throw e; }
+    }
     await save(row, f);
     const [rows] = await pool.query(`SELECT * FROM onboardings WHERE id = ?`, [row.id]);
-    res.json(await present(rows[0], { allowedNext: NEXT[rows[0].status] }, req));
+    res.json(await present(rows[0], { allowedNext: NEXT[rows[0].status], directoryCleanup: cleanup }, req));
   } catch (err) { next(err); }
 });
+
+// When a consultant backs out after Directory records were created: mark inactive the ones this onboarding created (never delete).
+// Anything that existed before, or is still in use by another placement, is left alone.
+async function inactivateCreatedRecords(row, data) {
+  const meta = (data && data._meta) || {}; const made = meta.created || {}; const done = []; const org = row.organization_id;
+  if (made.assignment && meta.assignmentId) {
+    const [r] = await pool.query(`UPDATE consultant_assignments SET status = 'left', left_date = CURDATE() WHERE id = ? AND organization_id = ? AND status = 'active'`, [meta.assignmentId, org]);
+    if (r.affectedRows) done.push('billing pairing ended');
+  }
+  if (made.consultant && row.consultant_id) {
+    const [[o]] = await pool.query(`SELECT COUNT(*) n FROM consultant_assignments WHERE organization_id = ? AND consultant_id = ? AND status = 'active'`, [org, row.consultant_id]);
+    if (!Number(o.n)) { const [r] = await pool.query(`UPDATE consultants SET status = 'inactive' WHERE id = ? AND organization_id = ? AND (status IS NULL OR status = 'active')`, [row.consultant_id, org]); if (r.affectedRows) done.push('consultant set to inactive'); }
+  }
+  if (made.supplier && row.supplier_id) {
+    const [[a]] = await pool.query(`SELECT COUNT(*) n FROM consultant_assignments WHERE organization_id = ? AND supplier_id = ? AND status = 'active'`, [org, row.supplier_id]);
+    const [[b]] = await pool.query(`SELECT COUNT(*) n FROM onboardings WHERE organization_id = ? AND supplier_id = ? AND id <> ? AND status IN ('draft','submitted','in_progress','complete')`, [org, row.supplier_id, row.id]);
+    if (!Number(a.n) && !Number(b.n)) { const [r] = await pool.query(`UPDATE subvendors SET status = 'inactive' WHERE id = ? AND organization_id = ? AND (status IS NULL OR status = 'active')`, [row.supplier_id, org]); if (r.affectedRows) done.push('supplier company set to inactive'); }
+  }
+  return done;
+}
 
 router.get('/:id/email', async (req, res, next) => {
   try {
@@ -570,10 +680,10 @@ router.post('/:id/documents', async (req, res, next) => {
   try {
     if (!isHr(req)) return denyHr(res);
     const row = await load(req, res); if (!row) return;
-    if (row.status === 'complete' || row.status === 'cancelled') return res.status(409).json({ error: 'Reopen this onboarding before changing its documents.' });
+    if (['complete', 'cancelled', 'withdrawn'].includes(row.status)) return res.status(409).json({ error: 'Reopen this onboarding before changing its documents.' });
     const b = req.body || {};
     const def = spec.checklistFor(row.worker_type, parse(row.data, {})).find((c) => c.key === b.itemKey);
-    if (!def || !(def.upload || def.uploadInstead)) return res.status(404).json({ error: 'That checklist item does not take a document.' });
+    if (!def || !(def.upload || def.uploadInstead) || def.key === 'resume') return res.status(404).json({ error: def && def.key === 'resume' ? 'Use the Resume box on the onboarding to add a resume.' : 'That checklist item does not take a document.' });
     const filename = String(b.filename || '').replace(/[\\/\r\n"]/g, '_').trim().slice(0, 200);
     const ext = (/\.([a-z0-9]+)$/i.exec(filename) || [])[1];
     const t = ext && DOC_TYPES[ext.toLowerCase()];
@@ -628,11 +738,74 @@ router.get('/:id/documents/:docId', async (req, res, next) => {
   } catch (err) { if (missingTable(err)) return res.status(404).json({ error: 'Document not found.' }); next(err); }
 });
 
+// ------------------------------------------------------------------ resume (optional; several versions)
+// A candidate may send a different resume later, so each upload is kept as a new version; the newest is the current one. The
+// person who created the onboarding and HR can add or remove them (HR-only rules for other documents do not apply here).
+const RESUME_TYPES = Object.assign({}, { pdf: DOC_TYPES.pdf, docx: DOC_TYPES.docx }, {
+  doc: { mime: 'application/msword', magic: (b) => b.subarray(0, 8).equals(Buffer.from([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1])) },
+  rtf: { mime: 'application/rtf', magic: (b) => b.subarray(0, 5).toString('latin1') === '{\\rtf' },
+});
+const RESUME_VERSIONS_MAX = 20;
+
+router.post('/:id/resume', async (req, res, next) => {
+  let conn;
+  try {
+    const row = await load(req, res); if (!row) return;
+    if (['complete', 'cancelled', 'withdrawn'].includes(row.status)) return res.status(409).json({ error: 'Reopen this onboarding before changing the resume.' });
+    if (!isHr(req) && row.status !== 'draft' && row.status !== 'submitted') return res.status(403).json({ error: 'Only HR can change the resume now.' });
+    const b = req.body || {};
+    const filename = String(b.filename || '').replace(/[\\/\r\n"]/g, '_').trim().slice(0, 200);
+    const ext = (/\.([a-z0-9]+)$/i.exec(filename) || [])[1];
+    const t = ext && RESUME_TYPES[ext.toLowerCase()];
+    if (!t) return res.status(415).json({ error: 'Upload the resume as a PDF or Word (.doc, .docx) file.' });
+    if (typeof b.contentBase64 !== 'string' || !b.contentBase64) return res.status(400).json({ error: 'Choose a file to upload.' });
+    if (b.contentBase64.length > Math.ceil(DOC_MAX / 3) * 4 + 8) return res.status(413).json({ error: 'That file is larger than 10 MB.' });
+    const buf = Buffer.from(b.contentBase64, 'base64');
+    if (!buf.length) return res.status(400).json({ error: 'That file is empty.' });
+    if (buf.length > DOC_MAX) return res.status(413).json({ error: 'That file is larger than 10 MB.' });
+    if (!t.magic(buf)) return res.status(415).json({ error: `That file does not look like a real .${ext.toLowerCase()} file.` });
+    if (!isConfigured()) return res.status(503).json({ error: 'The resume cannot be stored yet: the server has no encryption key (FIELD_ENCRYPTION_KEY). Nothing was saved.' });
+    conn = await pool.getConnection();
+    await conn.beginTransaction();
+    await conn.query('SELECT id FROM onboardings WHERE id = ? AND organization_id = ? FOR UPDATE', [row.id, row.organization_id]); // one upload at a time per onboarding
+    const [cur] = await conn.query(`SELECT id, filename, content FROM onboarding_documents WHERE organization_id = ? AND onboarding_id = ? AND item_key = 'resume' ORDER BY id DESC`, [row.organization_id, row.id]);
+    if (cur.length >= RESUME_VERSIONS_MAX) { await conn.rollback(); return res.status(409).json({ error: `There are already ${RESUME_VERSIONS_MAX} versions of this resume. Remove an old one first.` }); }
+    if (cur[0]) { let same = false; try { same = decryptBuffer(cur[0].content).equals(buf); } catch (e) { /* unreadable: treat as different */ } if (same) { await conn.rollback(); return res.status(409).json({ error: `That is the same file as the current resume (${cur[0].filename}).` }); } }
+    const [ins] = await conn.query('INSERT INTO onboarding_documents (organization_id, onboarding_id, item_key, filename, mime, size, content, uploaded_by, uploaded_by_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      [row.organization_id, row.id, 'resume', filename, t.mime, buf.length, encryptBuffer(buf), who(req), req.user.id]);
+    addLog(row, req, `Resume ${cur.length ? 'new version added (now the current one)' : 'added'} (${filename}, ${Math.max(1, Math.round(buf.length / 1024))} KB).`);
+    await conn.query('UPDATE onboardings SET log = ? WHERE id = ? AND organization_id = ?', [row.log, row.id, row.organization_id]);
+    await conn.commit();
+    const [rows] = await pool.query('SELECT * FROM onboardings WHERE id = ?', [row.id]);
+    res.status(201).json(await present(rows[0], { allowedNext: NEXT[rows[0].status], documentId: ins.insertId }, req));
+  } catch (err) {
+    if (conn) { try { await conn.rollback(); } catch (e) { /* ignore */ } }
+    if (missingTable(err)) return res.status(503).json({ error: SCHEMA_MSG });
+    if (err && (err.code === 'ER_NET_PACKET_TOO_LARGE' || err.code === 'EPIPE')) return res.status(413).json({ error: 'The database refused a file that large. Try a smaller file.' });
+    next(err);
+  } finally { if (conn) conn.release(); }
+});
+
+router.delete('/:id/resume/:docId', async (req, res, next) => {
+  try {
+    const row = await load(req, res); if (!row) return;
+    if (['complete', 'cancelled', 'withdrawn'].includes(row.status)) return res.status(409).json({ error: 'Reopen this onboarding before changing the resume.' });
+    if (!isHr(req) && row.status !== 'draft' && row.status !== 'submitted') return res.status(403).json({ error: 'Only HR can change the resume now.' });
+    const d = await loadDoc(req, res, row); if (!d) return;
+    if (d.item_key !== 'resume') return res.status(404).json({ error: 'Document not found.' });
+    await pool.query('DELETE FROM onboarding_documents WHERE id = ?', [d.id]);
+    addLog(row, req, `Resume version removed (${d.filename}).`);
+    await save(row, { log: row.log });
+    const [rows] = await pool.query('SELECT * FROM onboardings WHERE id = ?', [row.id]);
+    res.json(await present(rows[0], { allowedNext: NEXT[rows[0].status] }, req));
+  } catch (err) { next(err); }
+});
+
 router.delete('/:id/documents/:docId', async (req, res, next) => {
   try {
     if (!isHr(req)) return denyHr(res);
     const row = await load(req, res); if (!row) return;
-    if (row.status === 'complete' || row.status === 'cancelled') return res.status(409).json({ error: 'Reopen this onboarding before changing its documents.' });
+    if (['complete', 'cancelled', 'withdrawn'].includes(row.status)) return res.status(409).json({ error: 'Reopen this onboarding before changing its documents.' });
     const d = await loadDoc(req, res, row); if (!d) return;
     await pool.query('DELETE FROM onboarding_documents WHERE id = ?', [d.id]);
     const def = spec.checklistFor(row.worker_type, parse(row.data, {})).find((c) => c.key === d.item_key);
@@ -898,7 +1071,7 @@ router.post('/:id/create-records', async (req, res, next) => {
   try {
     if (!isHr(req)) return denyHr(res);
     const row = await load(req, res); if (!row) return;
-    if (row.status === 'complete' || row.status === 'cancelled') return res.status(409).json({ error: 'Reopen this onboarding first.' });
+    if (['complete', 'cancelled', 'withdrawn'].includes(row.status)) return res.status(409).json({ error: 'Reopen this onboarding first.' });
     if (row.status === 'submitted') return res.status(409).json({ error: 'Approve the request (Start onboarding) before creating directory records.' });
     const data = parse(row.data, {});
     const orgId = row.organization_id;
@@ -922,13 +1095,14 @@ router.post('/:id/create-records', async (req, res, next) => {
     // Consultant
     const addrParts = [data.address, [data.city, data.state, data.zip].filter(Boolean).join(' ')].filter(Boolean).join(', ');
     let cons = await find(`SELECT id, email, phone, address FROM consultants WHERE organization_id = ? AND LOWER(name) = LOWER(?)`, [orgId, data.consultant_name]);
-    let consultantId;
+    let consultantId; let consultantMade = false; let supplierMade = false; let assignmentMade = false;
     if (cons) {
       consultantId = cons.id;
       await conn.query(`UPDATE consultants SET status = 'active', email = COALESCE(NULLIF(email, ''), ?), phone = COALESCE(NULLIF(phone, ''), ?), address = COALESCE(NULLIF(address, ''), ?) WHERE id = ?`,
         [data.email || null, data.phone || null, addrParts || null, consultantId]);
       made.push('linked the existing consultant');
     } else {
+      consultantMade = true;
       const [r] = await conn.query(`INSERT INTO consultants (organization_id, name, status, email, phone, address) VALUES (?, ?, 'active', ?, ?, ?)`,
         [orgId, data.consultant_name, data.email || null, data.phone || null, addrParts || null]);
       consultantId = r.insertId; made.push('created the consultant');
@@ -949,12 +1123,24 @@ router.post('/:id/create-records', async (req, res, next) => {
       } else {
         const [r] = await conn.query(`INSERT INTO subvendors (organization_id, name, status, email, phone, address) VALUES (?, ?, 'active', ?, ?, ?)`,
           [orgId, vnameRec, data.employer_email || null, data.employer_phone || null, eAddr || null]);
-        supplierId = r.insertId; made.push('created the supplier company');
+        supplierId = r.insertId; supplierMade = true; made.push('created the supplier company');
         await flagNew(conn, orgId, 'subvendors', supplierId, vnameRec);
       }
       await mergeProfile(conn, orgId, 'subvendors', supplierId, {
         contact_name: data.employer_contact, city: data.employer_city, state: data.employer_state, postal_code: data.employer_zip,
+        fax: data.employer_fax, incorporated_state: data.employer_incorporated_state,
+        signer_name: data.signer_name, signer_designation: data.signer_designation, signer_phone: data.signer_phone, signer_email: data.signer_email,
       });
+      // the company's tax ID goes in encrypted, and only if the supplier does not already have one
+      const taxRaw = String(data.employer_tax_id || '').trim();
+      if (taxRaw && isConfigured()) {
+        const [hasTax] = await conn.query(`SELECT 1 FROM record_secrets WHERE organization_id = ? AND entity = 'subvendors' AND record_id = ? AND field = 'tax_id'`, [orgId, supplierId]);
+        const taxClean = profilesMod.helpers.secretClean('taxid', taxRaw);
+        if (!hasTax[0] && taxClean) {
+          await conn.query(`INSERT INTO record_secrets (organization_id, entity, record_id, field, cipher, last4) VALUES (?, 'subvendors', ?, 'tax_id', ?, ?)`, [orgId, supplierId, encrypt(taxClean), taxClean.slice(-4)]);
+          made.push('saved the company tax ID (encrypted)');
+        }
+      }
     }
 
     // Client, vendor, billing pairing
@@ -979,7 +1165,7 @@ router.post('/:id/create-records', async (req, res, next) => {
     else {
       const [r] = await conn.query(`INSERT INTO consultant_assignments (organization_id, consultant_id, client_id, program_id, billing, pay_rate, source, employment_type, supplier_id, recruiter, joined_text) VALUES (?, ?, ?, ?, ?, ?, 'manual', ?, ?, ?, ?)`,
         [orgId, consultantId, clientId, programId, billing, payRateVal, empType, supplierId, data.recruiter || null, joinedText]);
-      assignmentId = r.insertId; made.push('added the billing pairing');
+      assignmentId = r.insertId; assignmentMade = true; made.push('added the billing pairing');
     }
 
     // Profile details
@@ -990,7 +1176,9 @@ router.post('/:id/create-records', async (req, res, next) => {
       preferred_location: data.location, payment_terms: data.payment_terms,
     });
 
-    data._meta = Object.assign({}, data._meta, { assignmentId, clientId, programId, createdAt: new Date().toISOString() });
+    const prevMade = (data._meta && data._meta.created) || {};
+    data._meta = Object.assign({}, data._meta, { assignmentId, clientId, programId, createdAt: new Date().toISOString(),
+      created: { consultant: !!prevMade.consultant || consultantMade, supplier: !!prevMade.supplier || supplierMade, assignment: !!prevMade.assignment || assignmentMade } });
     addLog(row, req, `Directory records: ${made.join(', ')} (client “${clientName}”${vendorName ? `, vendor “${vendorName}”` : ''}, billing rate ${billing === null ? 'not set' : 'set'}).`);
     await conn.query(`UPDATE onboardings SET consultant_id = ?, supplier_id = ?, data = ?, log = ?${row.status === 'draft' ? `, status = 'in_progress'` : ''} WHERE id = ? AND organization_id = ?`,
       [consultantId, supplierId, JSON.stringify(data), row.log, row.id, orgId]);

@@ -3544,6 +3544,109 @@ async function main() {
         r = await rita.fetch('/api/pre-placement/' + ppId + '/add-vendor', { method: 'POST', body: JSON.stringify({}) });
         check('pre-placement: a recruiter cannot add the vendor of someone else’s candidate (403)', r.status === 403, r.status);
         r = await svOwner.fetch('/api/pre-placement/' + vId, { method: 'DELETE' });
+        // ---------------- onboarding now does what pre-placement did: paste, sensitive details, resumes, withdrawn
+        r = await svOwner.fetch('/api/onboarding/schema');
+        check('onboarding: withdrawn is a status, with a list of reasons', r.body.statuses.includes('withdrawn') && r.body.withdrawReasons.length >= 6 && r.body.withdrawReasons.some((x) => x.key === 'other_offer') && r.body.encryptionConfigured === true, r.body.withdrawReasons);
+        r = await rita.fetch('/api/onboarding/parse-email', { method: 'POST', body: JSON.stringify({ text: T }) });
+        check('onboarding: the pre-placement e-mail can be pasted (vendor, signer, visa, laptop; engagement read from the pay line)', r.status === 200 && r.body.fields.worker_type === 'C2C' && r.body.fields.employer_name === 'RPAR technologies services' && r.body.fields.employer_tax_id === '753132539RT0001'
+          && r.body.fields.signer_name === 'Arun Kumar Konda' && r.body.fields.employer_incorporated_state === 'Ontario' && r.body.fields.consultant_name === 'Priya Pre Placement' && r.body.fields.visa_expiry === '2034-08-23' && /glen Eagles/i.test(r.body.fields.laptop_address) && r.body.format === 'pre-placement', r.body);
+        check('onboarding: pasted date of birth and SSN come back separately (not as ordinary fields)', r.body.secrets && r.body.secrets.dob === '1989-09-03' && r.body.secrets.ssn_last5 === '90566' && r.body.fields.dob === undefined && r.body.fields.ssn_last5 === undefined, r.body.secrets);
+        const oldFmt = await rita.fetch('/api/onboarding/parse-email', { method: 'POST', body: JSON.stringify({ text: 'PLACEMENT INFORMATION\nConsultant Name: Olga Old\nProject Start Date: 03/01/2026\nEnd Client: Acme' }) });
+        check('onboarding: the original placement e-mail still reads as before', oldFmt.status === 200 && oldFmt.body.fields.consultant_name === 'Olga Old' && !oldFmt.body.format, oldFmt.body);
+
+        const base = Object.assign({}, r.body.fields); delete base.worker_type; base.invoicing_method = 'QuickBooks'; base.recruiter = 'Rita Recruiter'; base.bill_rate = 75; base.pay_rate = 65; base.h1b_filing_required = 'No'; base.start_date = '2026-12-01'; base.end_client = 'Wipro / TD Bank';
+        r = await rita.fetch('/api/onboarding', { method: 'POST', body: JSON.stringify({ workerType: 'C2C', data: base, secrets: { dob: '1989-09-03', ssn_last5: '90566' } }) });
+        const wId = r.body.id;
+        check('onboarding: a recruiter saves it with the sensitive details encrypted', r.status === 201 && r.body.secretsSaved.dob === true && r.body.secretsSaved.ssn_last5 === true && r.body.canReveal === false && !JSON.stringify(r.body).includes('90566') && !JSON.stringify(r.body).includes('1989-09-03'), r.body);
+        check('onboarding: the new fields (visa expiry, emergency contact, laptop address, signer, tax ID) are kept', r.body.data.visa_expiry === '2034-08-23' && r.body.data.emergency_contact === '6479362340' && r.body.data.employer_tax_id === '753132539RT0001' && r.body.data.signer_designation === 'Director', r.body.data);
+        const [[wdb]] = await dbConn.query('SELECT secrets, data FROM onboardings WHERE id = ?', [wId]);
+        check('onboarding: date of birth and SSN are stored encrypted, not in the readable data', wdb.secrets && !wdb.secrets.includes('90566') && !wdb.secrets.includes('1989') && !wdb.data.includes('90566') && !wdb.data.includes('1989-09-03'), wdb.secrets && wdb.secrets.slice(0, 12));
+        r = await rita.fetch('/api/onboarding/' + wId + '/reveal', { method: 'POST' });
+        check('onboarding: a recruiter cannot reveal them (403)', r.status === 403, r.status);
+        r = await svOwner.fetch('/api/onboarding/' + wId + '/reveal', { method: 'POST' });
+        check('onboarding: the owner can reveal them', r.status === 200 && r.body.dob === '1989-09-03' && r.body.ssn_last5 === '90566', r.body);
+        await sleep(400);
+        const [[wAud]] = (await dbConn.query("SELECT COUNT(*) n FROM audit_log WHERE detail LIKE '%Revealed date of birth%' AND path LIKE ?", ['%/onboarding/' + wId + '/reveal']));
+        check('onboarding: the reveal is written to the Activity log', Number(wAud.n) === 1, wAud);
+        r = await rita.fetch('/api/onboarding/' + wId, { method: 'PUT', body: JSON.stringify({ data: {}, secrets: { ssn_last5: '12' } }) });
+        check('onboarding: a bad SSN entry is refused', r.status === 400 && /last 4 or 5/i.test(r.body.error), r.body);
+        r = await rita.fetch('/api/onboarding/' + wId, { method: 'PUT', body: JSON.stringify({ data: {}, secrets: { ssn_last5: '4567' } }) });
+        const rv2 = await svOwner.fetch('/api/onboarding/' + wId + '/reveal', { method: 'POST' });
+        check('onboarding: one sensitive value can be replaced without touching the other', r.status === 200 && rv2.body.ssn_last5 === '4567' && rv2.body.dob === '1989-09-03', rv2.body);
+
+        // resumes (versions) on the onboarding
+        const pdf1 = Buffer.from('%PDF-1.4\nresume one\n%%EOF').toString('base64');
+        r = await rita.fetch('/api/onboarding/' + wId + '/resume', { method: 'POST', body: JSON.stringify({ filename: 'Priya CV.pdf', contentBase64: pdf1 }) });
+        check('onboarding: a recruiter can add a resume to their own onboarding', r.status === 201 && r.body.checklist.find((c) => c.key === 'resume').documents.length === 1, r.status);
+        r = await rita.fetch('/api/onboarding/' + wId + '/resume', { method: 'POST', body: JSON.stringify({ filename: 'again.pdf', contentBase64: pdf1 }) });
+        check('onboarding: the same file is not added twice (409)', r.status === 409 && /same file/i.test(r.body.error), r.body);
+        r = await rita.fetch('/api/onboarding/' + wId + '/resume', { method: 'POST', body: JSON.stringify({ filename: 'bad.exe', contentBase64: pdf1 }) });
+        check('onboarding: only PDF / Word resumes (415)', r.status === 415, r.status);
+        r = await rita.fetch('/api/onboarding/' + wId + '/resume', { method: 'POST', body: JSON.stringify({ filename: 'Priya CV v2.docx', contentBase64: Buffer.concat([Buffer.from([0x50, 0x4b, 0x03, 0x04]), Buffer.from('v2')]).toString('base64') }) });
+        const rdocs = r.body.checklist.find((c) => c.key === 'resume').documents;
+        check('onboarding: a different resume is a new version (both kept, newest last)', r.status === 201 && rdocs.length === 2 && rdocs[1].filename === 'Priya CV v2.docx', rdocs.map((x) => x.filename));
+        r = await svOwner.raw('/api/onboarding/' + wId + '/documents/' + rdocs[0].id);
+        check('onboarding: HR can open the older version', r.status === 200 && r.buf.toString('latin1').includes('resume one'), r.status);
+        r = await svOwner.fetch('/api/onboarding/' + wId + '/documents', { method: 'POST', body: JSON.stringify({ itemKey: 'resume', filename: 'x.pdf', contentBase64: pdf1, replace: true }) });
+        check('onboarding: the general document upload does not touch the resume item', r.status === 404, r.status);
+        const ritaTwo = makeJar();
+        await svOwner.fetch('/api/onboarding/people', { method: 'POST', body: JSON.stringify({ name: 'Ron Recruiter', email: 'ron@ppco.test', password: 'Zq7d41c9e02-Lm7!', role: 'recruiter' }) });
+        await ritaTwo.fetch('/api/auth/login', { method: 'POST', body: JSON.stringify({ email: 'ron@ppco.test', password: 'Zq7d41c9e02-Lm7!' }) });
+        r = await ritaTwo.fetch('/api/onboarding/' + wId + '/resume', { method: 'POST', body: JSON.stringify({ filename: 'Hijack.pdf', contentBase64: Buffer.from('%PDF-1.4\nhijack').toString('base64') }) });
+        check('onboarding: another recruiter cannot reach it (404)', r.status === 404, r.status);
+        r = await rita.fetch('/api/onboarding/' + wId + '/resume/' + rdocs[1].id, { method: 'DELETE' });
+        check('onboarding: a version can be removed by the recruiter', r.status === 200 && r.body.checklist.find((c) => c.key === 'resume').documents.length === 1, r.status);
+
+        // consultant backs out
+        r = await rita.fetch('/api/onboarding/' + wId + '/status', { method: 'POST', body: JSON.stringify({ status: 'withdrawn' }) });
+        check('onboarding: withdrawing needs a reason from the list (422)', r.status === 422, r.body);
+        r = await rita.fetch('/api/onboarding/' + wId + '/status', { method: 'POST', body: JSON.stringify({ status: 'withdrawn', reasonCode: 'other' }) });
+        check('onboarding: “Other” needs an explanation (422)', r.status === 422 && /explain/i.test(r.body.error), r.body);
+        r = await rita.fetch('/api/onboarding/' + wId + '/status', { method: 'POST', body: JSON.stringify({ status: 'withdrawn', reasonCode: 'other_offer', reason: 'Took a permanent job' }) });
+        check('onboarding: the recruiter marks their own onboarding as withdrawn', r.status === 200 && r.body.status === 'withdrawn' && r.body.withdrawn.label === 'Accepted another offer' && r.body.secretsSaved.dob === false && r.body.secretsSaved.ssn_last5 === false && r.body.log[0].text.includes('Took a permanent job') && /erased/i.test(r.body.log[0].text), r.body);
+        const [[wdb2]] = await dbConn.query('SELECT secrets, withdrawn_reason, withdrawn_at FROM onboardings WHERE id = ?', [wId]);
+        check('onboarding: withdrawing erased the date of birth and SSN from the database', wdb2.secrets === null && wdb2.withdrawn_reason === 'other_offer' && !!wdb2.withdrawn_at, wdb2);
+        check('onboarding: the resume and the rest are kept', r.body.checklist.find((c) => c.key === 'resume').documents.length === 1 && r.body.data.consultant_name === 'Priya Pre Placement');
+        r = await svOwner.fetch('/api/onboarding/' + wId, { method: 'PUT', body: JSON.stringify({ data: { phone: '1' } }) });
+        check('onboarding: a withdrawn onboarding cannot be edited (409)', r.status === 409, r.body);
+        r = await rita.fetch('/api/onboarding/' + wId + '/resume', { method: 'POST', body: JSON.stringify({ filename: 'late.pdf', contentBase64: Buffer.from('%PDF-1.4\nlate').toString('base64') }) });
+        check('onboarding: nor can a resume be added (409)', r.status === 409, r.status);
+        r = await rita.fetch('/api/onboarding/' + wId + '/status', { method: 'POST', body: JSON.stringify({ status: 'draft' }) });
+        check('onboarding: a recruiter cannot restore it (403)', r.status === 403, r.status);
+        r = await rita.fetch('/api/onboarding/' + wId, { method: 'DELETE' });
+        check('onboarding: a recruiter cannot delete it (403)', r.status === 403, r.status);
+        r = await svOwner.fetch('/api/onboarding?status=withdrawn');
+        check('onboarding: HR can list the withdrawn ones', r.status === 200 && r.body.onboardings.some((x) => x.id === wId && x.status === 'withdrawn') && r.body.counts.withdrawn >= 1, r.body.counts);
+        r = await svOwner.fetch('/api/onboarding/' + wId + '/status', { method: 'POST', body: JSON.stringify({ status: 'draft' }) });
+        check('onboarding: HR can restore it as a draft (the erased details stay erased)', r.status === 200 && r.body.status === 'draft' && r.body.withdrawn === null && r.body.secretsSaved.dob === false, r.body);
+        r = await svOwner.fetch('/api/onboarding/' + wId + '/status', { method: 'POST', body: JSON.stringify({ status: 'withdrawn', reasonCode: 'personal' }) });
+        r = await svOwner.fetch('/api/onboarding/' + wId, { method: 'DELETE' });
+        const [[wGone]] = await dbConn.query('SELECT (SELECT COUNT(*) FROM onboardings WHERE id = ?) a, (SELECT COUNT(*) FROM onboarding_documents WHERE onboarding_id = ?) b', [wId, wId]);
+        check('onboarding: HR can delete a withdrawn record on request, and its documents go with it', r.status === 200 && Number(wGone.a) === 0 && Number(wGone.b) === 0, wGone);
+
+        // backing out after the Directory records were created
+        const dd = Object.assign({}, base, { consultant_name: 'Bea Backout', email: 'bea@backout.test', employer_name: 'Backout Tech LLC', employer_email: 'ap@backout.test' });
+        r = await svOwner.fetch('/api/onboarding', { method: 'POST', body: JSON.stringify({ workerType: 'C2C', data: dd, secrets: { dob: '1990-01-02' } }) });
+        const bId = r.body.id;
+        r = await svOwner.fetch('/api/onboarding/' + bId + '/create-records', { method: 'POST', body: JSON.stringify({ clientName: 'Backout Client', vendorName: '' }) });
+        check('onboarding: directory records are created (and remember that this onboarding made them)', r.status === 200 && r.body.meta.created.consultant === true && r.body.meta.created.supplier === true && r.body.meta.created.assignment === true, r.body.meta);
+        const [[sup0]] = await dbConn.query("SELECT s.status, (SELECT COUNT(*) FROM record_profiles WHERE entity = 'subvendors' AND record_id = s.id AND data LIKE '%Director%') hasSigner, (SELECT COUNT(*) FROM record_secrets WHERE entity = 'subvendors' AND record_id = s.id AND field = 'tax_id') hasTax FROM subvendors s WHERE s.name = 'Backout Tech LLC'");
+        check('onboarding: the company’s signing authority and encrypted tax ID reach the supplier company', Number(sup0.hasSigner) === 1 && Number(sup0.hasTax) === 1, sup0);
+        r = await svOwner.fetch('/api/onboarding/' + bId + '/status', { method: 'POST', body: JSON.stringify({ status: 'withdrawn', reasonCode: 'rate_terms', markDirectoryInactive: true }) });
+        const [[after]] = await dbConn.query("SELECT (SELECT status FROM consultants WHERE name = 'Bea Backout') c, (SELECT status FROM subvendors WHERE name = 'Backout Tech LLC') s, (SELECT status FROM consultant_assignments WHERE id = ?) a", [r.body.meta.assignmentId]);
+        check('onboarding: when asked, the records this onboarding created are marked inactive (nothing deleted)', r.status === 200 && r.body.directoryCleanup.length === 3 && after.c === 'inactive' && after.s === 'inactive' && after.a === 'left', [r.body.directoryCleanup, after]);
+        // a consultant who already existed is never touched
+        await dbConn.query("INSERT INTO consultants (organization_id, name, status) SELECT organization_id, 'Existing Eddie', 'active' FROM onboardings WHERE id = ?", [bId]);
+        const ed = Object.assign({}, base, { consultant_name: 'Existing Eddie', email: 'eddie@backout.test', employer_name: 'Backout Tech LLC', employer_email: 'ap@backout.test' });
+        r = await svOwner.fetch('/api/onboarding', { method: 'POST', body: JSON.stringify({ workerType: 'C2C', data: ed }) });
+        const eId = r.body.id;
+        await svOwner.fetch('/api/onboarding/' + eId + '/create-records', { method: 'POST', body: JSON.stringify({ clientName: 'Backout Client', vendorName: '' }) });
+        r = await svOwner.fetch('/api/onboarding/' + eId + '/status', { method: 'POST', body: JSON.stringify({ status: 'withdrawn', reasonCode: 'visa', markDirectoryInactive: true }) });
+        const [[after2]] = await dbConn.query("SELECT (SELECT status FROM consultants WHERE name = 'Existing Eddie') c, (SELECT status FROM subvendors WHERE name = 'Backout Tech LLC') s");
+        check('onboarding: a consultant who already existed is left active (only what this onboarding created is touched)', r.status === 200 && after2.c === 'active' && r.body.directoryCleanup.length >= 1 && !r.body.directoryCleanup.some((x) => /consultant set/.test(x)), [r.body.directoryCleanup, after2]);
+        await svOwner.fetch('/api/onboarding/' + bId, { method: 'DELETE' });
+        await svOwner.fetch('/api/onboarding/' + eId, { method: 'DELETE' });
+
         // resume (optional)
         const pdfB64 = Buffer.from('%PDF-1.4\n1 0 obj<<>>endobj\ntrailer<<>>\n%%EOF\n').toString('base64');
         r = await svOwner.fetch('/api/pre-placement/' + ppId);

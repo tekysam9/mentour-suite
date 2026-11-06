@@ -39,7 +39,7 @@
   .ob-badge { display: inline-block; font-size: 11px; font-weight: 700; border-radius: 999px; padding: 2px 9px; white-space: nowrap; letter-spacing: .02em; }
   .t-W2 { background: #E4F6E9; color: #1B7A3A; } .t-C2C { background: #F6EBD3; color: #7A5410; } .t-1099 { background: #E4E8F2; color: #34456F; }
   .s-draft { background: #E8EAED; color: #5E6A75; } .s-submitted { background: #F8E3C4; color: #8A4A07; } .s-in_progress { background: #DCE8F6; color: #234D80; }
-  .s-complete { background: #E4F6E9; color: #1B7A3A; } .s-cancelled { background: #EFE0DA; color: #8A3B20; }
+  .s-complete { background: #E4F6E9; color: #1B7A3A; } .s-cancelled { background: #EFE0DA; color: #8A3B20; } .s-withdrawn { background: #F3E3EE; color: #7A2E66; }
   .ob-pending { border-color: #E6C48A; background: #FFFAF0; }
   .ob-pending h2 { color: #8A4A07; }
   .ob-row { display: flex; align-items: center; gap: 14px; padding: 10px 0; border-top: 1px solid #EFE6CB; flex-wrap: wrap; }
@@ -107,7 +107,7 @@
 (function () {
   var appEl = document.getElementById('app');
   var S = { me: null, schema: null, list: { items: [], counts: {}, status: 'open', type: '', q: '' }, pending: [], people: null,
-            ob: null, draft: null, isNew: false, dirty: false, msg: null, errors: {}, confirm: null, parsed: null, emailText: null, recDefaults: null };
+            ob: null, draft: null, sec: { t: {}, eye: {}, shown: null, clear: {} }, pendingResume: null, isNew: false, dirty: false, msg: null, errors: {}, confirm: null, parsed: null, emailText: null, recDefaults: null };
 
   function esc(s) { return s === null || s === undefined ? '' : String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;'); }
   function api(m, u, b) {
@@ -117,7 +117,7 @@
   function fmtDate(d) { if (!d) return ''; var p = String(d).slice(0, 10).split('-'); return p.length === 3 ? p[1] + '/' + p[2] + '/' + p[0] : ''; }
   function fmtWhen(t) { if (!t) return ''; var d = new Date(t); return isNaN(d) ? '' : d.toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }); }
   function money(n) { return Number(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
-  var STATUS_LABEL = { draft: 'Draft', submitted: 'Pending HR approval', in_progress: 'In progress', complete: 'Complete', cancelled: 'Cancelled' };
+  var STATUS_LABEL = { draft: 'Draft', submitted: 'Pending HR approval', in_progress: 'In progress', complete: 'Complete', cancelled: 'Cancelled', withdrawn: 'Withdrawn' };
   var TYPE_LABEL = { W2: 'W2', C2C: 'C2C', '1099': '1099' };
   function badge(cls, text) { return '<span class="ob-badge ' + cls + '">' + esc(text) + '</span>'; }
   function isHr() { return S.me && S.me.isHr; }
@@ -175,7 +175,7 @@
     }
 
     h += '<div class="ob-chips">';
-    [['open', 'Open'], ['submitted', 'Pending approval'], ['in_progress', 'In progress'], ['draft', 'Drafts'], ['complete', 'Complete'], ['cancelled', 'Cancelled'], ['all', 'All']].forEach(function (c) {
+    [['open', 'Open'], ['submitted', 'Pending approval'], ['in_progress', 'In progress'], ['draft', 'Drafts'], ['complete', 'Complete'], ['cancelled', 'Cancelled'], ['withdrawn', 'Withdrawn'], ['all', 'All']].forEach(function (c) {
       h += '<button class="ob-chip' + (S.list.status === c[0] ? ' on' : '') + '" data-act="status" data-v="' + c[0] + '">' + c[1] + '<em>' + count(c[0]) + '</em></button>';
     });
     h += '<span class="ob-tools"><select id="f-type"><option value="">All types</option>' +
@@ -245,7 +245,7 @@
 
   // --------------------------------------------------------------- detail
   function startNew() {
-    S.ob = null; S.isNew = true; S.dirty = false;
+    S.ob = null; S.isNew = true; S.dirty = false; S.sec = { t: {}, eye: {}, shown: null, clear: {} }; S.pendingResume = null;
     S.draft = { workerType: '', data: {} };
     renderDetail();
   }
@@ -255,11 +255,11 @@
       S.vr = null; S.vrLink = null; setOb(r.body); S.isNew = false; S.dirty = false; renderDetail(); loadVr();
     });
   }
-  function setOb(o) { S.ob = o; S.draft = { workerType: o.workerType, data: JSON.parse(JSON.stringify(o.data || {})) }; S.recDefaults = null; }
+  function setOb(o) { S.ob = o; S.draft = { workerType: o.workerType, data: JSON.parse(JSON.stringify(o.data || {})) }; S.recDefaults = null; S.sec = { t: {}, eye: {}, shown: null, clear: {} }; }
 
   function canEdit() {
     if (S.isNew) return true;
-    if (!S.ob || S.ob.status === 'complete') return false;
+    if (!S.ob || S.ob.status === 'complete' || S.ob.status === 'withdrawn') return false;
     return isHr() || S.ob.status === 'draft';
   }
 
@@ -280,6 +280,70 @@
     }
     return '<div class="ob-f' + (f.wide ? ' wide' : '') + (S.errors[f.key] ? ' bad' : '') + '"><label for="' + id + '">' + esc(f.label) + (f.required ? ' <span class="ob-req">*</span>' : '') + '</label>' + inner +
       (S.errors[f.key] ? '<div class="help" style="color:var(--brick)">' + esc(S.errors[f.key]) + '</div>' : (f.help && ed ? '<div class="help">' + esc(f.help) + '</div>' : '')) + '</div>';
+  }
+
+  // -------------------------------------------------------------- sensitive details (date of birth, SSN last digits)
+  function secretRow(key, label, hint, o, ed, hr) {
+    var saved = !!(o && o.secretsSaved && o.secretsSaved[key]) && !S.sec.clear[key];
+    var typed = S.sec.t[key] || '', on = !!S.sec.eye[key], shown = S.sec.shown && S.sec.shown[key];
+    var h = '<div class="ob-f"><label>' + esc(label) + '</label>';
+    if (ed) {
+      h += '<div style="display:flex;gap:6px"><input type="' + (on ? (key === 'dob' ? 'date' : 'text') : 'password') + '" data-sec="' + key + '" value="' + esc(typed) + '" autocomplete="off" placeholder="' + (saved ? 'Saved — type to replace' : '') + '"' + (key === 'ssn_last5' ? ' maxlength="5" inputmode="numeric"' : '') + '>' +
+        '<button type="button" class="ob-btn small" data-act="eye" data-k="' + key + '" title="' + (on ? 'Hide what I typed' : 'Show what I typed, to check it') + '" aria-label="Show or hide what I typed">' + (on ? '🙈' : '👁') + '</button></div>';
+    }
+    if (saved) {
+      h += '<div class="help">✓ Saved (encrypted). ' + (shown ? '<b>' + esc(key === 'dob' ? fmtDate(shown) : shown) + '</b> <button type="button" class="ob-link" data-act="hide-saved">Hide</button>' : (o.canReveal ? '<button type="button" class="ob-link" data-act="reveal">Show saved value</button>' : 'Only HR can view it again.')) +
+        (ed ? ' <button type="button" class="ob-link" data-act="clear-secret" data-k="' + key + '">Remove</button>' : '') + '</div>';
+    } else if (S.sec.clear[key]) h += '<div class="help">Will be removed when you save.</div>';
+    else if (hint && ed) h += '<div class="help">' + esc(hint) + '</div>';
+    return h + '</div>';
+  }
+  function sensitiveHtml(o, ed, hr) {
+    if (!ed && !(o && (o.secretsSaved.dob || o.secretsSaved.ssn_last5))) return '';
+    var h = '<div class="ob-card"><h2>Sensitive details <span class="ob-muted" style="font-weight:400;font-size:13px">(optional)</span></h2><p class="ob-muted" style="margin:0 0 10px;font-size:12.5px">Stored encrypted and never shown in lists. Only HR can view them again. They are erased if the consultant withdraws. Use the eye to check what you typed.</p><div class="ob-grid">';
+    h += secretRow('dob', 'Date of birth', '', o, ed, hr) + secretRow('ssn_last5', 'SSN (last 4–5 digits only)', 'Only the last digits are kept — never the full number.', o, ed, hr);
+    h += '</div>';
+    if (ed && S.schema && !S.schema.encryptionConfigured) h += '<div class="ob-msg warn" style="margin:8px 0 0">These cannot be saved yet: the server has no encryption key (FIELD_ENCRYPTION_KEY).</div>';
+    return h + '</div>';
+  }
+  function collectSecrets() {
+    var out = {};
+    ['dob', 'ssn_last5'].forEach(function (k) {
+      var v = (S.sec.t[k] || '').trim();
+      if (v) out[k] = v; else if (S.sec.clear[k]) out[k] = '';
+    });
+    return out;
+  }
+
+  // -------------------------------------------------------------- resume (optional; every upload is kept as a version)
+  function resumeHtml(o, hr) {
+    var docs = o ? ((o.checklist || []).filter(function (c) { return c.key === 'resume'; })[0] || {}).documents || [] : [];
+    docs = docs.slice().reverse();
+    var can = S.isNew || (o && (hr ? ['draft', 'submitted', 'in_progress'].indexOf(o.status) !== -1 : ['draft', 'submitted'].indexOf(o.status) !== -1));
+    if (!can && !docs.length) return '';
+    var h = '<div class="ob-card"><h2>Resume <span class="ob-muted" style="font-weight:400;font-size:13px">(optional)</span></h2>';
+    if (docs.length) {
+      h += docs.map(function (d, i) {
+        var u = '/api/onboarding/' + o.id + '/documents/' + d.id;
+        return '<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;padding:5px 0;border-bottom:1px solid var(--line,#e5e7eb)"><span>📄 <b>' + esc(d.filename) + '</b>' + (i === 0 ? ' <span class="ob-chipf complete">current</span>' : '') + ' <span class="ob-muted">' + Math.max(1, Math.round(d.size / 1024)) + ' KB · ' + esc(d.uploadedBy || '') + ' · ' + fmtWhen(d.uploadedAt) + '</span></span>' +
+          '<span style="margin-left:auto"><a class="ob-link" href="' + u + '" target="_blank" rel="noopener">View</a> · <a class="ob-link" href="' + u + '?download=1">Download</a>' + (can ? ' · <button class="ob-link" data-act="resume-del" data-id="' + d.id + '">Remove</button>' : '') + '</span></div>';
+      }).join('');
+      if (docs.length > 1) h += '<p class="ob-muted" style="margin:8px 0 0;font-size:12.5px">The newest is the current resume. Older versions are kept until someone removes them.</p>';
+    }
+    if (can) {
+      if (S.isNew) h += '<p class="ob-muted" style="margin:0 0 8px">Choose the resume now; it is attached when you save.</p><input type="file" data-act="resume-pick" accept=".pdf,.doc,.docx,.rtf">' + (S.pendingResume ? ' <span class="ob-muted">Ready to attach: ' + esc(S.pendingResume.name) + '</span>' : '');
+      else h += '<div style="margin-top:8px"><label class="ob-btn" style="cursor:pointer">' + (docs.length ? 'Upload a different version' : 'Add resume') + '<input type="file" data-act="resume-up" accept=".pdf,.doc,.docx,.rtf" hidden></label> <span class="ob-muted">PDF or Word, up to 10 MB each. Stored encrypted.</span></div>';
+    }
+    return h + '</div>';
+  }
+  function readFileB64(file) {
+    return new Promise(function (resolve, reject) {
+      if (file.size > 10 * 1024 * 1024) { reject(new Error('That file is larger than 10 MB.')); return; }
+      var rd = new FileReader();
+      rd.onload = function () { resolve({ name: file.name, b64: String(rd.result).split(',')[1] || '' }); };
+      rd.onerror = function () { reject(new Error('Could not read that file.')); };
+      rd.readAsDataURL(file);
+    });
   }
 
   function marginHtml() {
@@ -313,7 +377,8 @@
       var ret = (o.log || []).filter(function (l) { return /^Returned to the recruiter/.test(l.text); })[0];
       if (ret) h += '<div class="ob-msg warn"><b>HR sent this back.</b> ' + esc(ret.text.replace(/^Returned to the recruiter for changes\.\s*/, '')) + ' — ' + esc(ret.by) + ', ' + fmtWhen(ret.at) + '</div>';
     }
-    if (o && o.status === 'submitted' && !hr) h += '<div class="ob-msg warn">This request is with HR for approval. You can withdraw it to make changes.</div>';
+    if (o && o.status === 'withdrawn') h += '<div class="ob-msg warn"><b>The consultant backed out.</b> ' + esc((o.withdrawn && o.withdrawn.label) || '') + (o.withdrawn && o.withdrawn.at ? ' — ' + fmtWhen(o.withdrawn.at) : '') + '. The date of birth and SSN digits were erased; documents are kept. ' + (hr ? 'You can restore it as a draft, or delete the whole record on request.' : '') + '</div>';
+    if (o && o.status === 'submitted' && !hr) h += '<div class="ob-msg warn">This request is with HR for approval. You can pull it back to make changes.</div>';
     if (o && o.status === 'submitted' && hr) h += '<div class="ob-msg warn"><b>Waiting for your approval.</b> Check the details (you can change anything), then approve it to start onboarding, or send it back with a note.</div>';
 
     // worker type
@@ -329,8 +394,8 @@
     if (hr && o && o.vendorCheck && o.vendorCheck.state !== 'ready') h += vendorBannerHtml(o);
     h += '<div class="ob-layout"><div>';
     if (S.isNew) {
-      h += '<details class="ob-card ob-paste"' + (S.parsed ? ' open' : '') + '><summary style="cursor:pointer;font-weight:700">Have the placement e-mail already? Paste it here</summary>' +
-        '<p class="ob-muted" style="margin:10px 0">Paste the “PLACEMENT INFORMATION” e-mail and the form below is filled in for you. Check it over before saving.</p>' +
+      h += '<details class="ob-card ob-paste"' + (S.parsed ? ' open' : '') + '><summary style="cursor:pointer;font-weight:700">Have the placement or pre-placement e-mail already? Paste it here</summary>' +
+        '<p class="ob-muted" style="margin:10px 0">Paste the “PLACEMENT INFORMATION” or “PRE-PLACEMENT INFORMATION” e-mail and the form below is filled in for you (including the vendor, signing authority, and the sensitive details, which stay hidden). Check it over before saving.</p>' +
         '<textarea id="paste-text" placeholder="PLACEMENT INFORMATION&#10;&#10;Consultant Name:&#10;..."></textarea>' +
         '<div style="margin-top:10px"><button class="ob-btn" data-act="parse">Fill the form from this e-mail</button></div>' +
         (S.parsed ? '<p class="ob-muted" style="margin-top:10px">' + S.parsed + '</p>' : '') + '</details>';
@@ -341,6 +406,7 @@
     sectionsFor(d.workerType).forEach(function (s) {
       h += '<div class="ob-card"><h2>' + esc(s.title) + '</h2><div class="ob-grid">' + s.fields.map(function (f) { return fieldHtml(f, ed); }).join('') + '</div>' + (s.key === 'rates' ? marginHtml() : '') + '</div>';
     });
+    h += sensitiveHtml(o, ed, hr) + resumeHtml(o, hr);
     if (ed) {
       h += '<div class="ob-savebar"><button class="ob-btn primary" data-act="save"' + (S.dirty || S.isNew ? '' : ' disabled') + '>' + (S.isNew ? 'Save draft' : 'Save changes') + '</button>' +
         '<span class="ob-muted" id="dirty-note">' + (S.dirty ? 'You have unsaved changes.' : '') + '</span></div>';
@@ -356,13 +422,15 @@
     if (st === 'draft') {
       h += '<button class="ob-btn primary" data-act="ask" data-v="submitted">' + (hr ? 'Send to HR queue' : 'Send to HR for approval') + '</button>';
       if (hr) h += '<button class="ob-btn" data-act="ask" data-v="in_progress">Start onboarding now</button>';
-      h += '<button class="ob-btn danger" data-act="ask" data-v="cancelled">Cancel request</button>';
+      h += '<button class="ob-btn danger" data-act="ask" data-v="cancelled">Cancel request</button><button class="ob-btn danger" data-act="ask" data-v="withdrawn">Consultant backed out…</button>';
     } else if (st === 'submitted') {
       if (hr) h += '<button class="ob-btn primary" data-act="status" data-v="in_progress">Approve &amp; start onboarding</button><button class="ob-btn" data-act="ask" data-v="draft">Send back to recruiter…</button><button class="ob-btn danger" data-act="ask" data-v="cancelled">Reject / cancel</button>';
-      else h += '<button class="ob-btn" data-act="status" data-v="draft">Withdraw to edit</button>';
+      else h += '<button class="ob-btn" data-act="status" data-v="draft">Pull back to edit</button>';
+      h += '<button class="ob-btn danger" data-act="ask" data-v="withdrawn">Consultant backed out…</button>';
     } else if (st === 'in_progress' && hr) {
-      h += '<button class="ob-btn primary" data-act="status" data-v="complete">Mark onboarding complete</button><button class="ob-btn" data-act="ask" data-v="draft">Send back to recruiter…</button><button class="ob-btn danger" data-act="ask" data-v="cancelled">Cancel</button>';
+      h += '<button class="ob-btn primary" data-act="status" data-v="complete">Mark onboarding complete</button><button class="ob-btn" data-act="ask" data-v="draft">Send back to recruiter…</button><button class="ob-btn danger" data-act="ask" data-v="cancelled">Cancel</button><button class="ob-btn danger" data-act="ask" data-v="withdrawn">Consultant backed out…</button>';
     } else if (st === 'complete' && hr) h += '<button class="ob-btn" data-act="status" data-v="in_progress">Reopen</button>';
+    else if (st === 'withdrawn') { if (hr) h += '<button class="ob-btn" data-act="status" data-v="draft">Restore as draft</button><button class="ob-btn danger" data-act="delete">Delete this record</button>'; }
     else if (st === 'cancelled') h += '<button class="ob-btn" data-act="status" data-v="draft">Restore as draft</button>' + (hr ? '<button class="ob-btn danger" data-act="delete">Delete</button>' : '');
     h += '<button class="ob-btn" data-act="email">Copy as e-mail</button>';
     if (st === 'draft') h += '<button class="ob-btn danger small" data-act="delete" style="margin-left:auto">Delete draft</button>';
@@ -372,8 +440,15 @@
   function confirmHtml() {
     var c = S.confirm, h = '<div class="ob-confirm" role="alertdialog">';
     if (c.type === 'status') {
-      var t = { submitted: 'Send this to HR for approval?', in_progress: 'Start onboarding now (skips the approval queue)?', cancelled: 'Cancel this onboarding request?', draft: 'Send this back to the recruiter?' }[c.to];
+      var t = { submitted: 'Send this to HR for approval?', in_progress: 'Start onboarding now (skips the approval queue)?', cancelled: 'Cancel this onboarding request?', draft: 'Send this back to the recruiter?', withdrawn: 'The consultant backed out of joining?' }[c.to];
       h += '<b>' + t + '</b>';
+      if (c.to === 'withdrawn') {
+        var mc = (S.ob && S.ob.meta && S.ob.meta.created) || {}, hasMade = !!(mc.consultant || mc.supplier || mc.assignment);
+        h += '<div class="ob-muted" style="flex:1 1 100%;margin:4px 0">The record stays in the system with the reason. The date of birth and SSN digits are erased; documents and the resume are kept (HR can delete the whole record on request).</div>' +
+          '<select id="w-reason"><option value="">Why? (required)</option>' + ((S.schema && S.schema.withdrawReasons) || []).map(function (x) { return '<option value="' + esc(x.key) + '">' + esc(x.label) + '</option>'; }).join('') + '</select>' +
+          '<textarea id="reason" placeholder="Anything worth remembering (required if you choose Other)"></textarea>' +
+          (isHr() && hasMade ? '<label style="flex:1 1 100%;font-size:13px"><input type="checkbox" id="w-dir" checked> Also mark the Directory records this onboarding created (' + [mc.consultant ? 'consultant' : '', mc.supplier ? 'supplier company' : '', mc.assignment ? 'billing pairing' : ''].filter(Boolean).join(', ') + ') as inactive. Nothing is deleted; anything that already existed is left alone.</label>' : '');
+      }
       if (c.to === 'draft') h += '<textarea id="reason" placeholder="What should the recruiter fix?"></textarea>';
       h += '<button class="ob-btn primary" data-act="status-go" data-v="' + c.to + '">Yes</button><button class="ob-btn" data-act="no">No</button>';
     } else if (c.type === 'records') {
@@ -398,6 +473,7 @@
     else if (o.status === 'draft') h += '<p class="ob-muted" style="margin:0 0 8px">Starts after HR approves the request.</p>';
     var grp = '';
     cl.forEach(function (c) {
+      if (c.key === 'resume') return; // has its own Resume box
       if (c.group !== grp) { grp = c.group; h += '<div class="ob-grp">' + esc(grp) + '</div>'; }
       var manual = !c.answer && !c.formOnly && c.upload !== 'required';
       var tickable = live && manual && !(c.autoDone && !c.manualDone);
@@ -571,12 +647,16 @@
     note(body.error || 'Could not save.', 'err');
   }
   function save(then) {
-    var payload = { workerType: S.draft.workerType, data: collectFields() };
+    var payload = { workerType: S.draft.workerType, data: collectFields(), secrets: collectSecrets() };
+    var pend = S.isNew ? S.pendingResume : null;
     var p = S.isNew ? api('POST', '/api/onboarding', payload) : api('PUT', '/api/onboarding/' + S.ob.id, payload);
     return p.then(function (r) {
       if (!r.ok) { showErrors(r.body); renderDetail(); return false; }
       S.errors = {}; S.dirty = false;
-      if (S.isNew) { S.isNew = false; setOb(r.body); history.replaceState(null, '', '#' + r.body.id); note('Draft saved.'); }
+      if (S.isNew) {
+        S.isNew = false; setOb(r.body); history.replaceState(null, '', '#' + r.body.id); note('Draft saved.'); S.pendingResume = null;
+        if (pend) return api('POST', '/api/onboarding/' + r.body.id + '/resume', { filename: pend.name, contentBase64: pend.b64 }).then(function (u) { if (u.ok) { setOb(u.body); note('Draft saved, and the resume was attached.'); } else note('Draft saved, but the resume could not be attached: ' + (u.body.error || 'try again from this page.'), 'warn'); window.dispatchEvent(new Event('onboarding-changed')); renderDetail(); return true; });
+      }
       else { setOb(r.body); note('Saved.'); }
       var vcs = r.body.vendorCheck;
       if (isHr() && vcs && vcs.state === 'new') { note((S.msg ? S.msg.text + ' ' : '') + '“' + vcs.name + '” is not in the Directory yet. Use the highlighted box below to send the vendor an onboarding link, or add them now.', 'warn'); }
@@ -586,13 +666,13 @@
       return true;
     });
   }
-  function setStatus(to, reason) {
+  function setStatus(to, reason, extra) {
     var run = function () {
-      return api('POST', '/api/onboarding/' + S.ob.id + '/status', { status: to, reason: reason }).then(function (r) {
+      return api('POST', '/api/onboarding/' + S.ob.id + '/status', Object.assign({ status: to, reason: reason }, extra || {})).then(function (r) {
         S.confirm = null;
         if (!r.ok) { note(r.body.error || 'Could not change the status.', 'err'); renderDetail(); return; }
         setOb(r.body); S.dirty = false;
-        note({ submitted: 'Sent to HR. They will see it under “Waiting for your approval”.', in_progress: 'Onboarding started.', complete: 'Onboarding marked complete.', cancelled: 'Cancelled.', draft: 'Done.' }[to]);
+        note({ submitted: 'Sent to HR. They will see it under “Waiting for your approval”.', in_progress: 'Onboarding started.', complete: 'Onboarding marked complete.', cancelled: 'Cancelled.', withdrawn: 'Marked as withdrawn. Date of birth and SSN digits were erased' + ((r.body.directoryCleanup || []).length ? '; Directory: ' + r.body.directoryCleanup.join(', ') : '') + '.', draft: 'Done.' }[to]);
         window.dispatchEvent(new Event('onboarding-changed'));
         renderDetail();
       });
@@ -603,7 +683,7 @@
   appEl.addEventListener('click', function (e) {
     var b = e.target.closest('[data-act]'); if (!b) return;
     var act = b.getAttribute('data-act'), v = b.getAttribute('data-v'), id = b.getAttribute('data-id');
-    if (['tick', 'cnote', 'role', 'doc-up', 'vr-pick', 'cr-pick'].indexOf(act) !== -1) return; // handled on change
+    if (['tick', 'cnote', 'role', 'doc-up', 'vr-pick', 'cr-pick', 'resume-up', 'resume-pick'].indexOf(act) !== -1) return; // handled on change
     if (act === 'invite-new') { api('POST', '/api/onboarding/invites', { role: document.getElementById('inv-role').value }).then(function (r) { note(r.ok ? 'Invite code created.' : (r.body.error || 'Could not create it.'), r.ok ? 'ok' : 'err'); loadPeople(); }); return; }
     if (act === 'invite-revoke') { if (!confirm('Revoke this invite? The link will stop working.')) return; api('DELETE', '/api/onboarding/invites/' + id).then(function (r) { note(r.ok ? 'Invite revoked.' : (r.body.error || 'Could not revoke it.'), r.ok ? 'ok' : 'err'); loadPeople(); }); return; }
     if (act === 'email-test') {
@@ -681,11 +761,31 @@
     if (act === 'status' && S.ob) { setStatus(v); return; }
     if (act === 'status') { S.list.status = v; loadList(); return; }
     if (act === 'type') { if (!canEdit()) return; S.draft.workerType = v; S.dirty = true; renderDetail(); return; }
+    if (act === 'eye') { var ek = b.getAttribute('data-k'); S.sec.eye[ek] = !S.sec.eye[ek]; renderDetail(); return; }
+    if (act === 'reveal') {
+      api('POST', '/api/onboarding/' + S.ob.id + '/reveal').then(function (r) {
+        if (!r.ok) { note(r.body.error || 'Could not show the saved details.', 'err'); renderDetail(); return; }
+        S.sec.shown = r.body; renderDetail();
+      });
+      return;
+    }
+    if (act === 'hide-saved') { S.sec.shown = null; renderDetail(); return; }
+    if (act === 'clear-secret') { var ck = b.getAttribute('data-k'); S.sec.clear[ck] = true; S.sec.t[ck] = ''; if (S.sec.shown) S.sec.shown[ck] = ''; S.dirty = true; renderDetail(); return; }
+    if (act === 'resume-del') {
+      if (!confirm('Remove this version of the resume?')) return;
+      api('DELETE', '/api/onboarding/' + S.ob.id + '/resume/' + id).then(function (r) { if (r.ok) { var keep = S.draft, ks = S.sec; setOb(r.body); S.draft = keep; S.sec = ks; note('Resume version removed.'); renderDetail(); } else { note(r.body.error || 'Could not remove it.', 'err'); renderDetail(); } });
+      return;
+    }
     if (act === 'save') { save(); return; }
     if (act === 'ask') { S.confirm = { type: 'status', to: v }; renderDetail(); return; }
     if (act === 'no') { S.confirm = null; renderDetail(); return; }
     if (act === 'status-go') {
       var reason = document.getElementById('reason'); reason = reason ? reason.value : undefined;
+      if (v === 'withdrawn') {
+        var wr = document.getElementById('w-reason'), wd = document.getElementById('w-dir');
+        if (!wr || !wr.value) { note('Choose why the consultant backed out.', 'err'); renderDetail(); return; }
+        setStatus(v, reason, { reasonCode: wr.value, markDirectoryInactive: !!(wd && wd.checked) }); return;
+      }
       setStatus(v, reason); return;
     }
     if (act === 'ask-records') { if (S.dirty) { save(true).then(function (ok) { if (ok) { S.confirm = { type: 'records' }; renderDetail(); } }); } else { S.confirm = { type: 'records' }; renderDetail(); } return; }
@@ -723,6 +823,7 @@
         var f = r.body.fields;
         if (f.worker_type) S.draft.workerType = f.worker_type;
         Object.keys(f).forEach(function (k) { if (k !== 'worker_type') S.draft.data[k] = f[k]; });
+        if (r.body.secrets) { S.sec.t = Object.assign({}, S.sec.t, r.body.secrets); S.sec.eye = {}; }
         S.dirty = true;
         S.parsed = 'Filled in ' + r.body.matched.length + ' fields' + (f.worker_type ? ' (worker type ' + f.worker_type + ')' : '') + '.' + (r.body.unmatched.length ? ' Could not place: ' + esc(r.body.unmatched.join(' / ')) : '') +
           (!f.invoicing_method ? ' Invoicing method was not in the e-mail, so please choose it below.' : '');
@@ -740,6 +841,18 @@
 
   appEl.addEventListener('change', function (e) {
     var t = e.target, act = t.getAttribute('data-act');
+    if ((act === 'resume-up' || act === 'resume-pick') && t.files && t.files[0]) {
+      readFileB64(t.files[0]).then(function (f) {
+        if (act === 'resume-pick') { S.pendingResume = f; renderDetail(); return; }
+        note('Uploading ' + f.name + '…');
+        return api('POST', '/api/onboarding/' + S.ob.id + '/resume', { filename: f.name, contentBase64: f.b64 }).then(function (r) {
+          if (!r.ok) { note(r.body.error || 'Could not add the resume.', 'err'); renderDetail(); return; }
+          var keep = S.draft, ks = S.sec, dirty = S.dirty; setOb(r.body); S.draft = keep; S.sec = ks; S.dirty = dirty;
+          note('Resume saved.'); renderDetail();
+        });
+      }).catch(function (err) { note(err.message, 'err'); renderDetail(); });
+      return;
+    }
     if (act === 'doc-up') {
       var file = t.files && t.files[0]; if (!file) return;
       if (file.size > 10 * 1024 * 1024) { note('That file is larger than 10 MB.', 'err'); renderDetail(); return; }
@@ -760,6 +873,13 @@
   appEl.addEventListener('input', function (e) {
     var t = e.target;
     if (t.id === 'f-q') { S.list.q = t.value; clearTimeout(S.qt); S.qt = setTimeout(function () { loadList(); setTimeout(function () { var q = document.getElementById('f-q'); if (q) { q.focus(); q.setSelectionRange(q.value.length, q.value.length); } }, 80); }, 350); return; }
+    var sk = t.getAttribute('data-sec');
+    if (sk) {
+      S.sec.t[sk] = t.value; if (t.value) delete S.sec.clear[sk];
+      if (!S.dirty) { S.dirty = true; var sb2 = appEl.querySelector('[data-act="save"]'); if (sb2) sb2.disabled = false; }
+      var dn2 = document.getElementById('dirty-note'); if (dn2) dn2.textContent = 'You have unsaved changes.';
+      return;
+    }
     var k = t.getAttribute('data-f'); if (!k) return;
     S.draft.data[k] = t.value;
     if (!S.dirty) { S.dirty = true; var sb = appEl.querySelector('[data-act="save"]'); if (sb) sb.disabled = false; }

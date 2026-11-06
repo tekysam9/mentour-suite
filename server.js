@@ -55,7 +55,7 @@ app.use(require('compression')()); // smaller pages/JSON on slow connections
 app.use(sessionMiddleware);
 // Request size: 1 MB everywhere. Only the spreadsheet/document upload routes take up to 15 MB, and (apart from the
 // vendor portal's token-checked document upload) only for a signed-in person, so strangers cannot make the server read big bodies.
-const BIG_SIGNED_IN = /^\/api\/(ledger|margin|directory-import|payment-history|invoices\/import-hours|onboarding\/[^/]+\/documents|pre-placement\/\d+\/resume)(\/|$)/;
+const BIG_SIGNED_IN = /^\/api\/(ledger|margin|directory-import|payment-history|invoices\/import-hours|onboarding\/[^/]+\/(documents|resume)|pre-placement\/\d+\/resume)(\/|$)/;
 const BIG_VENDOR_UPLOAD = /^\/api\/vendor-portal\/[^/]+\/documents$/;
 const jsonSmall = express.json({ limit: '1mb' });
 const jsonBig = express.json({ limit: '15mb' });

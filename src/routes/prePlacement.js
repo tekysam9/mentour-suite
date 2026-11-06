@@ -15,6 +15,7 @@ const spec = require('./prePlacementSpec');
 const onboarding = require('./onboarding');
 const { isConfigured, encrypt, decrypt, encryptBuffer, decryptBuffer } = require('../crypto');
 const profiles = require('./profiles');
+const { toOnboardingInput } = require('../placementToOnboarding');
 const { flagLikelyDuplicates } = require('./directoryDedup');
 const { SPEC: PROFILE_SPEC } = require('./profileFields');
 
@@ -484,17 +485,7 @@ router.post('/:id/send-to-onboarding', async (req, res, next) => {
     const d = parse(row.data, {});
     const workerType = String((req.body || {}).workerType || d.engagement || '');
     if (!onboarding.helpers.TYPES.includes(workerType)) return res.status(400).json({ error: 'Choose how the person is engaged (W2, C2C or 1099) to send them to onboarding.' });
-    const visa = String(d.visa_status || '');
-    const auth = /citizen/i.test(visa) && /\b(us|u\.s\.?|american)\b/i.test(visa) ? 'US citizen' : /green\s*card|permanent/i.test(visa) ? 'Green card' : /h-?1b/i.test(visa) ? 'H-1B'
-      : /\bl-?1\b/i.test(visa) ? 'L-1' : /opt|cpt/i.test(visa) ? 'OPT / CPT' : /\btn\b/i.test(visa) ? 'TN' : /\bead\b/i.test(visa) ? 'EAD' : visa ? 'Other' : '';
-    const input = {
-      consultant_name: d.consultant_name, phone: d.consultant_phone, email: d.consultant_email, technical_skill: d.technical_skill, work_authorization: auth,
-      start_date: d.start_date, duration: d.project_duration, end_client: d.end_client_name || d.client_name, bill_to: d.client_name, location: d.work_location,
-      bill_rate: d.bill_rate, bill_rate_basis: d.bill_basis, pay_rate: d.pay_rate, pay_rate_basis: d.pay_basis, recruiter: who(req),
-    };
-    if (workerType === 'C2C') {
-      Object.assign(input, { employer_name: d.vendor_name, employer_contact: d.signer_name, employer_email: d.vendor_email || d.signer_email, employer_phone: d.vendor_phone || d.signer_phone, employer_address: d.vendor_address });
-    }
+    const input = toOnboardingInput(d, workerType, who(req));
     const { data: obData, errors } = onboarding.helpers.clean(input, {});
     const dropped = errors.map((e) => e.key);
     errors.forEach((e) => { delete obData[e.key]; });
@@ -508,8 +499,8 @@ router.post('/:id/send-to-onboarding', async (req, res, next) => {
     const [lock] = await conn.query('SELECT status FROM pre_placements WHERE id = ? AND organization_id = ? FOR UPDATE', [row.id, row.organization_id]);
     if (!lock[0] || lock[0].status === 'converted') { await conn.rollback(); return res.status(409).json({ error: 'This candidate has already been sent to onboarding.' }); }
     const [ins] = await conn.query(
-      `INSERT INTO onboardings (organization_id, worker_type, status, consultant_name, start_date, data, checklist, log, created_by, created_by_id) VALUES (?, ?, 'draft', ?, ?, ?, '{}', ?, ?, ?)`,
-      [req.user.organization_id, workerType, obData.consultant_name, obData.start_date || null, JSON.stringify(obData), obLog, who(req), req.user.id]);
+      `INSERT INTO onboardings (organization_id, worker_type, status, consultant_name, start_date, data, secrets, checklist, log, created_by, created_by_id) VALUES (?, ?, 'draft', ?, ?, ?, ?, '{}', ?, ?, ?)`,
+      [req.user.organization_id, workerType, obData.consultant_name, obData.start_date || null, JSON.stringify(obData), row.secrets || null, obLog, who(req), req.user.id]);
     // the current resume goes across as the onboarding's Resume document (same encryption key, so the sealed bytes are copied as they are)
     const [cr] = await conn.query('SELECT id, filename, version FROM pre_placement_resume_files WHERE pre_placement_id = ? AND organization_id = ? ORDER BY version DESC LIMIT 1', [row.id, row.organization_id]);
     if (cr[0]) {

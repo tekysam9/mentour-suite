@@ -53,8 +53,8 @@ async function main() {
     const invHtml = await (await fetch(BASE + '/invoices.html')).text();
     const ppHtml = await (await fetch(BASE + '/pre-placement.html')).text();
     let shellJs = await (await fetch(BASE + '/shell.js')).text();
-    check('pre-placement page: paste box, sensitive fields behind Show, start-onboarding, and it is in the People menu',
-      ppHtml.includes('id="pp-paste"') && ppHtml.includes('data-act="eye"') && ppHtml.includes("'reveal'") && ppHtml.includes('data-act="send"') && !/Start onboarding/i.test(ppHtml) && shellJs.includes('/pre-placement.html'));
+    check('pre-placement page: paste box, sensitive fields behind Show, start-onboarding, and it is no longer in the menu (moved into Onboarding)',
+      ppHtml.includes('id="pp-paste"') && ppHtml.includes('data-act="eye"') && ppHtml.includes("'reveal'") && ppHtml.includes('data-act="send"') && !/Start onboarding/i.test(ppHtml) && !/label: 'Pre-placement'/.test(shellJs) && ppHtml.includes('has moved into Onboarding'));
     check('invoices.html has deductions with a reason and a Void / Restore control, and voided rows are left out of totals',
       invHtml.includes('data-action="sv-ded-add"') && invHtml.includes('sv-void-confirm') && invHtml.includes('sv-unvoid') && invHtml.includes('if (i.voided) { nVoid += 1; return; }'));
     const ledgerHtml = await (await fetch(BASE + '/ledger.html')).text();
@@ -155,7 +155,10 @@ async function main() {
     check('pre-placement page has the Add vendor to Directory button', ppHtml.includes('data-act="add-vendor"') && ppHtml.includes('Add vendor to Directory'));
     check('pre-placement list offers to add the missing vendors', ppHtml.includes('data-act="sync-vendors"'));
     check('pre-placement page has the optional Resume card', ppHtml.includes('data-act="resume-up"') && ppHtml.includes('(optional)') && ppHtml.includes('resume-del') && ppHtml.includes('Upload a different version'));
-    check('home page has a Pre-placement card', fs.readFileSync(path.join(pubDir, 'index.html'), 'utf8').includes('href="/pre-placement.html"'));
+    check('home page no longer lists Pre-placement as a separate module', !fs.readFileSync(path.join(pubDir, 'index.html'), 'utf8').includes('href="/pre-placement.html"'));
+    const obHtml = await (await fetch(BASE + '/onboarding.html')).text();
+    check('onboarding page: sensitive details with eye, Resume box with versions, Withdrawn status and reason picker, pull-back wording',
+      obHtml.includes('Sensitive details') && obHtml.includes('data-act="eye"') && obHtml.includes('resume-up') && obHtml.includes('Upload a different version') && obHtml.includes('s-withdrawn') && obHtml.includes('Consultant backed out') && obHtml.includes('w-reason') && obHtml.includes('Pull back to edit') && obHtml.includes('Restore as draft'));
     // "/" should serve index.html (express.static default)
     const rootRes = await fetch(BASE + '/');
     check('GET / -> 200 (serves index.html)', rootRes.status === 200);

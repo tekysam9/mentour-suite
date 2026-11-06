@@ -28,6 +28,9 @@ const SECTIONS = [
     f('technical_skill', 'Technical skill', 'text'),
     f('work_authorization', 'Work authorization', 'select', { options: ['US citizen', 'Green card', 'H-1B', 'L-1', 'OPT / CPT', 'TN', 'EAD', 'Other'] }),
     f('h1b_filing_required', 'H-1B filing required', 'select', { options: YES_NO, required: true }),
+    f('visa_expiry', 'Visa / work authorization expiry', 'date'),
+    f('emergency_contact', 'Emergency contact (name, relationship, phone)', 'text', { wide: true }),
+    f('laptop_address', 'Address for laptop shipment', 'text', { wide: true }),
   ] },
   { key: 'placement', title: 'Placement', fields: [
     f('start_date', 'Project start date', 'date', { required: true }),
@@ -65,6 +68,13 @@ const SECTIONS = [
     f('employer_city', 'City', 'text'),
     f('employer_state', 'State', 'select', { options: US_STATES }),
     f('employer_zip', 'ZIP', 'text'),
+    f('employer_fax', 'Company fax', 'phone'),
+    f('employer_incorporated_state', 'Incorporated state / province', 'text'),
+    f('employer_tax_id', 'Federal tax ID (EIN)', 'text', { help: 'Copied (encrypted) to the supplier company when the directory records are created.' }),
+    f('signer_name', 'Signing authority: name', 'text'),
+    f('signer_designation', 'Signing authority: designation', 'text'),
+    f('signer_phone', 'Signing authority: phone', 'phone'),
+    f('signer_email', 'Signing authority: email', 'email'),
   ] },
   { key: 'employment', title: 'Employment terms', types: ['W2'], fields: [
     f('job_title', 'Job title', 'text', { required: true }),
@@ -90,6 +100,16 @@ const SECTIONS = [
   ] },
 ];
 
+// Why a consultant backed out (a required choice when an onboarding is marked Withdrawn).
+const WITHDRAW_REASONS = [
+  { key: 'other_offer', label: 'Accepted another offer' },
+  { key: 'rate_terms', label: 'Rate or terms not acceptable' },
+  { key: 'client_change', label: 'Client changed or cancelled the role' },
+  { key: 'visa', label: 'Visa or work authorization problem' },
+  { key: 'personal', label: 'Personal reasons' },
+  { key: 'no_response', label: 'Stopped responding' },
+  { key: 'other', label: 'Other (explain)' },
+];
 const sectionsFor = (type) => SECTIONS.filter((s) => !s.types || s.types.includes(type));
 const fieldsFor = (type) => sectionsFor(type).flatMap((s) => s.fields);
 
@@ -283,4 +303,4 @@ function migrateChecklist(stored) {
   return out;
 }
 
-module.exports = { migrateChecklist, RENAMED, REMOVED, WORKER_TYPES, SECTIONS, sectionsFor, fieldsFor, CHECKLISTS, checklistFor, buildEmail, parseEmail, RATE_BASIS, US_STATES };
+module.exports = { migrateChecklist, RENAMED, REMOVED, WORKER_TYPES, SECTIONS, sectionsFor, fieldsFor, CHECKLISTS, checklistFor, buildEmail, parseEmail, RATE_BASIS, US_STATES, WITHDRAW_REASONS };

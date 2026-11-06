@@ -833,3 +833,10 @@ INSERT INTO pre_placement_resume_files (organization_id, pre_placement_id, versi
   WHERE NOT EXISTS (SELECT 1 FROM pre_placement_resume_files f WHERE f.pre_placement_id = r.pre_placement_id);
 DELETE r FROM pre_placement_resumes r WHERE EXISTS (SELECT 1 FROM pre_placement_resume_files f WHERE f.pre_placement_id = r.pre_placement_id);
 
+-- Onboarding absorbs the pre-placement step: encrypted date of birth / SSN digits, and a "Withdrawn" ending for a consultant who
+-- backs out (with a reason). Withdrawing erases `secrets`.
+ALTER TABLE onboardings MODIFY COLUMN status ENUM('draft', 'submitted', 'returned', 'in_progress', 'complete', 'cancelled', 'withdrawn') NOT NULL DEFAULT 'draft';
+ALTER TABLE onboardings ADD COLUMN IF NOT EXISTS secrets TEXT NULL;
+ALTER TABLE onboardings ADD COLUMN IF NOT EXISTS withdrawn_reason VARCHAR(40) NULL;
+ALTER TABLE onboardings ADD COLUMN IF NOT EXISTS withdrawn_at TIMESTAMP NULL DEFAULT NULL;
+

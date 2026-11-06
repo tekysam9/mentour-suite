@@ -68,7 +68,7 @@
     var path; try { path = new URL(url, location.href).pathname; } catch (e) { return false; }
     if (!/^\/api\//.test(path)) return false;
     if (/^\/api\/(auth|version)\b/.test(path)) return false;
-    if (/parse-email|\/duplicates\/scan|^\/api\/pre-placement\/(parse|\d+\/reveal)$/.test(path)) return false;
+    if (/parse-email|\/duplicates\/scan|^\/api\/(pre-placement\/(parse|\d+\/reveal)|onboarding\/\d+\/reveal)$/.test(path)) return false;
     if (data && data.apply === false) return false; // preview only, nothing is saved
     return true;
   }
