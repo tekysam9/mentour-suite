@@ -94,7 +94,7 @@
       var sec = S.d.secrets[d.key] || { set: false };
       var rev = S.revealed && S.revealed[d.key];
       var shown = sec.set ? '<span class="fm-mask">' + esc(rev !== undefined ? rev : sec.masked) + '</span>' : '<span class="fm-unset">Not on file</span>';
-      if (sec.set && S.can && FORM === 'banking') shown += ' <button type="button" data-reveal="' + d.key + '" style="margin-left:8px;padding:2px 8px;font-size:12px">' + (rev !== undefined ? 'Hide' : 'Show full number') + '</button>';
+      if (sec.set && S.can) shown += ' <button type="button" data-reveal="' + d.key + '" style="margin-left:8px;padding:2px 8px;font-size:12px">' + (rev !== undefined ? 'Hide' : 'Show full number') + '</button>';
       var inp = (S.canSecret && !locked) ? '<div style="margin-top:6px"><input id="' + id + '" data-secret="' + d.key + '" type="password" autocomplete="off" placeholder="' + (sec.set ? 'Type to replace' : 'Enter value') + '"></div>'
         : '<div class="fm-help">' + (locked ? 'Locked by signature.' : 'Only the account owner or an HR admin can enter this.') + '</div>';
       return '<div class="fm-field">' + label + shown + inp + help + '</div>';

@@ -267,14 +267,14 @@ router.get('/schema', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-// Owner / HR only: show one stored bank number in full (routing / account). A POST so the Activity log records every reveal.
+// Owner / HR only: show one stored restricted number (SSN, tax ID, bank) in full. A POST so the Activity log records every reveal.
 router.post('/:entity/:id/reveal', async (req, res, next) => {
   try {
-    if (req.user.role !== 'owner' && req.user.role !== 'hr') return res.status(403).json({ error: 'Only the account owner or an HR admin can view full bank numbers.' });
+    if (req.user.role !== 'owner' && req.user.role !== 'hr') return res.status(403).json({ error: 'Only the account owner or an HR admin can view full restricted numbers.' });
     const entity = req.params.entity;
     if (!SPEC[entity] || !/^\d+$/.test(req.params.id)) return res.status(404).json({ error: 'Not found.' });
-    const def = fieldsOf(entity).find((f) => f.kind === 'secret' && f.key === String((req.body || {}).field) && ['routing', 'account'].includes(f.secretKind));
-    if (!def) return res.status(400).json({ error: 'Only bank routing and account numbers can be shown.' });
+    const def = fieldsOf(entity).find((f) => f.kind === 'secret' && f.key === String((req.body || {}).field));
+    if (!def) return res.status(400).json({ error: 'That field has no stored number to show.' });
     const [rows] = await pool.query('SELECT cipher FROM record_secrets WHERE organization_id = ? AND entity = ? AND record_id = ? AND field = ?',
       [req.user.organization_id, entity, Number(req.params.id), def.key]);
     if (!rows.length) return res.json({ value: '' });
@@ -282,7 +282,7 @@ router.post('/:entity/:id/reveal', async (req, res, next) => {
     let value;
     try { value = decrypt(rows[0].cipher); } catch (e) { return res.status(409).json({ error: 'This number cannot be read with the current encryption key.' }); }
     res.locals.auditNote = 'Revealed ' + def.label + ' of ' + entity + ' #' + req.params.id;
-    res.json({ value });
+    res.json({ value: def.secretKind === 'ssn' && /^\d{9}$/.test(value) ? value.replace(/^(\d{3})(\d{2})(\d{4})$/, '$1-$2-$3') : value });
   } catch (err) { next(err); }
 });
 

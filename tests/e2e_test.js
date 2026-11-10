@@ -1837,7 +1837,7 @@ async function main() {
       r = await pfOwner.fetch('/api/profiles/programs/' + pfSub + '/reveal', { method: 'POST', body: JSON.stringify({ field: 'bank_routing' }) });
       check('owner / HR can show a full routing number', r.status === 200 && r.body.value === '021000021', r);
       r = await pfOwner.fetch('/api/profiles/programs/' + pfSub + '/reveal', { method: 'POST', body: JSON.stringify({ field: 'name' }) });
-      check('only bank numbers can be shown this way (400)', r.status === 400, r);
+      check('only a stored restricted number can be shown this way (400)', r.status === 400, r);
       r = await rec.fetch('/api/profiles/programs/' + pfSub + '/reveal', { method: 'POST', body: JSON.stringify({ field: 'bank_account' }) });
       check('a non-HR user cannot show bank numbers (403)', r.status === 403, r);
       r = await pfOwner.fetch('/api/profiles/programs/' + pfSub);
@@ -1851,6 +1851,10 @@ async function main() {
       r = await pfOwner.fetch('/api/profiles/consultants/' + pfCons);
       check('SSN is returned as ***-**-6789 only', r.body.secrets.ssn.masked === '***-**-6789' && r.body.secrets.ssn.last4 === '6789' && !JSON.stringify(r.body).includes('123456789') && !JSON.stringify(r.body).includes('123-45-6789'), r.body.secrets);
       check('consultant values, bool and number round-trip', r.body.values.worker_type === 'W2' && r.body.values.i9_verified === true && r.body.values.pay_rate === '55.5' && r.body.values.date_of_birth === '1990-04-12' && r.body.values.phone === '555-010-2000', r.body.values);
+      r = await pfOwner.fetch('/api/profiles/consultants/' + pfCons + '/reveal', { method: 'POST', body: JSON.stringify({ field: 'ssn' }) });
+      check('owner / HR can show the full SSN on request', r.status === 200 && r.body.value === '123-45-6789', r);
+      r = await rec.fetch('/api/profiles/consultants/' + pfCons + '/reveal', { method: 'POST', body: JSON.stringify({ field: 'ssn' }) });
+      check('a non-HR user cannot show the SSN (403)', r.status === 403, r);
       r = await pfOwner.fetch('/api/profiles/consultants', { method: 'POST', body: JSON.stringify({ values: { name: 'Bad Ssn' }, secrets: { ssn: '12345' } }) });
       check('an invalid SSN is rejected and nothing is created', r.status === 400, r);
       r = await pfOwner.fetch('/api/directory/consultants');

@@ -247,13 +247,13 @@ function requiredMissing(form, key, values, secretSet) {
   return out;
 }
 
-// Owner / HR only (never a supplier link): show one stored bank number in full. A POST so the Activity log records every reveal.
+// Owner / HR only (never a supplier link): show one stored restricted number (SSN, tax ID, document or bank) in full. A POST so the Activity log records every reveal.
 router.post('/:entity/:id/:form/reveal', async (req, res, next) => {
   try {
-    if (req.vendorLink || !isHrAdmin(req)) return res.status(403).json({ error: 'Only the account owner or an HR admin can view full bank numbers.' });
+    if (req.vendorLink || !isHrAdmin(req)) return res.status(403).json({ error: 'Only the account owner or an HR admin can view full restricted numbers.' });
     const P = checkParams(req, res); if (!P) return;
-    const d = fieldsOfForm(P.form).find((x) => x.kind === 'secret' && x.key === String((req.body || {}).field) && ['routing', 'account', 'wireaccount', 'swift'].includes(x.secretKind));
-    if (!d) return res.status(400).json({ error: 'Only bank routing and account numbers can be shown.' });
+    const d = fieldsOfForm(P.form).find((x) => x.kind === 'secret' && x.key === String((req.body || {}).field));
+    if (!d) return res.status(400).json({ error: 'That field has no stored number to show.' });
     const [rows] = await pool.query('SELECT cipher FROM record_secrets WHERE organization_id = ? AND entity = ? AND record_id = ? AND field = ?',
       [P.orgId, P.entity, P.id, P.form + '.' + d.key]);
     if (!rows.length) return res.json({ value: '' });
@@ -261,7 +261,7 @@ router.post('/:entity/:id/:form/reveal', async (req, res, next) => {
     let value;
     try { value = decrypt(rows[0].cipher); } catch (e) { return res.status(409).json({ error: 'This number cannot be read with the current encryption key.' }); }
     res.locals.auditNote = 'Revealed ' + d.label + ' (' + P.form + ' form) of ' + P.entity + ' #' + P.id;
-    res.json({ value });
+    res.json({ value: d.secretKind === 'ssn' && /^\d{9}$/.test(value) ? value.replace(/^(\d{3})(\d{2})(\d{4})$/, '$1-$2-$3') : value });
   } catch (err) { next(err); }
 });
 

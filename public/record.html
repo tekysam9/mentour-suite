@@ -105,7 +105,7 @@
       var canEdit = S.schema.canEditSecrets;
       var rev = S.revealed && S.revealed[fld.key];
       var shown = sec.set ? '<span class="rec-mask">' + esc(rev !== undefined ? rev : sec.masked) + '</span>' : '<span class="rec-unset">Not on file</span>';
-      if (sec.set && canEdit && /^bank_/.test(fld.key)) shown += ' <button type="button" class="rec-btn" data-reveal="' + fld.key + '" style="margin-left:8px;padding:2px 8px;font-size:12px">' + (rev !== undefined ? 'Hide' : 'Show full number') + '</button>';
+      if (sec.set && canEdit) shown += ' <button type="button" class="rec-btn" data-reveal="' + fld.key + '" style="margin-left:8px;padding:2px 8px;font-size:12px">' + (rev !== undefined ? 'Hide' : 'Show full number') + '</button>';
       var input = canEdit
         ? '<input id="' + id + '" data-secret="' + fld.key + '" type="password" autocomplete="off" placeholder="' + (sec.set ? 'Type to replace' : 'Enter value') + '">'
         : '<span class="rec-help">Only the account owner or an HR admin can change this.</span>';

@@ -167,7 +167,7 @@ async function main() {
     check('Fin-Module shows each amount in its own currency and keeps totals per currency',
       curJs.status === 200 && ['curMoney(inv.rate, inv.currency)', 'curSumHtml(total)', 'data-field="currency"', 'data-svfield="currency"'].every((x) => invF.includes(x)) && (await (await fetch(BASE + '/fin-history.js')).text()).includes('histCurCard') && dirHtml0.includes('data-assign-bcur') && dirHtml0.includes('/currency.js'));
     const recHtml = await (await fetch(BASE + '/record.html')).text();
-    check('bank numbers can be shown in full on request (record + banking form) and fees can be added to paid supplier payments',
+    check('restricted numbers (SSN, tax ID, bank) can be shown in full on request (record + banking form) and fees can be added to paid supplier payments',
       recHtml.includes('data-reveal') && (await (await fetch(BASE + '/form.html')).text()).includes('data-reveal') && invF.includes('sv-file-adjust') && invF.includes('Extra fee (+)'));
     check('home page no longer lists Pre-placement as a separate module', !fs.readFileSync(path.join(pubDir, 'index.html'), 'utf8').includes('href="/pre-placement.html"'));
     const obHtml = await (await fetch(BASE + '/onboarding.html')).text();
