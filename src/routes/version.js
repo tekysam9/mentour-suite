@@ -56,7 +56,7 @@ function fingerprint() {
 const NEEDED = [
   ['invoices', 'payment_category'], ['invoices', 'payment_terms'], ['invoices', 'subvendor_id'], ['invoices', 'source'],
   ['consultant_assignments', 'status'], ['consultant_assignments', 'left_date'],
-  ['subvendor_invoices', 'paid_date'], ['subvendor_invoices', 'overrides_ledger'], ['subvendor_invoices', 'amount_paid'], ['subvendor_invoices', 'voided_at'], ['onboardings', 'secrets'], ['onboardings', 'withdrawn_reason'], ['consultant_assignments', 'pay_currency'], ['invoices', 'currency'], ['subvendor_invoices', 'currency'],
+  ['subvendor_invoices', 'paid_date'], ['subvendor_invoices', 'overrides_ledger'], ['subvendor_invoices', 'amount_paid'], ['subvendor_invoices', 'voided_at'], ['onboardings', 'secrets'], ['onboardings', 'withdrawn_reason'], ['consultant_assignments', 'pay_currency'], ['invoices', 'currency'], ['subvendor_invoices', 'currency'], ['subvendor_invoice_deductions', 'direction'],
   ['ledger_roster_entries', 'year_text'], ['ledger_roster_entries', 'unpaid'],
 ];
 

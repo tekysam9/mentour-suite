@@ -846,3 +846,4 @@ ALTER TABLE consultant_assignments ADD COLUMN IF NOT EXISTS billing_currency CHA
 ALTER TABLE consultant_assignments ADD COLUMN IF NOT EXISTS pay_currency CHAR(3) NULL;
 ALTER TABLE invoices ADD COLUMN IF NOT EXISTS currency CHAR(3) NULL;
 ALTER TABLE subvendor_invoices ADD COLUMN IF NOT EXISTS currency CHAR(3) NULL;
+ALTER TABLE subvendor_invoice_deductions ADD COLUMN IF NOT EXISTS direction VARCHAR(6) NOT NULL DEFAULT 'deduct';

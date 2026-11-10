@@ -9,7 +9,7 @@
 const express = require('express');
 const pool = require('../db');
 const { requireAuth } = require('../auth');
-const { encrypt, isConfigured } = require('../crypto');
+const { encrypt, decrypt, isConfigured } = require('../crypto');
 const { SPEC, fieldsOf } = require('./profileFields');
 const { aliasKey } = require('./clientAliases');
 
@@ -264,6 +264,25 @@ router.get('/schema', async (req, res, next) => {
   try {
     const lists = await optionLists(req.user.organization_id);
     res.json({ spec: SPEC, lists, encryptionConfigured: isConfigured(), canEditSecrets: req.user.role === 'owner' || req.user.role === 'hr' });
+  } catch (err) { next(err); }
+});
+
+// Owner / HR only: show one stored bank number in full (routing / account). A POST so the Activity log records every reveal.
+router.post('/:entity/:id/reveal', async (req, res, next) => {
+  try {
+    if (req.user.role !== 'owner' && req.user.role !== 'hr') return res.status(403).json({ error: 'Only the account owner or an HR admin can view full bank numbers.' });
+    const entity = req.params.entity;
+    if (!SPEC[entity] || !/^\d+$/.test(req.params.id)) return res.status(404).json({ error: 'Not found.' });
+    const def = fieldsOf(entity).find((f) => f.kind === 'secret' && f.key === String((req.body || {}).field) && ['routing', 'account'].includes(f.secretKind));
+    if (!def) return res.status(400).json({ error: 'Only bank routing and account numbers can be shown.' });
+    const [rows] = await pool.query('SELECT cipher FROM record_secrets WHERE organization_id = ? AND entity = ? AND record_id = ? AND field = ?',
+      [req.user.organization_id, entity, Number(req.params.id), def.key]);
+    if (!rows.length) return res.json({ value: '' });
+    if (!isConfigured()) return res.status(503).json({ error: 'The server has no encryption key (FIELD_ENCRYPTION_KEY), so stored numbers cannot be read.' });
+    let value;
+    try { value = decrypt(rows[0].cipher); } catch (e) { return res.status(409).json({ error: 'This number cannot be read with the current encryption key.' }); }
+    res.locals.auditNote = 'Revealed ' + def.label + ' of ' + entity + ' #' + req.params.id;
+    res.json({ value });
   } catch (err) { next(err); }
 });
 

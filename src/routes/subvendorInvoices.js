@@ -47,7 +47,9 @@ async function loadDeductions(organizationId, invoiceId) {
     throw err;
   }
 }
-const dedTotal = (list, gross) => r2((list || []).reduce((t, d) => t + dedAmount(d, gross), 0));
+// An extra fee ("add") raises what is owed; a deduction lowers it. Totals are signed: net owed = invoice amount - dedTotal.
+const dedSigned = (d, gross) => (d.direction === 'add' ? -1 : 1) * dedAmount(d, gross);
+const dedTotal = (list, gross) => r2((list || []).reduce((t, d) => t + dedSigned(d, gross), 0));
 
 const router = express.Router();
 router.use(requireAuth);
@@ -308,9 +310,9 @@ router.get('/', async (req, res, next) => {
         const amount = Number(g.amount) || 0;
         const key = keyOf(g.subvendor_id, g.consultant_id, dateStr(g.period_month));
         const deductions = (dedMap.get(g.id) || []).map((d) => ({
-          id: d.id, kind: d.kind, value: Number(d.value), reason: d.reason, created_by: d.created_by, created_at: d.created_at, amount: dedAmount(d, amount),
+          id: d.id, kind: d.kind, direction: d.direction === 'add' ? 'add' : 'deduct', value: Number(d.value), reason: d.reason, created_by: d.created_by, created_at: d.created_at, amount: dedAmount(d, amount),
         }));
-        const dTotal = round2(deductions.reduce((t, d) => t + d.amount, 0));
+        const dTotal = round2(deductions.reduce((t, d) => t + (d.direction === 'add' ? -d.amount : d.amount), 0));
         const net = round2(Math.max(0, amount - dTotal)); // what is actually owed after deductions
         const voided = !!g.voided_at;
         // Paid so far = the larger of what the user entered and what legacy files show (never added, so nothing is counted twice).
@@ -523,6 +525,7 @@ router.patch('/:id', async (req, res, next) => {
     if (existing.voided_at) return res.status(409).json({ error: 'This invoice is voided. Restore it first if you need to change it.' });
     const body = req.body || {};
     const has = (k) => Object.prototype.hasOwnProperty.call(body, k);
+    if (existing.payment_status === 'paid') res.locals.auditNote = ('Edited paid supplier payment ' + existing.invoice_number + ': ' + Object.keys(body).map((k) => k + ' -> ' + String(body[k])).join('; ')).slice(0, 450);
     const sets = [];
     const params = [];
 
@@ -582,6 +585,12 @@ router.patch('/:id', async (req, res, next) => {
         if (!/^\d{4}-\d{2}-\d{2}$/.test(String(body[key] || ''))) return res.status(400).json({ error: key + ' must look like YYYY-MM-DD.' });
         sets.push(col + ' = ?'); params.push(body[key]);
       }
+    }
+    // Changing the net terms or the issue date re-works the due date (issue date + net days), unless a due date was typed in the same change.
+    if ((has('netTerms') || has('issueDate')) && !has('dueDate')) {
+      const nt = normalizeNetTerms(has('netTerms') ? body.netTerms : existing.net_terms);
+      const issue = has('issueDate') ? String(body.issueDate) : (dateStr(existing.issue_date) || '');
+      if (nt && /^\d{4}-\d{2}-\d{2}$/.test(issue)) { sets.push('due_date = ?'); params.push(addDays(issue, Number(nt.slice(3)))); }
     }
     if (has('paymentStatus')) {
       if (!['paid', 'unpaid'].includes(body.paymentStatus)) return res.status(400).json({ error: 'paymentStatus must be paid or unpaid.' });
@@ -752,29 +761,31 @@ router.post('/:id/deductions', async (req, res, next) => {
   try {
     const inv = await openInvoice(req, res); if (!inv) return;
     const b = req.body || {};
+    const direction = b.direction === 'add' ? 'add' : 'deduct';
     const kind = b.kind === 'percent' ? 'percent' : (b.kind === 'fixed' ? 'fixed' : null);
     if (!kind) return res.status(400).json({ error: 'Choose a fixed amount or a percent.' });
     const value = toNullableNumber(b.value);
-    if (value === null || !(value > 0)) return res.status(400).json({ error: 'Enter a deduction greater than zero.' });
+    if (value === null || !(value > 0)) return res.status(400).json({ error: (direction === 'add' ? 'Enter a fee greater than zero.' : 'Enter a deduction greater than zero.') });
     if (kind === 'percent' && value > 100) return res.status(400).json({ error: 'A percent can’t be more than 100.' });
     const reason = String(b.reason || '').trim();
-    if (!reason) return res.status(400).json({ error: 'A reason is required for every deduction.' });
+    if (!reason) return res.status(400).json({ error: 'A reason is required for every deduction or fee.' });
     const gross = Number(inv.amount) || 0;
-    if (!(gross > 0)) return res.status(400).json({ error: 'Enter the invoice amount before adding a deduction.' });
+    if (!(gross > 0)) return res.status(400).json({ error: 'Enter the invoice amount before adding a deduction or fee.' });
     const existingList = (await loadDeductions(req.user.organization_id, inv.id)).get(inv.id) || [];
     const adding = dedAmount({ kind, value }, gross);
-    const after = r2(dedTotal(existingList, gross) + adding);
-    if (after > gross + 0.005) return res.status(400).json({ error: 'Deductions would be more than the invoice amount (' + (await symFor(req, inv)) + gross.toFixed(2) + ').' });
+    const after = r2(dedTotal(existingList, gross) + (direction === 'add' ? -adding : adding));
+    if (direction === 'deduct' && after > gross + 0.005) return res.status(400).json({ error: 'Deductions would be more than the invoice amount (' + (await symFor(req, inv)) + gross.toFixed(2) + ').' });
     const paid = Number(inv.amount_paid) || 0;
-    if (paid > r2(gross - after) + 0.005) return res.status(400).json({ error: 'That deduction leaves less owed than is already paid (' + (await symFor(req, inv)) + paid.toFixed(2) + '). Lower Paid so far first.' });
-    if (inv.payment_status === 'paid') return res.status(409).json({ error: 'This invoice is already marked Paid. Set it back to Unpaid before adding a deduction.' });
+    if (direction === 'deduct' && paid > r2(gross - after) + 0.005) return res.status(400).json({ error: 'That deduction leaves less owed than is already paid (' + (await symFor(req, inv)) + paid.toFixed(2) + '). Lower Paid so far first.' });
+    if (inv.payment_status === 'paid' && !isHrUser(req.user)) return res.status(403).json({ error: 'This invoice is already marked Paid. Only the account owner or an HR admin can add a deduction or fee to a paid invoice.' });
     try {
       const [r] = await pool.query(
-        'INSERT INTO subvendor_invoice_deductions (organization_id, invoice_id, kind, value, reason, created_by) VALUES (?, ?, ?, ?, ?, ?)',
-        [req.user.organization_id, inv.id, kind, value, reason.slice(0, 255), String(req.user.name || req.user.email || '').slice(0, 200)]);
+        'INSERT INTO subvendor_invoice_deductions (organization_id, invoice_id, kind, direction, value, reason, created_by) VALUES (?, ?, ?, ?, ?, ?, ?)',
+        [req.user.organization_id, inv.id, kind, direction, value, reason.slice(0, 255), String(req.user.name || req.user.email || '').slice(0, 200)]);
+      res.locals.auditNote = (direction === 'add' ? 'Added fee ' : 'Added deduction ') + adding.toFixed(2) + ' (' + reason.slice(0, 120) + ') to ' + inv.invoice_number + (inv.payment_status === 'paid' ? ' [paid invoice]' : '');
       res.status(201).json({ id: r.insertId, amount: adding, deductions_total: after, net_amount: r2(gross - after) });
     } catch (err) {
-      if (err && err.code === 'ER_NO_SUCH_TABLE') return res.status(503).json({ error: 'The database needs updating first: run db/schema.sql once, then try again.' });
+      if (err && (err.code === 'ER_NO_SUCH_TABLE' || err.code === 'ER_BAD_FIELD_ERROR')) return res.status(503).json({ error: 'The database needs updating first: run db/schema.sql once, then try again.' });
       throw err;
     }
   } catch (err) { next(err); }
@@ -782,9 +793,10 @@ router.post('/:id/deductions', async (req, res, next) => {
 router.delete('/:id/deductions/:did', async (req, res, next) => {
   try {
     const inv = await openInvoice(req, res); if (!inv) return;
-    if (inv.payment_status === 'paid') return res.status(409).json({ error: 'This invoice is already marked Paid. Set it back to Unpaid before removing a deduction.' });
+    if (inv.payment_status === 'paid' && !isHrUser(req.user)) return res.status(403).json({ error: 'This invoice is already marked Paid. Only the account owner or an HR admin can remove a deduction or fee from a paid invoice.' });
     const [r] = await pool.query('DELETE FROM subvendor_invoice_deductions WHERE id = ? AND invoice_id = ? AND organization_id = ?', [req.params.did, inv.id, req.user.organization_id]);
     if (!r.affectedRows) return res.status(404).json({ error: 'Not found.' });
+    res.locals.auditNote = 'Removed a deduction/fee from ' + inv.invoice_number + (inv.payment_status === 'paid' ? ' [paid invoice]' : '');
     res.json({ ok: true });
   } catch (err) { next(err); }
 });

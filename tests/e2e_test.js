@@ -1658,6 +1658,32 @@ async function main() {
       check('another company cannot add a deduction to this invoice (404)', r.status === 404, r.status);
       r = await otherOrgUser.fetch('/api/subvendor-invoices/' + dId0 + '/void', { method: 'POST', body: JSON.stringify({ reason: 'x' }) });
       check('another company cannot void this invoice (404 or 403)', r.status === 404 || r.status === 403, r.status);
+      // ---- paid rows stay correctable by owner / HR (extra fees, deductions, any field); net terms re-work the due date
+      dRow0 = await getRow(); const netBefore = dRow0.net_amount;
+      r = await svOwner.fetch('/api/subvendor-invoices/' + dId0 + '/deductions', { method: 'POST', body: JSON.stringify({ direction: 'add', kind: 'fixed', value: 25, reason: 'Late-fee refund' }) });
+      dRow0 = await getRow();
+      check('an extra fee raises what is owed and is listed as a fee', r.status === 201 && dRow0.net_amount === Math.round((netBefore + 25) * 100) / 100 && dRow0.deductions.some((d) => d.direction === 'add' && d.amount === 25), dRow0);
+      await svOwner.fetch('/api/subvendor-invoices/' + dId0, { method: 'PATCH', body: JSON.stringify({ paymentStatus: 'paid' }) });
+      r = await rec.fetch('/api/subvendor-invoices/' + dId0 + '/deductions', { method: 'POST', body: JSON.stringify({ direction: 'add', kind: 'fixed', value: 1, reason: 'x' }) });
+      check('a non-HR user cannot add a fee to a paid invoice (403)', r.status === 403, r.body);
+      r = await svOwner.fetch('/api/subvendor-invoices/' + dId0 + '/deductions', { method: 'POST', body: JSON.stringify({ direction: 'add', kind: 'fixed', value: 10, reason: 'Bank charge' }) });
+      dRow0 = await getRow();
+      check('owner / HR can add an extra fee to an already-paid invoice, and it stays Paid', r.status === 201 && dRow0.payment_state === 'paid' && dRow0.net_amount === Math.round((netBefore + 35) * 100) / 100, dRow0);
+      const paidDedId = dRow0.deductions.find((d) => d.reason === 'Bank charge').id;
+      r = await rec.fetch('/api/subvendor-invoices/' + dId0 + '/deductions/' + paidDedId, { method: 'DELETE' });
+      check('a non-HR user cannot remove a fee from a paid invoice (403)', r.status === 403, r.body);
+      r = await svOwner.fetch('/api/subvendor-invoices/' + dId0 + '/deductions', { method: 'POST', body: JSON.stringify({ kind: 'fixed', value: 5, reason: 'Correction' }) });
+      check('owner / HR can add a deduction to a paid invoice', r.status === 201, r.body);
+      r = await svOwner.fetch('/api/subvendor-invoices/' + dId0, { method: 'PATCH', body: JSON.stringify({ amount: Number(gross0) + 1, notes: 'corrected' }) });
+      check('owner / HR can correct the amount of a paid invoice', r.status === 200, r.body);
+      await svOwner.fetch('/api/subvendor-invoices/' + dId0, { method: 'PATCH', body: JSON.stringify({ amount: Number(gross0) }) });
+      // net terms: the due date follows issue date + net days
+      const dueOf = async (patch) => { const x = await svOwner.fetch('/api/subvendor-invoices/' + dId0, { method: 'PATCH', body: JSON.stringify(patch) }); return x.body.invoice && String(x.body.invoice.due_date).slice(0, 10); };
+      check('net terms: issue date + NET45 gives the due date', (await dueOf({ issueDate: '2026-03-01', netTerms: 'NET45' })) === '2026-04-15');
+      check('net terms: changing only NET45 to NET90 re-works the due date', (await dueOf({ netTerms: 'NET90' })) === '2026-05-30');
+      check('net terms: changing only the issue date re-works the due date', (await dueOf({ issueDate: '2026-03-10' })) === '2026-06-08');
+      check('net terms: a due date typed in the same change wins', (await dueOf({ netTerms: 'NET30', dueDate: '2026-07-01' })) === '2026-07-01');
+      await svOwner.fetch('/api/subvendor-invoices/' + dId0, { method: 'PATCH', body: JSON.stringify({ paymentStatus: 'unpaid' }) });
       await dbConn.query('DELETE FROM subvendor_invoice_deductions WHERE invoice_id = ?', [dId0]);
 
       // Generated invoices are editable like client invoices.
@@ -1806,6 +1832,16 @@ async function main() {
       check('a vendor needs a client', r.status === 400, r);
       r = await pfOwner.fetch('/api/profiles/programs/' + pfSub);
       check('vendor bank numbers are masked to last 4', r.body.secrets.bank_routing.last4 === '0021' && r.body.secrets.bank_account.last4 === '6789' && !JSON.stringify(r.body).includes('000123456789'), r.body.secrets);
+      r = await pfOwner.fetch('/api/profiles/programs/' + pfSub + '/reveal', { method: 'POST', body: JSON.stringify({ field: 'bank_account' }) });
+      check('owner / HR can show a full bank account number on request', r.status === 200 && r.body.value === '000123456789', r);
+      r = await pfOwner.fetch('/api/profiles/programs/' + pfSub + '/reveal', { method: 'POST', body: JSON.stringify({ field: 'bank_routing' }) });
+      check('owner / HR can show a full routing number', r.status === 200 && r.body.value === '021000021', r);
+      r = await pfOwner.fetch('/api/profiles/programs/' + pfSub + '/reveal', { method: 'POST', body: JSON.stringify({ field: 'name' }) });
+      check('only bank numbers can be shown this way (400)', r.status === 400, r);
+      r = await rec.fetch('/api/profiles/programs/' + pfSub + '/reveal', { method: 'POST', body: JSON.stringify({ field: 'bank_account' }) });
+      check('a non-HR user cannot show bank numbers (403)', r.status === 403, r);
+      r = await pfOwner.fetch('/api/profiles/programs/' + pfSub);
+      check('the normal record read still returns only the last 4 digits', !JSON.stringify(r.body).includes('000123456789') && r.body.secrets.bank_account.last4 === '6789', r.body.secrets);
       r = await pfOwner.fetch('/api/directory/programs');
       check('the vendor shows in the existing Directory list (same table)', r.body.programs.some((p) => p.id === pfSub && p.client_name === 'Acme Health'), r.body);
 
@@ -1900,6 +1936,14 @@ async function main() {
       check('vendor has only a W-9', r.body.forms.length === 1 && r.body.forms[0].form === 'w9', r.body);
       r = await pfOwner.fetch('/api/forms/clients/' + pfClient);
       check('client has no forms', r.status === 200 && r.body.forms.length === 0, r.body);
+      r = await pfOwner.fetch('/api/forms/consultants/' + pfCons + '/banking', { method: 'PUT', body: JSON.stringify({ values: { method: 'ACH', bank_name: 'Test Bank' }, secrets: { ach_routing: '021000021', ach_account: '000123456789' } }) });
+      check('banking form: numbers save', r.status === 200, r.body);
+      r = await pfOwner.fetch('/api/forms/consultants/' + pfCons + '/banking/reveal', { method: 'POST', body: JSON.stringify({ field: 'ach_account' }) });
+      check('banking form: owner / HR can show the full account number', r.status === 200 && r.body.value === '000123456789', r.body);
+      r = await rec.fetch('/api/forms/consultants/' + pfCons + '/banking/reveal', { method: 'POST', body: JSON.stringify({ field: 'ach_account' }) });
+      check('banking form: a non-HR user cannot show it (403)', r.status === 403, r.body);
+      r = await pfOwner.fetch('/api/forms/consultants/' + pfCons + '/banking/reveal', { method: 'POST', body: JSON.stringify({ field: 'bank_name' }) });
+      check('banking form: only number fields can be shown (400)', r.status === 400, r.body);
       r = await pfOwner.fetch('/api/forms/programs/' + pfSub + '/w4');
       check('a W-4 does not apply to a vendor (404)', r.status === 404, r);
 
@@ -3719,6 +3763,14 @@ async function main() {
         check('currency: an unsupported invoice currency is refused (400)', r.status === 400, r.body);
         r = await svOwner.fetch('/api/invoices/' + curInv.id, { method: 'PATCH', body: JSON.stringify({ currency: '' }) });
         check('currency: clearing it makes the invoice follow the placement again', r.status === 200 && r.body.invoice.currency === 'CAD', r.body.invoice);
+        r = await svOwner.fetch('/api/invoices/' + curInv.id, { method: 'PATCH', body: JSON.stringify({ issueDate: '2026-03-01', netTerms: 'NET45' }) });
+        check('net terms (client invoice): issue date + NET45 gives the due date', r.status === 200 && String(r.body.invoice.due_date).slice(0, 10) === '2026-04-15', r.body.invoice);
+        r = await svOwner.fetch('/api/invoices/' + curInv.id, { method: 'PATCH', body: JSON.stringify({ netTerms: 'NET90' }) });
+        check('net terms (client invoice): changing NET45 to NET90 re-works the due date', String(r.body.invoice.due_date).slice(0, 10) === '2026-05-30', r.body.invoice);
+        r = await svOwner.fetch('/api/invoices/' + curInv.id, { method: 'PATCH', body: JSON.stringify({ issueDate: '2026-03-10' }) });
+        check('net terms (client invoice): changing only the issue date re-works the due date', String(r.body.invoice.due_date).slice(0, 10) === '2026-06-08', r.body.invoice);
+        r = await svOwner.fetch('/api/invoices/' + curInv.id, { method: 'PATCH', body: JSON.stringify({ netTerms: 'NET30', dueDate: '2026-07-01' }) });
+        check('net terms (client invoice): a due date typed in the same change wins', String(r.body.invoice.due_date).slice(0, 10) === '2026-07-01', r.body.invoice);
         r = await svOwner.fetch('/api/invoices/history?year=2026');
         const hi = r.body.invoices.find((x) => x.consultant_name === 'Cy Cad');
         check('currency: the year / month view rows carry their currency and the summary is split by currency', hi && hi.currency === 'CAD' && r.body.summary.amounts && typeof r.body.summary.amounts === 'object' && Array.isArray(r.body.months), [hi && hi.currency, r.body.summary.amounts]);

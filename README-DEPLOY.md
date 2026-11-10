@@ -578,3 +578,10 @@ The filter bar is now labelled: **Invoice month** (the hours month) from/to, **P
 - **Totals are never added across currencies.** Summary strips, subtotals, the Year & month tiles and Billed / Paid / Unpaid cards show one figure per currency (each line tagged with its currency code: USD $1,200.00, CAD CA$500.00, INR ₹20,000.00). Import previews and the CSV export carry the currency too.
 - **No conversion** between currencies is done anywhere; a margin is only worked out when bill and pay currency match.
 - Still USD-only: the Ledger and Margin dashboards, which are built from your uploaded files.
+
+## Paid supplier payments, net terms, full bank numbers
+
+- **Run `db/schema.sql` once** (adds `direction` to `subvendor_invoice_deductions`, so a line can be an extra fee as well as a deduction).
+- **Paid supplier payments stay correctable.** Owner / HR can add or remove deductions and extra fees on an already-Paid payment (including a payments-file month: "+ Deduction / fee" first makes the editable copy), and every field on the row is still editable. Others get a 403. Each edit of a paid row, and each fee / deduction, is written to the Activity log. A fee on a paid row leaves it Paid; set it back to Unpaid yourself if the extra amount still has to be paid.
+- **Net terms.** Changing the net terms or the issue date (client invoices and supplier payments) now re-works the due date = issue date + net days. A due date typed in the same change is kept.
+- **Full bank numbers.** Owner / HR get a "Show full number" button next to a masked bank routing / account number (Directory records and the ACH / Wire banking form; also the wire account / IBAN and SWIFT). It hides again after a minute, and each reveal is written to the Activity log. SSNs and tax IDs are unchanged (last 4 only).

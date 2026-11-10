@@ -920,6 +920,12 @@ router.patch('/:id', async (req, res, next) => {
       sets.push('due_date = ?');
       params.push(body.dueDate);
     }
+    // Changing the net terms or the issue date re-works the due date (issue date + net days), unless a due date was typed in the same change.
+    if ((Object.prototype.hasOwnProperty.call(body, 'netTerms') || Object.prototype.hasOwnProperty.call(body, 'issueDate')) && !Object.prototype.hasOwnProperty.call(body, 'dueDate')) {
+      const nt = normalizeNetTerms(Object.prototype.hasOwnProperty.call(body, 'netTerms') ? body.netTerms : existing.net_terms);
+      const issue = Object.prototype.hasOwnProperty.call(body, 'issueDate') ? String(body.issueDate) : (existing.issue_date instanceof Date ? existing.issue_date.getFullYear() + '-' + String(existing.issue_date.getMonth() + 1).padStart(2, '0') + '-' + String(existing.issue_date.getDate()).padStart(2, '0') : String(existing.issue_date || '').slice(0, 10));
+      if (nt && /^\d{4}-\d{2}-\d{2}$/.test(issue)) { sets.push('due_date = ?'); params.push(addDays(issue, netTermsDays(nt))); }
+    }
     if (Object.prototype.hasOwnProperty.call(body, 'paymentStatus')) {
       if (!['paid', 'unpaid'].includes(body.paymentStatus)) return res.status(400).json({ error: 'paymentStatus must be paid or unpaid.' });
       sets.push('payment_status = ?');

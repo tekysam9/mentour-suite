@@ -103,7 +103,9 @@
     if (fld.kind === 'secret') {
       var sec = (S.rec && S.rec.secrets && S.rec.secrets[fld.key]) || { set: false };
       var canEdit = S.schema.canEditSecrets;
-      var shown = sec.set ? '<span class="rec-mask">' + esc(sec.masked) + '</span>' : '<span class="rec-unset">Not on file</span>';
+      var rev = S.revealed && S.revealed[fld.key];
+      var shown = sec.set ? '<span class="rec-mask">' + esc(rev !== undefined ? rev : sec.masked) + '</span>' : '<span class="rec-unset">Not on file</span>';
+      if (sec.set && canEdit && /^bank_/.test(fld.key)) shown += ' <button type="button" class="rec-btn" data-reveal="' + fld.key + '" style="margin-left:8px;padding:2px 8px;font-size:12px">' + (rev !== undefined ? 'Hide' : 'Show full number') + '</button>';
       var input = canEdit
         ? '<input id="' + id + '" data-secret="' + fld.key + '" type="password" autocomplete="off" placeholder="' + (sec.set ? 'Type to replace' : 'Enter value') + '">'
         : '<span class="rec-help">Only the account owner or an HR admin can change this.</span>';
@@ -210,6 +212,23 @@
     var nb = document.getElementById('note-add');
     if (nb) nb.addEventListener('click', addNote);
   }
+
+
+  // Owner / HR: show or hide the full bank number in place (typed-but-unsaved text is left alone; every reveal is logged on the server).
+  appEl.addEventListener('click', function (e) {
+    var b = e.target.closest('[data-reveal]'); if (!b) return;
+    var key = b.getAttribute('data-reveal'), mask = b.previousElementSibling;
+    if (!mask) return;
+    if (b.getAttribute('data-shown') === '1') { mask.textContent = b.getAttribute('data-masked'); b.removeAttribute('data-shown'); b.textContent = 'Show full number'; return; }
+    b.disabled = true;
+    api('POST', '/api/profiles/' + TYPE + '/' + ID + '/reveal', { field: key }).then(function (r) {
+      b.disabled = false;
+      if (!r.ok) { alert((r.body && r.body.error) || 'Could not show that number.'); return; }
+      b.setAttribute('data-masked', mask.textContent); b.setAttribute('data-shown', '1');
+      mask.textContent = r.body.value || '(empty)'; b.textContent = 'Hide';
+      setTimeout(function () { if (b.getAttribute('data-shown') === '1') b.click(); }, 60000);
+    });
+  });
 
   function collect() {
     var values = {}; var secrets = {};
